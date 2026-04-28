@@ -1,74 +1,94 @@
 # Tiny Minecraft OpenGL
 
-Tiny Minecraft OpenGL is a small Java/LWJGL Minecraft-like prototype. It is not a full Minecraft clone; it is an experimental voxel sandbox used to explore chunk generation, OpenGL rendering, survival mechanics, inventory UI, crafting, containers, caves, villages, mobs, and world saving.
+Tiny Minecraft OpenGL - маленький Java/LWJGL прототип в стиле Minecraft. Это не полноценный клон Minecraft, а экспериментальная voxel-песочница для изучения генерации чанков, OpenGL-рендеринга, выживания, инвентаря, крафта, контейнеров, пещер, деревень, мобов и сохранения мира.
 
-The project is intentionally simple: most of the game lives in plain Java files in the repository root.
+Проект специально сделан простым: большая часть игры находится в обычных Java-файлах в корне репозитория.
 
-## Current State
+## Текущее состояние
 
-This is a v0.1 prototype. It can generate and render a block world, save/load regions, place and break blocks, use a hotbar/inventory, craft items, open chests/furnaces/crafting tables, spawn mobs, and explore generated villages/caves/mineshafts.
+Это прототип `v0.1`. Игра умеет генерировать и отображать блочный мир, сохранять/загружать регионы, ставить и ломать блоки, использовать хотбар и инвентарь, крафтить предметы, открывать сундуки/печки/верстаки, спавнить мобов и исследовать сгенерированные деревни, пещеры и шахты.
 
-The game is playable as a tech demo, but many systems are rough or incomplete. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) and [ROADMAP.md](ROADMAP.md).
+В игру уже можно играть как в техническую демоверсию, но многие системы пока сырые или неполные. Подробнее см. [KNOWN_ISSUES.md](KNOWN_ISSUES.md) и [ROADMAP.md](ROADMAP.md).
 
-## Requirements
+## Требования
 
-- Java JDK 17 or newer
-- LWJGL jars in `lib/`
-- Windows is the currently tested platform
+- Java JDK 17 или новее
+- LWJGL `.jar` файлы в папке `lib/`
+- Сейчас проверяется в основном Windows
 
-## Build
+## Сборка
 
 ```powershell
 javac -cp "lib/*" -d out *.java
 ```
 
-## Run
+## Запуск
 
-Use the included batch file:
+Для игроков удобнее использовать:
+
+```powershell
+.\run-game.bat
+```
+
+Для разработки можно использовать старый батник:
 
 ```powershell
 .\run-opengl.bat
 ```
 
-Or run manually if your LWJGL native jars are present in `lib/`:
+Или запустить вручную, если LWJGL native `.jar` файлы есть в `lib/`:
 
 ```powershell
 java -cp "out;lib/*" TinyMinecraft
 ```
 
-## Controls
+## Управление
 
-- `WASD` - move
-- `Space` - jump
-- `Shift` - sneak
-- `Ctrl` - sprint
-- Left click - attack / break
-- Right click - interact / place
-- `E` - inventory
-- `Esc` - pause menu
+- `WASD` - движение
+- `Space` - прыжок
+- `Shift` - присесть
+- `Ctrl` - бег
+- Левая кнопка мыши - атака / ломание блока
+- Правая кнопка мыши - взаимодействие / установка блока
+- `E` - инвентарь
+- `Esc` - меню паузы
 - `/locate structure village`
 - `/locate structure mineshaft`
 - `/place structure list`
 
-## What Is Implemented
+## Что уже реализовано
 
-- Chunked voxel world
-- Terrain, caves, ores, rivers/oceans, and biome sampling
-- Villages, farms, houses, mineshafts, and simple structure templates
-- Basic lighting and transparent blocks
-- Doors, torches, rails, farmland, crops, beds
-- Inventory, creative inventory, survival inventory
-- Crafting table, chest, furnace
-- Furnace smelting and food
-- Mobs, spawn eggs, drops, simple combat
-- Hunger and health
-- Region/world saving
-- Debug overlay and locate commands
+- Чанковый voxel-мир
+- Рельеф, пещеры, руды, реки/океаны и базовые биомы
+- Деревни, фермы, дома, шахты и простые шаблоны структур
+- Базовое освещение и прозрачные блоки
+- Двери, факелы, рельсы, грядки, культуры, кровати
+- Инвентарь, творческий инвентарь, инвентарь выживания
+- Верстак, сундук, печка
+- Переплавка в печке и еда
+- Мобы, яйца спавна, дроп, простой бой
+- Голод и здоровье
+- Сохранение регионов/мира
+- Debug overlay и команды поиска структур
 
-## Project Scope
+## Релизы
 
-This project is a learning prototype, not a finished game. The goal for v0.1 is to keep it compiling, runnable, and understandable, while documenting the rough edges instead of pretending they are finished.
+Готовые сборки лежат на странице релизов:
 
-## License
+[https://github.com/vakisnn-gd/TinyMinecraft/releases](https://github.com/vakisnn-gd/TinyMinecraft/releases)
 
-No license has been selected yet. If you want other people to use or modify this code, add a license before publishing widely.
+Для обычной игры скачивайте `TinyMinecraft-v0.1-windows.zip`.
+
+Старые версии `v0.0.0` - `v0.0.8` оставлены как архив истории разработки и помечены как pre-release.
+
+## Сохранения
+
+Миры сохраняются локально в папке `saves/` рядом с игрой. Личные миры разработчика не входят в релизы и не хранятся в репозитории.
+
+## Область проекта
+
+Это учебный прототип, а не законченная игра. Цель `v0.1` - держать проект компилируемым, запускаемым и понятным, честно документируя шероховатости вместо того, чтобы притворяться, что все системы уже финальные.
+
+## Лицензия
+
+Лицензия пока не выбрана. Если вы хотите, чтобы другие люди могли свободно использовать или изменять код, перед широкой публикацией стоит добавить лицензию.

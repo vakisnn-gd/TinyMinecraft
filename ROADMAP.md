@@ -1,62 +1,62 @@
-# Roadmap
+# План разработки
 
-The main rule: stabilize before adding big new features.
+Главное правило: сначала стабилизация, потом большие новые функции.
 
-## v0.1 Goal
+## Цель v0.1
 
-- Keep the project compiling.
-- Keep the game runnable.
-- Document known issues honestly.
-- Avoid pretending placeholder systems are final.
+- Держать проект компилируемым.
+- Держать игру запускаемой.
+- Честно документировать известные проблемы.
+- Не притворяться, что placeholder-системы уже финальные.
 
-## Next Stabilization Pass
+## Следующий проход стабилизации
 
-1. Water and ocean cleanup
-   - Reduce broken surface flooding.
-   - Make water flow cheaper and more predictable.
-   - Improve coastlines and ocean floor shape.
+1. Очистка воды и океанов
+   - Уменьшить сломанную заливку поверхности.
+   - Сделать течение воды дешевле и предсказуемее.
+   - Улучшить форму берегов и дна океана.
 
-2. World generation polish
-   - Reduce biome noise and abrupt transitions.
-   - Tune village spacing and size.
-   - Improve cave readability.
-   - Make cave ores easier to discover without overloading the world.
+2. Полировка генерации мира
+   - Уменьшить шум биомов и резкие переходы.
+   - Настроить расстояние между деревнями и их размер.
+   - Сделать пещеры понятнее для исследования.
+   - Сделать руды в пещерах заметнее, не перегружая мир.
 
-3. UI polish
-   - Clean up survival inventory layout.
-   - Improve crafting table, chest, and furnace screens.
-   - Fix player preview pose.
+3. Полировка интерфейса
+   - Привести в порядок инвентарь выживания.
+   - Улучшить экраны верстака, сундука и печки.
+   - Исправить позу предпросмотра игрока.
 
-4. Visual polish
-   - Replace placeholder first-person hand.
-   - Improve mob models.
-   - Add simple block/item textures.
-   - Add better partial-block outlines where needed.
+4. Визуальная полировка
+   - Заменить placeholder-руку от первого лица.
+   - Улучшить модели мобов.
+   - Добавить простые текстуры блоков/предметов.
+   - Улучшить контуры неполных блоков там, где нужно.
 
-5. Gameplay polish
-   - Tune mob HP, knockback, flee behavior, and drops.
-   - Make hunger more predictable.
-   - Improve food and furnace recipes.
+5. Полировка геймплея
+   - Настроить HP мобов, отбрасывание, бегство и дроп.
+   - Сделать голод более предсказуемым.
+   - Улучшить еду и рецепты печки.
 
-## Later Ideas
+## Идеи на потом
 
-- Real texture atlas workflow
-- More sound effects
-- Better lighting
-- Better caves and aquifers
-- Better village planning
-- More structure templates
-- Recipe book or recipe hints
-- Better save format versioning
-- Settings screen cleanup
-- Basic release builds
+- Настоящий workflow для texture atlas
+- Больше звуковых эффектов
+- Улучшенное освещение
+- Более интересные пещеры и водоносные слои
+- Более аккуратное планирование деревень
+- Больше шаблонов структур
+- Книга рецептов или подсказки рецептов
+- Версионирование формата сохранений
+- Улучшение экрана настроек
+- Более удобные release-сборки
 
-## Not Planned For v0.1
+## Не планируется для v0.1
 
 - Multiplayer
 - Redstone
-- Trading
-- Nether/End dimensions
-- Full Minecraft-compatible blockstate/NBT format
-- External schematic import
-- Large engine rewrite
+- Торговля
+- Nether/End измерения
+- Полная совместимость с Minecraft blockstate/NBT
+- Импорт внешних schematic-файлов
+- Большой переписанный движок

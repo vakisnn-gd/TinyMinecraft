@@ -1,54 +1,54 @@
-# Known Issues
+# Известные проблемы
 
-This file is intentionally honest. Tiny Minecraft OpenGL is a v0.1 prototype, and these are the known rough areas.
+Этот файл специально честный. Tiny Minecraft OpenGL - прототип `v0.1`, и ниже перечислены основные сырые места.
 
-## World Generation
+## Генерация мира
 
-- Ocean generation can produce strange coastlines, cliffs, and flooded areas.
-- Water simulation is slow and visually buggy in some places.
-- Biome transitions are abrupt and can look mixed or noisy.
-- Caves can feel inconsistent: some areas are too chaotic, while others are too empty.
-- Ore generation exists, but ores are not always easy to find in caves.
-- Villages can still look too small or too frequent depending on the seed.
-- Some villages may still interact badly with terrain, trees, water, or caves.
+- Генерация океанов иногда создаёт странные берега, обрывы и затопленные участки.
+- Симуляция воды медленная и местами выглядит неправильно.
+- Переходы между биомами резкие и могут выглядеть шумно или перемешанно.
+- Пещеры пока неровные по качеству: где-то слишком хаотичные, где-то слишком пустые.
+- Руды уже генерируются, но их не всегда легко найти в пещерах.
+- Деревни могут быть слишком маленькими или слишком частыми в зависимости от seed.
+- Некоторые деревни всё ещё могут плохо пересекаться с рельефом, деревьями, водой или пещерами.
 
-## Rendering
+## Рендеринг
 
-- The first-person hand is placeholder art.
-- The player model in inventory can pose incorrectly.
-- Many blocks and items use flat colors instead of real textures.
-- Partial block outlines are improved but may still be wrong for some states.
-- Transparency around water can look messy.
+- Рука от первого лица пока placeholder.
+- Модель игрока в инвентаре иногда принимает неправильную позу.
+- Многие блоки и предметы используют плоские цвета вместо настоящих текстур.
+- Контуры неполных блоков улучшены, но всё ещё могут ошибаться для некоторых состояний.
+- Прозрачность вокруг воды может выглядеть грязно.
 
-## Gameplay
+## Геймплей
 
-- Combat is basic.
-- Mob AI is simple and can look odd.
-- Passive mob models are still placeholder-quality.
-- Hunger is basic and does not include Minecraft-style saturation/effects.
-- Beds are simplified.
-- Crafting and furnace logic are functional but not polished.
+- Бой пока базовый.
+- AI мобов простой и иногда выглядит странно.
+- Модели мирных мобов всё ещё placeholder-качества.
+- Голод базовый и не повторяет Minecraft-style насыщение/эффекты.
+- Кровати упрощены.
+- Крафт и логика печки работают, но требуют полировки.
 
-## UI
+## Интерфейс
 
-- Inventory layout is functional but still rough.
-- Crafting table, chest, and furnace screens need visual polish.
-- There is no recipe book.
-- Some debug/creative tools are developer-oriented rather than player-friendly.
+- Макет инвентаря рабочий, но ещё грубый.
+- Экраны верстака, сундука и печки нуждаются в визуальной полировке.
+- Книги рецептов пока нет.
+- Некоторые debug/creative-инструменты больше ориентированы на разработку, чем на обычного игрока.
 
-## Audio And Assets
+## Звук и ассеты
 
-- The game does not have a complete sound set.
-- The game does not have a real texture pack.
-- Most visuals are generated colors/simple shapes.
+- В игре пока нет полного набора звуков.
+- В игре пока нет настоящего texture pack.
+- Большая часть визуала - это сгенерированные цвета и простые формы.
 
-## Performance
+## Производительность
 
-- Chunk loading is better than earlier versions but can still hitch.
-- Water and large cave areas can hurt FPS.
-- Mesh rebuilds and transparent rendering need more optimization.
+- Загрузка чанков стала лучше, чем в ранних версиях, но всё ещё может подвисать.
+- Вода и большие пещерные зоны могут снижать FPS.
+- Пересборка мешей и прозрачный рендеринг требуют дополнительной оптимизации.
 
-## Save Format
+## Формат сохранений
 
-- World saving works, but the format is not a stable public format.
-- Future versions may break old saves.
+- Сохранение мира работает, но формат пока не является стабильным публичным форматом.
+- Будущие версии могут сломать совместимость со старыми сохранениями.
