@@ -1,6 +1,7 @@
 # Java build output
 out/
 *.class
+release/
 
 # Local game data
 saves/
