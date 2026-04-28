@@ -1,0 +1,2701 @@
+import java.util.Random;
+
+final class WorldGenerator {
+    static final int CHUNK_HEIGHT = GameConfig.WORLD_HEIGHT;
+    private static final int COLUMN_AREA = GameConfig.CHUNK_SIZE * GameConfig.CHUNK_SIZE;
+    private static final Biome[] BIOMES = Biome.values();
+    private static final double CONTINENT_SCALE = 0.0028;
+    private static final double CONTINENTALNESS_SCALE = 0.00155;
+    private static final double EROSION_SCALE = 0.0042;
+    private static final double RIDGE_SCALE = 0.0105;
+    private static final double DETAIL_SCALE = 0.036;
+    private static final double RIVER_FIELD_SCALE = 0.0027;
+    private static final double TEMPERATURE_SCALE = 0.0037;
+    private static final double HUMIDITY_SCALE = 0.0039;
+    private static final double CAVE_ENTRANCE_SCALE = 0.029;
+    private static final double CAVE_TUNNEL_THRESHOLD = 0.46;
+    private static final double CAVE_ROOM_THRESHOLD = 0.83;
+    private static final double CAVE_FREQUENCY = 0.034;
+    private static final double CAVE_ROOM_FREQUENCY = 0.008;
+    private static final int CAVE_MIN_DEPTH_BELOW_SURFACE = 5;
+    private static final double CANYON_SCALE = 0.0068;
+    private static final double OCEAN_COASTLINE = -0.16;
+    private static final double COASTLINE_WIDTH = 0.085;
+    private static final double BEACH_WIDTH = 0.072;
+    private static final double RIVER_MIN_WIDTH_BLOCKS = 2.8;
+    private static final double RIVER_MAX_WIDTH_BLOCKS = 4.4;
+    private static final double RIVER_MIN_BANK_BLOCKS = 3.2;
+    private static final double RIVER_MAX_BANK_BLOCKS = 5.4;
+    private static final int RIVER_WATER_LEVEL = GameConfig.SEA_LEVEL;
+    private static final double LAKE_WIDTH = 0.066;
+    private static final double LAKE_BANK_WIDTH = 0.112;
+    private static final int VILLAGE_CELL_SIZE_CHUNKS = 6;
+    private static final double VILLAGE_CHANCE = 0.62;
+    private static final int MINESHAFT_CELL_SIZE_CHUNKS = 7;
+    private static final double MINESHAFT_CHANCE = 0.24;
+    private static final int CAVE_SYSTEM_SIZE = 64;
+    private static final byte TERRAIN_OCEAN = 1;
+    private static final byte TERRAIN_BEACH = 1 << 2;
+    private static final byte TERRAIN_LAKE = 1 << 3;
+    private static final ThreadLocal<GenerationScratch> SCRATCH = ThreadLocal.withInitial(GenerationScratch::new);
+
+    private final long seed;
+    private final int[] permutation = new int[512];
+    private final DensitySampler densitySampler = new DensitySampler();
+
+    WorldGenerator(long seed) {
+        this.seed = seed;
+        initializePermutation();
+    }
+
+    GeneratedChunkColumn generateChunk(int chunkX, int chunkZ) {
+        GeneratedChunkColumn column = new GeneratedChunkColumn(chunkX, chunkZ);
+        int startX = chunkX * GameConfig.CHUNK_SIZE;
+        int startZ = chunkZ * GameConfig.CHUNK_SIZE;
+        GenerationScratch scratch = SCRATCH.get();
+        boolean profile = shouldProfileGeneration();
+        long stageStart = profile ? System.nanoTime() : 0L;
+        generateBiomes(column, startX, startZ, scratch);
+        stageStart = logGenerationStage("BIOMES", chunkX, chunkZ, stageStart, profile);
+        generateNoiseTerrain(column, startX, startZ, scratch);
+        stageStart = logGenerationStage("NOISE", chunkX, chunkZ, stageStart, profile);
+        applySurface(column, startX, startZ, scratch);
+        stageStart = logGenerationStage("SURFACE", chunkX, chunkZ, stageStart, profile);
+        carveTerrain(column, startX, startZ, scratch);
+        stageStart = logGenerationStage("CARVERS", chunkX, chunkZ, stageStart, profile);
+        fillFluids(column, startX, startZ, scratch);
+        stageStart = logGenerationStage("FLUIDS", chunkX, chunkZ, stageStart, profile);
+        placeFeatures(column, startX, startZ, scratch);
+        logGenerationStage("FEATURES", chunkX, chunkZ, stageStart, profile);
+        return column;
+    }
+
+    private boolean shouldProfileGeneration() {
+        return GameConfig.ENABLE_FRAME_PROFILING || GameConfig.ENABLE_DEBUG_LOGS;
+    }
+
+    private long logGenerationStage(String stage, int chunkX, int chunkZ, long stageStart, boolean profile) {
+        if (!profile) {
+            return 0L;
+        }
+        long now = System.nanoTime();
+        double millis = (now - stageStart) / 1_000_000.0;
+        System.out.println(String.format(java.util.Locale.ROOT, "WorldGenerator[%d,%d] %s %.3f ms", chunkX, chunkZ, stage, millis));
+        return now;
+    }
+
+    GeneratedChunkColumn generateTerrainColumn(int chunkX, int chunkZ) {
+        GeneratedChunkColumn column = new GeneratedChunkColumn(chunkX, chunkZ);
+        int startX = chunkX * GameConfig.CHUNK_SIZE;
+        int startZ = chunkZ * GameConfig.CHUNK_SIZE;
+        GenerationScratch scratch = SCRATCH.get();
+        generateBiomes(column, startX, startZ, scratch);
+        generateNoiseTerrain(column, startX, startZ, scratch);
+        applySurface(column, startX, startZ, scratch);
+        return column;
+    }
+
+    private void generateBiomes(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                scratch.biomeOrdinals[index] = (byte) sampleBiome(worldX, worldZ).ordinal();
+            }
+        }
+        column.setStatus(ChunkGenerationStatus.BIOMES);
+    }
+
+    private void generateNoiseTerrain(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        cacheTerrainMetadata(startX, startZ, scratch, false);
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                TerrainSample sample = scratch.samples[index];
+                int bedrockTop = bedrockTopY(worldX, worldZ);
+                int topY = Math.min(GameConfig.WORLD_MAX_Y, sample.approximateSurfaceHeight + 36);
+                for (int worldY = GameConfig.WORLD_MIN_Y; worldY <= topY; worldY++) {
+                    if (worldY <= bedrockTop) {
+                        column.setBlock(worldX, worldY, worldZ, GameConfig.BEDROCK);
+                        continue;
+                    }
+                    double density = densitySampler.sampleTerrainDensity(worldX, worldY, worldZ, sample);
+                    if (density > 0.0) {
+                        column.setBlock(worldX, worldY, worldZ, baseStoneForY(worldY));
+                    }
+                }
+            }
+        }
+        column.setStatus(ChunkGenerationStatus.NOISE);
+    }
+
+    private void applySurface(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                Biome biome = BIOMES[scratch.biomeOrdinals[index] & 0xFF];
+                applySurfaceColumn(column, worldX, worldZ, scratch.dirtDepths[index], biome, scratch.terrainFlags[index]);
+                scratch.surfaceHeights[index] = findSurface(column, worldX, worldZ);
+            }
+        }
+        column.setStatus(ChunkGenerationStatus.SURFACE);
+    }
+
+    void postProcessChunk(GeneratedChunkColumn column) {
+        if (column == null) {
+            return;
+        }
+        int startX = column.chunkX * GameConfig.CHUNK_SIZE;
+        int startZ = column.chunkZ * GameConfig.CHUNK_SIZE;
+        GenerationScratch scratch = SCRATCH.get();
+        cacheTerrainMetadata(startX, startZ, scratch, true);
+        carveTerrain(column, startX, startZ, scratch);
+        fillFluids(column, startX, startZ, scratch);
+        placeFeatures(column, startX, startZ, scratch);
+    }
+
+    private void carveTerrain(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        carveCaves(column, startX, startZ, scratch);
+        carveCaveNetworks(column, startX, startZ);
+        column.setStatus(ChunkGenerationStatus.CARVERS);
+    }
+
+    private void fillFluids(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        populateKarstLakes(column, startX, startZ, scratch);
+        populateCaveFluids(column, startX, startZ, scratch);
+        populateCavePatches(column, startX, startZ, scratch);
+        stabilizeGeneratedSand(column, startX, startZ);
+        floodBelowSeaLevel(column, startX, startZ, scratch);
+        populateDeepLavaPockets(column, startX, startZ);
+        column.setStatus(ChunkGenerationStatus.FLUIDS);
+    }
+
+    private void placeFeatures(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        populateAquaticPlants(column, startX, startZ, scratch);
+        populateSmallSurfacePools(column, startX, startZ, scratch);
+        populateOreClusters(column, startX, startZ, scratch);
+        populateCaveWallOres(column, startX, startZ, scratch);
+        populateSurface(column, startX, startZ, scratch);
+        populateStructures(column, startX, startZ, scratch);
+        smoothSnowCoverage(column, startX, startZ, scratch);
+        removeSubmergedPlantsAndSnow(column, startX, startZ);
+        recalculateSurfaceHeights(column, startX, startZ);
+        column.setStatus(ChunkGenerationStatus.FULL);
+    }
+
+    private void populateStructures(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        populateVillagePieces(column, startX, startZ, scratch);
+        populateMineshaftPieces(column, startX, startZ);
+    }
+
+    private void populateVillagePieces(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        int minCellX = Math.floorDiv(column.chunkX - 4, VILLAGE_CELL_SIZE_CHUNKS);
+        int maxCellX = Math.floorDiv(column.chunkX + 4, VILLAGE_CELL_SIZE_CHUNKS);
+        int minCellZ = Math.floorDiv(column.chunkZ - 4, VILLAGE_CELL_SIZE_CHUNKS);
+        int maxCellZ = Math.floorDiv(column.chunkZ + 4, VILLAGE_CELL_SIZE_CHUNKS);
+        for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
+            for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+                VillagePlan plan = sampleVillagePlan(cellX, cellZ);
+                if (plan == null
+                    || Math.abs(column.chunkX - plan.centerChunkX) > 4
+                    || Math.abs(column.chunkZ - plan.centerChunkZ) > 4) {
+                    continue;
+                }
+                placeVillagePlan(column, plan);
+            }
+        }
+    }
+
+    private VillagePlan sampleVillagePlan(int cellX, int cellZ) {
+        long cellSeed = mix64(seed ^ ((long) cellX * 918273645L) ^ ((long) cellZ * 192837465L));
+        if (randomUnit(cellSeed) > VILLAGE_CHANCE) {
+            return null;
+        }
+        int centerChunkX = cellX * VILLAGE_CELL_SIZE_CHUNKS + 2 + (int) (randomUnit(cellSeed ^ 0xA53A9E1BL) * 3.0);
+        int centerChunkZ = cellZ * VILLAGE_CELL_SIZE_CHUNKS + 2 + (int) (randomUnit(cellSeed ^ 0xC13FA9A9L) * 3.0);
+        int centerX = centerChunkX * GameConfig.CHUNK_SIZE + 8;
+        int centerZ = centerChunkZ * GameConfig.CHUNK_SIZE + 8;
+        int baseY = averageTerrainHeight(centerX - 22, centerZ - 22, 44, 44);
+        if (!isVillageSiteSuitable(centerX, centerZ, baseY)) {
+            return null;
+        }
+        return new VillagePlan(centerChunkX, centerChunkZ, centerX, centerZ, baseY, cellSeed);
+    }
+
+    private boolean isVillageSiteSuitable(int centerX, int centerZ, int baseY) {
+        if (baseY <= GameConfig.SEA_LEVEL + 1 || baseY > GameConfig.SEA_LEVEL + 34) {
+            return false;
+        }
+        if (!isNaturalVillageClearing(centerX, centerZ)) {
+            return false;
+        }
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int samples = 0;
+        for (int dx = -28; dx <= 28; dx += 7) {
+            for (int dz = -28; dz <= 28; dz += 7) {
+                int x = centerX + dx;
+                int z = centerZ + dz;
+                TerrainSample sample = terrainSampleAt(x, z);
+                RiverSample river = sampleRiver(x, z, sample.approximateSurfaceHeight, sampleContinentalness(x, z), sampleLakeBasin(x, z));
+                if (isAquaticTerrain(sample.terrainFlags) || (river != null && river.wet && river.mask > 0.30)) {
+                    return false;
+                }
+                minY = Math.min(minY, sample.approximateSurfaceHeight);
+                maxY = Math.max(maxY, sample.approximateSurfaceHeight);
+                samples++;
+            }
+        }
+        return samples > 0 && maxY - minY <= 8 && Math.abs(baseY - ((minY + maxY) / 2)) <= 5;
+    }
+
+    private boolean isNaturalVillageClearing(int centerX, int centerZ) {
+        int openSamples = 0;
+        int samples = 0;
+        for (int dx = -30; dx <= 30; dx += 10) {
+            for (int dz = -30; dz <= 30; dz += 10) {
+                Biome biome = sampleBiome(centerX + dx, centerZ + dz);
+                if (!biomeCanHostVillageClearing(biome)) {
+                    return false;
+                }
+                double clearing = climate01(fractalNoise((centerX + dx + 3800.0) * 0.018, (centerZ + dz - 4100.0) * 0.018, 2, 0.56));
+                double treePressure = climate01(fractalNoise((centerX + dx - 900.0) * 0.040, (centerZ + dz + 760.0) * 0.040, 2, 0.54));
+                if (clearing > 0.38 && treePressure < 0.72) {
+                    openSamples++;
+                }
+                samples++;
+            }
+        }
+        return samples > 0 && openSamples >= samples / 2;
+    }
+
+    private boolean biomeCanHostVillageClearing(Biome biome) {
+        return biome == Biome.PLAINS
+            || biome == Biome.SAVANNA
+            || biome == Biome.SHRUBLAND
+            || biome == Biome.SEASONAL_FOREST
+            || biome == Biome.FOREST
+            || biome == Biome.RAINFOREST;
+    }
+
+    private void placeVillagePlan(GeneratedChunkColumn column, VillagePlan plan) {
+        levelVillageArea(column, plan.centerX - 5, plan.centerZ - 5, 11, 11, plan.baseY, 6);
+        clearVillageCanopy(column, plan.centerX, plan.centerZ, plan.baseY, 42);
+        StructureTemplates.place(column, "village_plaza", plan.centerX - 3, plan.baseY, plan.centerZ - 3, 0);
+        placeVillagePath(column, plan.centerX - 30, plan.centerZ, plan.centerX + 30, plan.centerZ, plan.baseY);
+        placeVillagePath(column, plan.centerX, plan.centerZ - 26, plan.centerX, plan.centerZ + 27, plan.baseY);
+
+        StructureTemplates.place(column, smallHouseFor(plan.seed, 1), plan.centerX - 24, plan.baseY, plan.centerZ - 18, rotationFor(plan.seed, 1));
+        placeVillagePath(column, plan.centerX, plan.centerZ, plan.centerX - 21, plan.centerZ - 13, plan.baseY);
+        StructureTemplates.place(column, smallHouseFor(plan.seed, 2), plan.centerX + 13, plan.baseY, plan.centerZ - 19, rotationFor(plan.seed, 2));
+        placeVillagePath(column, plan.centerX, plan.centerZ, plan.centerX + 16, plan.centerZ - 13, plan.baseY);
+        StructureTemplates.place(column, "village_house_large", plan.centerX - 27, plan.baseY, plan.centerZ + 13, rotationFor(plan.seed, 3));
+        placeVillagePath(column, plan.centerX, plan.centerZ, plan.centerX - 23, plan.centerZ + 13, plan.baseY);
+        StructureTemplates.place(column, "village_farm", plan.centerX + 11, plan.baseY, plan.centerZ + 11, rotationFor(plan.seed, 4));
+        placeVillagePath(column, plan.centerX, plan.centerZ, plan.centerX + 17, plan.centerZ + 15, plan.baseY);
+
+        if (randomUnit(plan.seed ^ 0x4040L) < 0.68) {
+            StructureTemplates.place(column, "village_farm", plan.centerX + 24, plan.baseY, plan.centerZ - 7, rotationFor(plan.seed, 5));
+            placeVillagePath(column, plan.centerX, plan.centerZ, plan.centerX + 29, plan.centerZ - 3, plan.baseY);
+        }
+        if (randomUnit(plan.seed ^ 0x5050L) < 0.55) {
+            StructureTemplates.place(column, smallHouseFor(plan.seed, 6), plan.centerX + 16, plan.baseY, plan.centerZ + 21, rotationFor(plan.seed, 6));
+            placeVillagePath(column, plan.centerX, plan.centerZ, plan.centerX + 19, plan.centerZ + 21, plan.baseY);
+        }
+    }
+
+    private String smallHouseFor(long planSeed, int salt) {
+        return randomUnit(planSeed ^ (salt * 0x9E3779B97F4A7C15L)) < 0.5 ? "village_house_small_1" : "village_house_small_2";
+    }
+
+    private int rotationFor(long planSeed, int salt) {
+        return (int) Math.floor(randomUnit(planSeed ^ (salt * 0x632BE59BD9B4E019L)) * 4.0) & 3;
+    }
+
+    private void clearVillageCanopy(GeneratedChunkColumn column, int centerX, int centerZ, int baseY, int radius) {
+        int radiusSq = radius * radius;
+        for (int x = centerX - radius; x <= centerX + radius; x++) {
+            for (int z = centerZ - radius; z <= centerZ + radius; z++) {
+                if (!isInColumn(column, x, z)) {
+                    continue;
+                }
+                int dx = x - centerX;
+                int dz = z - centerZ;
+                if (dx * dx + dz * dz > radiusSq) {
+                    continue;
+                }
+                removeTreeColumn(column, x, z, baseY);
+                int surfaceY = findSurface(column, x, z);
+                if (Math.abs(surfaceY - baseY) > 6) {
+                    continue;
+                }
+                byte surface = column.getBlock(x, surfaceY, z);
+                if (surface == GameConfig.OAK_LOG || surface == GameConfig.PINE_LOG) {
+                    setStructureBlock(column, x, surfaceY, z, GameConfig.GRASS);
+                }
+                for (int y = Math.max(GameConfig.WORLD_MIN_Y + 1, baseY - 2); y <= Math.min(GameConfig.WORLD_MAX_Y, baseY + 28); y++) {
+                    byte block = column.getBlock(x, y, z);
+                    if (block == GameConfig.OAK_LOG
+                        || block == GameConfig.OAK_LEAVES
+                        || block == GameConfig.PINE_LOG
+                        || block == GameConfig.PINE_LEAVES
+                        || block == GameConfig.TALL_GRASS
+                        || block == GameConfig.RED_FLOWER
+                        || block == GameConfig.YELLOW_FLOWER
+                        || block == GameConfig.SNOW_LAYER) {
+                        setStructureBlock(column, x, y, z, GameConfig.AIR);
+                    }
+                }
+            }
+        }
+    }
+
+    private void removeTreeColumn(GeneratedChunkColumn column, int x, int z, int baseY) {
+        for (int y = Math.max(GameConfig.WORLD_MIN_Y + 1, baseY - 3); y <= Math.min(GameConfig.WORLD_MAX_Y, baseY + 28); y++) {
+            byte block = column.getBlock(x, y, z);
+            if (block == GameConfig.OAK_LOG
+                || block == GameConfig.OAK_LEAVES
+                || block == GameConfig.PINE_LOG
+                || block == GameConfig.PINE_LEAVES) {
+                setStructureBlock(column, x, y, z, GameConfig.AIR);
+            }
+        }
+    }
+
+    private void placeVillagePath(GeneratedChunkColumn column, int fromX, int fromZ, int toX, int toZ, int baseY) {
+        int stepX = Integer.compare(toX, fromX);
+        for (int x = fromX; x != toX + stepX; x += stepX == 0 ? 1 : stepX) {
+            placeWidePathBlock(column, x, fromZ, baseY);
+            if (stepX == 0) {
+                break;
+            }
+        }
+        int stepZ = Integer.compare(toZ, fromZ);
+        for (int z = fromZ; z != toZ + stepZ; z += stepZ == 0 ? 1 : stepZ) {
+            placeWidePathBlock(column, toX, z, baseY);
+            if (stepZ == 0) {
+                break;
+            }
+        }
+    }
+
+    private void placeWidePathBlock(GeneratedChunkColumn column, int x, int z, int baseY) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (Math.abs(dx) + Math.abs(dz) > 2) {
+                    continue;
+                }
+                placePathBlock(column, x + dx, z + dz, baseY, 4);
+            }
+        }
+    }
+
+    private void placePathBlock(GeneratedChunkColumn column, int x, int z, int baseY, int maxDelta) {
+        if (!isInColumn(column, x, z)) {
+            return;
+        }
+        int surfaceY = findSurface(column, x, z);
+        byte surface = column.getBlock(x, surfaceY, z);
+        if (!isBuildableSurface(surface) || Math.abs(surfaceY - baseY) > maxDelta) {
+            return;
+        }
+        setStructureBlock(column, x, surfaceY, z, GameConfig.GRAVEL);
+        setStructureBlock(column, x, surfaceY + 1, z, GameConfig.AIR);
+        setStructureBlock(column, x, surfaceY + 2, z, GameConfig.AIR);
+    }
+
+    private void levelVillageArea(GeneratedChunkColumn column, int originX, int originZ, int width, int depth, int groundY, int clearHeight) {
+        for (int x = originX; x < originX + width; x++) {
+            for (int z = originZ; z < originZ + depth; z++) {
+                if (!isInColumn(column, x, z)) {
+                    continue;
+                }
+                int surfaceY = findSurface(column, x, z);
+                if (Math.abs(surfaceY - groundY) > 3) {
+                    continue;
+                }
+                for (int y = Math.max(GameConfig.WORLD_MIN_Y + 1, groundY - 2); y < groundY; y++) {
+                    if (column.getBlock(x, y, z) == GameConfig.AIR) {
+                        setStructureBlock(column, x, y, z, GameConfig.DIRT);
+                    }
+                }
+                setStructureBlock(column, x, groundY, z, GameConfig.DIRT);
+                for (int y = groundY + 1; y <= groundY + clearHeight; y++) {
+                    setStructureBlock(column, x, y, z, GameConfig.AIR);
+                }
+            }
+        }
+    }
+
+    private int averageTerrainHeight(int originX, int originZ, int width, int depth) {
+        int total = 0;
+        int count = 0;
+        for (int x = originX; x < originX + width; x += Math.max(1, width / 3)) {
+            for (int z = originZ; z < originZ + depth; z += Math.max(1, depth / 3)) {
+                total += estimateSurfaceHeight(x, z);
+                count++;
+            }
+        }
+        return count == 0 ? GameConfig.SEA_LEVEL : Math.round((float) total / count);
+    }
+
+    private void populateMineshaftPieces(GeneratedChunkColumn column, int startX, int startZ) {
+        int minCellX = Math.floorDiv(column.chunkX - 5, MINESHAFT_CELL_SIZE_CHUNKS);
+        int maxCellX = Math.floorDiv(column.chunkX + 5, MINESHAFT_CELL_SIZE_CHUNKS);
+        int minCellZ = Math.floorDiv(column.chunkZ - 5, MINESHAFT_CELL_SIZE_CHUNKS);
+        int maxCellZ = Math.floorDiv(column.chunkZ + 5, MINESHAFT_CELL_SIZE_CHUNKS);
+        for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
+            for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+                MineshaftPlan plan = sampleMineshaftPlan(cellX, cellZ);
+                if (plan == null
+                    || Math.abs(column.chunkX - plan.centerChunkX) > 5
+                    || Math.abs(column.chunkZ - plan.centerChunkZ) > 5) {
+                    continue;
+                }
+                placeMineshaftNetwork(column, plan);
+            }
+        }
+    }
+
+    private MineshaftPlan sampleMineshaftPlan(int cellX, int cellZ) {
+        long cellSeed = mix64(seed ^ ((long) cellX * 73428767L) ^ ((long) cellZ * 912931L));
+        if (randomUnit(cellSeed) > MINESHAFT_CHANCE) {
+            return null;
+        }
+        int centerChunkX = cellX * MINESHAFT_CELL_SIZE_CHUNKS + 2 + (int) (randomUnit(cellSeed ^ 0x31337L) * 3.0);
+        int centerChunkZ = cellZ * MINESHAFT_CELL_SIZE_CHUNKS + 2 + (int) (randomUnit(cellSeed ^ 0x51515L) * 3.0);
+        int y = GameConfig.SEA_LEVEL - 26 - (int) Math.round(randomUnit(cellSeed ^ 0x51EEDL) * 42.0);
+        y = clamp(y, GameConfig.WORLD_MIN_Y + 12, GameConfig.SEA_LEVEL - 12);
+        return new MineshaftPlan(centerChunkX, centerChunkZ, centerChunkX * GameConfig.CHUNK_SIZE + 8, centerChunkZ * GameConfig.CHUNK_SIZE + 8, y, cellSeed);
+    }
+
+    private void placeMineshaftNetwork(GeneratedChunkColumn column, MineshaftPlan plan) {
+        StructureTemplates.place(column, "mineshaft_room", plan.centerX, plan.y, plan.centerZ, 0);
+        for (int direction = 0; direction < 4; direction++) {
+            int length = 28 + (int) (randomUnit(plan.seed ^ (direction * 0x9E3779B97F4A7C15L)) * 26.0);
+            carveMineshaftTunnel(column, plan.seed, plan.centerX, plan.y, plan.centerZ, direction, length, direction, true);
+        }
+    }
+
+    private void carveMineshaftTunnel(GeneratedChunkColumn column, long seedValue, int startX, int startY, int startZ,
+                                      int direction, int length, int pathId, boolean branchable) {
+        int dx = direction == 1 ? 1 : (direction == 3 ? -1 : 0);
+        int dz = direction == 2 ? 1 : (direction == 0 ? -1 : 0);
+        int x = startX;
+        int z = startZ;
+        int y = startY;
+        boolean railRun = randomUnit(seedValue ^ (pathId * 0xABC98388FB8FAC03L)) < 0.64;
+        for (int step = 1; step <= length; step++) {
+            x += dx;
+            z += dz;
+            if (step % 13 == 0) {
+                y += randomUnit(seedValue ^ (pathId * 7919L) ^ step) > 0.5 ? 1 : -1;
+                y = clamp(y, GameConfig.WORLD_MIN_Y + 10, GameConfig.SEA_LEVEL - 8);
+            }
+            if (step > 10 && randomUnit(seedValue ^ (pathId * 4177L) ^ (step * 131L)) < 0.035) {
+                placeMineshaftDamageMarker(column, x, y, z, dx != 0);
+                step += 3;
+                continue;
+            }
+            carveMineshaftCell(column, x, y, z);
+            if (step % 5 == 0) {
+                StructureTemplates.place(column, "mineshaft_support", x, y, z, dx != 0 ? 0 : 1);
+            }
+            if (step % 11 == 0 && randomUnit(seedValue ^ (pathId * 973L) ^ step) < 0.45) {
+                setStructureBlock(column, x, y + 2, z, GameConfig.TORCH);
+            }
+            if (railRun && (step & 1) == 0 && randomUnit(seedValue ^ (step * 31L) ^ (pathId * 17L)) > 0.22) {
+                setStructureBlock(column, x, y, z, GameConfig.RAIL);
+            }
+            if (step > 7 && randomUnit(seedValue ^ (pathId * 1193L) ^ (step * 23L)) < 0.055) {
+                placeMineshaftDamageMarker(column, x, y, z, dx != 0);
+            }
+            if (branchable && step > 8 && step % 14 == 0) {
+                carveMineshaftIntersection(column, x, y, z);
+                int side = randomUnit(seedValue ^ (step * 0x5DEECE66DL) ^ pathId) < 0.5 ? turnLeft(direction) : turnRight(direction);
+                int branchLength = 10 + (int) (randomUnit(seedValue ^ (step * 0xBEEFL) ^ pathId) * 18.0);
+                carveMineshaftTunnel(column, seedValue ^ (step * 0x632BE59BD9B4E019L), x, y, z, side, branchLength, pathId * 10 + step, false);
+            }
+            if (branchable && step > 16 && step % 23 == 0 && randomUnit(seedValue ^ (step * 0x7777L)) < 0.48) {
+                carveMineshaftRoom(column, x, y, z, 3, 2, 3);
+                if (randomUnit(seedValue ^ (step * 0x9999L)) < 0.55) {
+                    setStructureBlock(column, x + (dx == 0 ? 1 : 0), y, z + (dz == 0 ? 1 : 0), GameConfig.CHEST);
+                }
+            }
+        }
+    }
+
+    private int turnLeft(int direction) {
+        return (direction + 3) & 3;
+    }
+
+    private int turnRight(int direction) {
+        return (direction + 1) & 3;
+    }
+
+    private void carveMineshaftCell(GeneratedChunkColumn column, int x, int y, int z) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dy = 0; dy <= 2; dy++) {
+                    setStructureBlock(column, x + dx, y + dy, z + dz, GameConfig.AIR);
+                }
+                setStructureBlock(column, x + dx, y - 1, z + dz, InventoryItems.OAK_PLANKS);
+            }
+        }
+    }
+
+    private void carveMineshaftIntersection(GeneratedChunkColumn column, int x, int y, int z) {
+        StructureTemplates.place(column, "mineshaft_crossing", x, y, z, 0);
+    }
+
+    private void carveMineshaftRoom(GeneratedChunkColumn column, int centerX, int y, int centerZ, int radiusX, int radiusY, int radiusZ) {
+        for (int dx = -radiusX; dx <= radiusX; dx++) {
+            for (int dz = -radiusZ; dz <= radiusZ; dz++) {
+                for (int dy = -1; dy <= radiusY + 1; dy++) {
+                    boolean shell = Math.abs(dx) == radiusX || Math.abs(dz) == radiusZ || dy == -1;
+                    setStructureBlock(column, centerX + dx, y + dy, centerZ + dz, shell && dy == -1 ? InventoryItems.OAK_PLANKS : GameConfig.AIR);
+                }
+            }
+        }
+        setStructureBlock(column, centerX - radiusX + 1, y, centerZ - radiusZ + 1, GameConfig.CHEST);
+        setStructureBlock(column, centerX + radiusX - 1, y, centerZ + radiusZ - 1, GameConfig.TORCH);
+    }
+
+    private void placeMineshaftDamageMarker(GeneratedChunkColumn column, int x, int y, int z, boolean alongX) {
+        int sideX = alongX ? 0 : 1;
+        int sideZ = alongX ? 1 : 0;
+        setStructureBlock(column, x, y, z, GameConfig.AIR);
+        setStructureBlock(column, x, y - 1, z, GameConfig.GRAVEL);
+        setStructureBlock(column, x + sideX, y - 1, z + sideZ, GameConfig.COBBLESTONE);
+        setStructureBlock(column, x - sideX, y, z - sideZ, GameConfig.AIR);
+        setStructureBlock(column, x + sideX, y + 1, z + sideZ, GameConfig.AIR);
+        if (randomUnit(mix64(seed ^ ((long) x * 31L) ^ ((long) z * 17L) ^ y)) < 0.45) {
+            setStructureBlock(column, x + sideX, y, z + sideZ, GameConfig.OAK_FENCE);
+        }
+    }
+
+    private boolean isBuildableSurface(byte block) {
+        return block == GameConfig.GRASS || block == GameConfig.DIRT || block == GameConfig.SAND || block == GameConfig.GRAVEL;
+    }
+
+    private boolean isInColumn(GeneratedChunkColumn column, int worldX, int worldZ) {
+        return Math.floorDiv(worldX, GameConfig.CHUNK_SIZE) == column.chunkX
+            && Math.floorDiv(worldZ, GameConfig.CHUNK_SIZE) == column.chunkZ;
+    }
+
+    private void setStructureBlock(GeneratedChunkColumn column, int worldX, int worldY, int worldZ, byte block) {
+        if (Math.floorDiv(worldX, GameConfig.CHUNK_SIZE) != column.chunkX
+            || Math.floorDiv(worldZ, GameConfig.CHUNK_SIZE) != column.chunkZ) {
+            return;
+        }
+        column.setBlock(worldX, worldY, worldZ, block);
+    }
+
+    int estimateSurfaceHeight(int worldX, int worldZ) {
+        return sampleSurfaceHeight(worldX, worldZ, sampleBiome(worldX, worldZ));
+    }
+
+    int debugVillageCellSizeChunks() {
+        return VILLAGE_CELL_SIZE_CHUNKS;
+    }
+
+    int[] debugVillageCenterForCell(int cellX, int cellZ) {
+        VillagePlan plan = sampleVillagePlan(cellX, cellZ);
+        if (plan == null) {
+            return null;
+        }
+        return new int[]{plan.centerX, plan.baseY, plan.centerZ, plan.centerChunkX, plan.centerChunkZ};
+    }
+
+    boolean isFaceVisible(GeneratedChunkColumn column, int worldX, int worldY, int worldZ, Face face) {
+        byte source = column.getBlock(worldX, worldY, worldZ);
+        if (source == GameConfig.AIR) {
+            return false;
+        }
+
+        int neighborX = worldX;
+        int neighborY = worldY;
+        int neighborZ = worldZ;
+        switch (face) {
+            case WEST:
+                neighborX--;
+                break;
+            case EAST:
+                neighborX++;
+                break;
+            case TOP:
+                neighborY++;
+                break;
+            case BOTTOM:
+                neighborY--;
+                break;
+            case NORTH:
+                neighborZ--;
+                break;
+            case SOUTH:
+                neighborZ++;
+                break;
+            default:
+                break;
+        }
+
+        byte neighbor = column.getBlock(neighborX, neighborY, neighborZ);
+        return !isOpaque(neighbor);
+    }
+
+    private void applySurfaceColumn(GeneratedChunkColumn column, int worldX, int worldZ, int dirtDepth, Biome biome, byte terrainFlags) {
+        int surfaceHeight = findSurface(column, worldX, worldZ);
+        if (surfaceHeight <= GameConfig.WORLD_MIN_Y) {
+            return;
+        }
+
+        int depth = 0;
+        for (int worldY = surfaceHeight; worldY >= GameConfig.WORLD_MIN_Y; worldY--) {
+            byte block = column.getBlock(worldX, worldY, worldZ);
+            if (!isTerrainBaseBlock(block)) {
+                if (block != GameConfig.AIR && !GameConfig.isLiquidBlock(block)) {
+                    depth++;
+                }
+                continue;
+            }
+
+            if (worldY < -8) {
+                break;
+            }
+
+            if (depth == 0) {
+                column.setBlock(worldX, worldY, worldZ, topBlockForTerrain(biome, terrainFlags, surfaceHeight, worldX, worldZ));
+            } else if (depth <= dirtDepth) {
+                column.setBlock(worldX, worldY, worldZ, fillerBlockForTerrain(biome, terrainFlags));
+            } else {
+                break;
+            }
+            depth++;
+        }
+    }
+
+    private boolean isTerrainBaseBlock(byte block) {
+        return block == GameConfig.STONE || block == GameConfig.DEEPSLATE || block == GameConfig.COBBLESTONE;
+    }
+
+    private int bedrockTopY(int worldX, int worldZ) {
+        double noise = climate01(fractalNoise((worldX + 31.0) * 0.23, (worldZ - 17.0) * 0.23, 2, 0.55));
+        return GameConfig.WORLD_MIN_Y + 3 + (noise > 0.58 ? 1 : 0);
+    }
+
+    private byte baseStoneForY(int worldY) {
+        return worldY < 0 ? GameConfig.DEEPSLATE : GameConfig.STONE;
+    }
+
+    private void cacheTerrainMetadata(int startX, int startZ, GenerationScratch scratch, boolean updateBiomes) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                double continentalness = densitySampler.sampleContinentalness(worldX, worldZ);
+                double lakeBasin = sampleLakeBasin(worldX, worldZ);
+                Biome biome = updateBiomes ? sampleBiome(worldX, worldZ) : BIOMES[scratch.biomeOrdinals[index] & 0xFF];
+                int surfaceHeight = sampleSurfaceHeight(worldX, worldZ, biome, continentalness, lakeBasin);
+                RiverSample river = sampleRiver(worldX, worldZ, surfaceHeight, continentalness, lakeBasin);
+                byte terrainFlags = sampleTerrainFlags(worldX, worldZ, continentalness, lakeBasin, surfaceHeight);
+                int dirtDepth = sampleDirtDepth(worldX, worldZ, biome);
+                if (updateBiomes) {
+                    scratch.biomeOrdinals[index] = (byte) biome.ordinal();
+                }
+                scratch.biomeOrdinals[index] = (byte) biome.ordinal();
+                scratch.surfaceHeights[index] = surfaceHeight;
+                scratch.dirtDepths[index] = (byte) dirtDepth;
+                scratch.terrainFlags[index] = terrainFlags;
+                scratch.continentalness[index] = continentalness;
+                scratch.lakeBasins[index] = lakeBasin;
+                scratch.riverSamples[index] = river;
+                scratch.samples[index] = new TerrainSample(surfaceHeight, terrainFlags);
+            }
+        }
+    }
+
+    private void carveCaves(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                Biome biome = BIOMES[scratch.biomeOrdinals[index] & 0xFF];
+                int surfaceHeight = scratch.surfaceHeights[index];
+                byte terrainFlags = scratch.terrainFlags[index];
+                boolean aquatic = isAquaticTerrain(terrainFlags);
+                int roofDepth = caveRoofDepth(terrainFlags);
+                boolean entranceColumn = isCaveEntranceColumn(worldX, worldZ, surfaceHeight, terrainFlags);
+                int caveCeiling = Math.min(surfaceHeight - (entranceColumn ? 0 : roofDepth), GameConfig.WORLD_MAX_Y - 1);
+                for (int worldY = 4; worldY < caveCeiling; worldY++) {
+                    byte block = column.getBlock(worldX, worldY, worldZ);
+                    if (!canCarveCaveBlock(block) && !canCarveCaveEntranceBlock(block, entranceColumn)) {
+                        continue;
+                    }
+
+                    int depth = surfaceHeight - worldY;
+                    if (aquatic && depth < roofDepth + 6) {
+                        continue;
+                    }
+
+                    boolean stoneLike = canCarveCaveBlock(block);
+                    double caveDensity = stoneLike ? densitySampler.sampleCaveDensity(worldX, worldY, worldZ) : 0.0;
+                    boolean protectedRoof = aquatic && depth < roofDepth + 10;
+                    boolean carveTunnel = stoneLike
+                        && !protectedRoof
+                        && depth >= CAVE_MIN_DEPTH_BELOW_SURFACE + 3
+                        && caveDensity > (worldY < 0 ? CAVE_TUNNEL_THRESHOLD + 0.02 : CAVE_TUNNEL_THRESHOLD + 0.08);
+                    boolean carveRoom = stoneLike
+                        && !protectedRoof
+                        && worldY < 32
+                        && caveDensity > CAVE_ROOM_THRESHOLD + 0.08;
+                    boolean carveEntrance = canCarveCaveEntranceBlock(block, entranceColumn)
+                        && !aquatic
+                        && worldY >= surfaceHeight - 24
+                        && shouldCarveCaveEntrance(worldX, worldY, worldZ, surfaceHeight);
+                    boolean carveCanyon = stoneLike && shouldCarveCanyon(worldX, worldY, worldZ, surfaceHeight, biome, terrainFlags);
+
+                    if (carveTunnel || carveRoom || carveEntrance || carveCanyon) {
+                        column.setBlock(worldX, worldY, worldZ, GameConfig.AIR);
+                    }
+                }
+            }
+        }
+    }
+
+    private void carveCaveNetworks(GeneratedChunkColumn column, int startX, int startZ) {
+        int minCellX = Math.floorDiv(startX - 72, CAVE_SYSTEM_SIZE);
+        int maxCellX = Math.floorDiv(startX + GameConfig.CHUNK_SIZE + 72, CAVE_SYSTEM_SIZE);
+        int minCellZ = Math.floorDiv(startZ - 72, CAVE_SYSTEM_SIZE);
+        int maxCellZ = Math.floorDiv(startZ + GameConfig.CHUNK_SIZE + 72, CAVE_SYSTEM_SIZE);
+        for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
+            for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+                long caveSeed = mix64(seed ^ ((long) cellX * 544910567L) ^ ((long) cellZ * 1301081L));
+                if (randomUnit(caveSeed) > 0.66) {
+                    continue;
+                }
+                int centerX = cellX * CAVE_SYSTEM_SIZE + 14 + (int) (randomUnit(caveSeed ^ 0xCAFE1L) * 36.0);
+                int centerZ = cellZ * CAVE_SYSTEM_SIZE + 14 + (int) (randomUnit(caveSeed ^ 0xCAFE2L) * 36.0);
+                TerrainSample sample = terrainSampleAt(centerX, centerZ);
+                if (isAquaticTerrain(sample.terrainFlags)) {
+                    continue;
+                }
+                double layerRoll = randomUnit(caveSeed ^ 0xCAFE3L);
+                int centerY;
+                if (layerRoll < 0.58) {
+                    centerY = sample.approximateSurfaceHeight - 10 - (int) Math.round(randomUnit(caveSeed ^ 0xCAFE4L) * 28.0);
+                } else {
+                    centerY = GameConfig.SEA_LEVEL - 24 - (int) Math.round(randomUnit(caveSeed ^ 0xCAFE5L) * 58.0);
+                }
+                centerY = clamp(centerY, GameConfig.WORLD_MIN_Y + 13, Math.min(sample.approximateSurfaceHeight - 5, GameConfig.SEA_LEVEL + 16));
+                boolean deepSystem = centerY < -12;
+                double roomRadius = deepSystem
+                    ? 1.75 + randomUnit(caveSeed ^ 0x11L) * 0.95
+                    : 2.35 + randomUnit(caveSeed ^ 0x11L) * 1.35;
+                carveCaveRoom(column, centerX, centerY, centerZ, roomRadius, deepSystem ? 1.05 : 1.55, !deepSystem);
+                int tunnels = 2 + (int) (randomUnit(caveSeed ^ 0x22L) * 3.0);
+                for (int tunnel = 0; tunnel < tunnels; tunnel++) {
+                    carveCaveTunnel(column, caveSeed, centerX, centerY, centerZ, tunnel);
+                }
+                if (randomUnit(caveSeed ^ 0x33L) < 0.78) {
+                    carveCaveEntrance(column, caveSeed, centerX, centerY, centerZ, sample.approximateSurfaceHeight);
+                }
+                if (randomUnit(caveSeed ^ 0x44L) < 0.34) {
+                    carveVerticalCaveLink(column, caveSeed, centerX, centerY, centerZ);
+                }
+                if (randomUnit(caveSeed ^ 0x5A5A5A5AL) < 0.12) {
+                    carveKarstCavern(column, caveSeed, centerX, centerY, centerZ);
+                }
+            }
+        }
+    }
+
+    private void carveKarstCavern(GeneratedChunkColumn column, long caveSeed, int centerX, int centerY, int centerZ) {
+        boolean lavaCavern = randomUnit(caveSeed ^ 0xDADAL) < 0.42;
+        int cavernY = lavaCavern
+            ? clamp(centerY - 12 - (int) (randomUnit(caveSeed ^ 0xBEEFL) * 20.0), GameConfig.WORLD_MIN_Y + 13, 8)
+            : clamp(centerY - 4 + (int) Math.round((randomUnit(caveSeed ^ 0xFACE1L) - 0.5) * 16.0), 14, GameConfig.SEA_LEVEL - 12);
+        double radius = lavaCavern
+            ? 4.2 + randomUnit(caveSeed ^ 0xFACE2L) * 2.6
+            : 4.8 + randomUnit(caveSeed ^ 0xFACE3L) * 3.2;
+        carveCaveEllipsoid(column, centerX, cavernY + 2, centerZ, radius, 2.15 + radius * 0.22, radius * 0.86, false);
+        carveCaveEllipsoid(column, centerX, cavernY - 1, centerZ, radius * 0.72, 1.25, radius * 0.62, false);
+    }
+
+    private void carveCaveTunnel(GeneratedChunkColumn column, long caveSeed, int startX, int startY, int startZ, int tunnelId) {
+        double angle = (Math.PI * 0.5 * tunnelId) + (randomUnit(caveSeed ^ (tunnelId * 0x9E3779B97F4A7C15L)) - 0.5) * 0.42;
+        double x = startX;
+        double y = startY;
+        double z = startZ;
+        boolean deepTunnel = startY < -12;
+        int length = 24 + (int) (randomUnit(caveSeed ^ (tunnelId * 0x12345L)) * (deepTunnel ? 26.0 : 36.0));
+        double radius = (deepTunnel ? 0.92 : 1.08) + randomUnit(caveSeed ^ (tunnelId * 0x54321L)) * (deepTunnel ? 0.38 : 0.50);
+        for (int step = 0; step < length; step++) {
+            angle += fractalNoise((startX + tunnelId * 97.0 + step) * 0.025, (startZ - tunnelId * 53.0 + step) * 0.025, 1, 0.50) * (deepTunnel ? 0.052 : 0.075);
+            x += Math.cos(angle);
+            z += Math.sin(angle);
+            y += fractalNoise((startX + step * 3.0) * 0.020, (startZ - step * 2.0) * 0.020, 1, 0.50) * (deepTunnel ? 0.10 : 0.18);
+            y = clamp(y, GameConfig.WORLD_MIN_Y + 9.0, GameConfig.SEA_LEVEL + 18.0);
+            double choke = climate01(fractalNoise3((x + tunnelId * 171.0) * 0.086, (y - 44.0) * 0.071, (z - tunnelId * 91.0) * 0.086, 1, 0.50));
+            double stepRadius = radius * lerp(0.72, 1.12, choke) + Math.sin(step * 0.23) * 0.11;
+            double verticalRadius = Math.max(deepTunnel ? 0.88 : 1.08, stepRadius * (deepTunnel ? 0.70 : 0.80));
+            carveCaveEllipsoid(column, (int) Math.round(x), (int) Math.round(y), (int) Math.round(z), stepRadius, verticalRadius, stepRadius, false);
+            if (step > 12 && step % 21 == 0 && randomUnit(caveSeed ^ (tunnelId * 1777L) ^ step) < (deepTunnel ? 0.24 : 0.36)) {
+                carveCaveRoom(column, (int) Math.round(x), (int) Math.round(y), (int) Math.round(z),
+                    (deepTunnel ? 1.45 : 1.85) + randomUnit(caveSeed ^ step) * (deepTunnel ? 0.75 : 1.25),
+                    deepTunnel ? 0.95 : 1.30,
+                    false);
+            }
+        }
+    }
+
+    private void carveCaveEntrance(GeneratedChunkColumn column, long caveSeed, int targetX, int targetY, int targetZ, int surfaceY) {
+        int mouthX = targetX + (int) Math.round((randomUnit(caveSeed ^ 0xE17A9CEL) - 0.5) * 18.0);
+        int mouthZ = targetZ + (int) Math.round((randomUnit(caveSeed ^ 0xE17A9CFL) - 0.5) * 18.0);
+        TerrainSample mouthSample = terrainSampleAt(mouthX, mouthZ);
+        if (isAquaticTerrain(mouthSample.terrainFlags) || mouthSample.approximateSurfaceHeight <= GameConfig.SEA_LEVEL + 2) {
+            return;
+        }
+        int steps = Math.max(18, Math.abs(mouthX - targetX) + Math.abs(mouthZ - targetZ) + Math.max(8, mouthSample.approximateSurfaceHeight - targetY));
+        for (int step = 0; step <= steps; step++) {
+            double t = step / (double) steps;
+            int x = (int) Math.round(lerp(mouthX, targetX, t));
+            int z = (int) Math.round(lerp(mouthZ, targetZ, t));
+            int y = (int) Math.round(lerp(mouthSample.approximateSurfaceHeight - 1, targetY, t));
+            double radius = lerp(1.55, 1.18, t);
+            carveCaveEllipsoid(column, x, y, z, radius, 1.28, radius, true);
+        }
+    }
+
+    private void carveVerticalCaveLink(GeneratedChunkColumn column, long caveSeed, int centerX, int centerY, int centerZ) {
+        int topY = clamp(centerY + 12 + (int) (randomUnit(caveSeed ^ 0x7171L) * 18.0), centerY + 6, GameConfig.SEA_LEVEL + 6);
+        int bottomY = clamp(centerY - 10 - (int) (randomUnit(caveSeed ^ 0x8181L) * 26.0), GameConfig.WORLD_MIN_Y + 8, centerY - 5);
+        for (int y = bottomY; y <= topY; y++) {
+            double radius = 0.82 + 0.22 * Math.sin(y * 0.31);
+            carveCaveEllipsoid(column, centerX, y, centerZ, radius, 0.72, radius, false);
+        }
+    }
+
+    private void carveCaveRoom(GeneratedChunkColumn column, int centerX, int centerY, int centerZ, double radius, double verticalRadius, boolean allowLarge) {
+        double rx = radius;
+        double rz = radius * (allowLarge ? 1.08 : 1.0);
+        double ry = verticalRadius + radius * 0.16;
+        carveCaveEllipsoid(column, centerX, centerY, centerZ, rx, ry, rz, false);
+    }
+
+    private void carveCaveEllipsoid(GeneratedChunkColumn column, int centerX, int centerY, int centerZ,
+                                    double radiusX, double radiusY, double radiusZ, boolean allowSurfaceBlocks) {
+        int minX = (int) Math.floor(centerX - radiusX - 1.0);
+        int maxX = (int) Math.ceil(centerX + radiusX + 1.0);
+        int minY = (int) Math.floor(centerY - radiusY - 1.0);
+        int maxY = (int) Math.ceil(centerY + radiusY + 1.0);
+        int minZ = (int) Math.floor(centerZ - radiusZ - 1.0);
+        int maxZ = (int) Math.ceil(centerZ + radiusZ + 1.0);
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                if (!isInColumn(column, x, z)) {
+                    continue;
+                }
+                for (int y = minY; y <= maxY; y++) {
+                    if (!GameConfig.isWorldYInside(y) || y <= GameConfig.WORLD_MIN_Y + 4) {
+                        continue;
+                    }
+                    double nx = (x - centerX) / radiusX;
+                    double ny = (y - centerY) / radiusY;
+                    double nz = (z - centerZ) / radiusZ;
+                    if (nx * nx + ny * ny + nz * nz > 1.0) {
+                        continue;
+                    }
+                    byte block = column.getBlock(x, y, z);
+                    if (GameConfig.isLiquidBlock(block)) {
+                        continue;
+                    }
+                    if (canCarveCaveBlock(block) || canCarveCaveEntranceBlock(block, allowSurfaceBlocks)) {
+                        column.setBlock(x, y, z, GameConfig.AIR);
+                    }
+                }
+            }
+        }
+    }
+
+    private void populateAquaticPlants(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                byte terrainFlags = scratch.terrainFlags[index];
+                RiverSample river = scratch.riverSamples[index];
+                boolean riverWater = river != null && river.wet && river.mask > 0.48;
+                if ((terrainFlags & (TERRAIN_OCEAN | TERRAIN_LAKE)) == 0 && !riverWater) {
+                    continue;
+                }
+
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int floorY = findSurface(column, worldX, worldZ);
+                int waterLevel = riverWater ? river.waterLevel : waterLevelForTerrain(scratch.surfaceHeights[index], terrainFlags);
+                if (floorY < 2 || floorY + 2 > GameConfig.WORLD_MAX_Y || waterLevel - floorY < 2) {
+                    continue;
+                }
+
+                byte floorBlock = column.getBlock(worldX, floorY, worldZ);
+                if (!isAquaticPlantFloor(floorBlock)
+                    || !GameConfig.isWaterBlock(column.getBlock(worldX, floorY + 1, worldZ))
+                    || !GameConfig.isWaterBlock(column.getBlock(worldX, floorY + 2, worldZ))) {
+                    continue;
+                }
+
+                double patch = climate01(fractalNoise((worldX + 1720.0) * 0.092, (worldZ - 1330.0) * 0.092, 2, 0.54));
+                double density = riverWater ? 0.90 : ((terrainFlags & TERRAIN_OCEAN) != 0 ? 0.82 : 0.78);
+                if (patch > density) {
+                    column.setBlock(worldX, floorY + 1, worldZ, GameConfig.SEAGRASS);
+                }
+            }
+        }
+    }
+
+    private void populateKarstLakes(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        int minCellX = Math.floorDiv(startX - 72, CAVE_SYSTEM_SIZE);
+        int maxCellX = Math.floorDiv(startX + GameConfig.CHUNK_SIZE + 72, CAVE_SYSTEM_SIZE);
+        int minCellZ = Math.floorDiv(startZ - 72, CAVE_SYSTEM_SIZE);
+        int maxCellZ = Math.floorDiv(startZ + GameConfig.CHUNK_SIZE + 72, CAVE_SYSTEM_SIZE);
+        for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
+            for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+                long caveSeed = mix64(seed ^ ((long) cellX * 544910567L) ^ ((long) cellZ * 1301081L));
+                if (randomUnit(caveSeed) > 0.66 || randomUnit(caveSeed ^ 0x5A5A5A5AL) >= 0.12) {
+                    continue;
+                }
+                int centerX = cellX * CAVE_SYSTEM_SIZE + 14 + (int) (randomUnit(caveSeed ^ 0xCAFE1L) * 36.0);
+                int centerZ = cellZ * CAVE_SYSTEM_SIZE + 14 + (int) (randomUnit(caveSeed ^ 0xCAFE2L) * 36.0);
+                TerrainSample sample = terrainSampleAt(centerX, centerZ);
+                if (isAquaticTerrain(sample.terrainFlags)) {
+                    continue;
+                }
+                double layerRoll = randomUnit(caveSeed ^ 0xCAFE3L);
+                int centerY = layerRoll < 0.58
+                    ? sample.approximateSurfaceHeight - 10 - (int) Math.round(randomUnit(caveSeed ^ 0xCAFE4L) * 28.0)
+                    : GameConfig.SEA_LEVEL - 24 - (int) Math.round(randomUnit(caveSeed ^ 0xCAFE5L) * 58.0);
+                centerY = clamp(centerY, GameConfig.WORLD_MIN_Y + 13, Math.min(sample.approximateSurfaceHeight - 5, GameConfig.SEA_LEVEL + 16));
+
+                boolean lavaLake = randomUnit(caveSeed ^ 0xDADAL) < 0.42;
+                int lakeY = lavaLake
+                    ? clamp(centerY - 12 - (int) (randomUnit(caveSeed ^ 0xBEEFL) * 20.0), GameConfig.WORLD_MIN_Y + 13, 8)
+                    : clamp(centerY - 4 + (int) Math.round((randomUnit(caveSeed ^ 0xFACE1L) - 0.5) * 16.0), 14, GameConfig.SEA_LEVEL - 12);
+                double radius = lavaLake
+                    ? 3.8 + randomUnit(caveSeed ^ 0xFACE2L) * 2.4
+                    : 4.4 + randomUnit(caveSeed ^ 0xFACE3L) * 3.0;
+                placeKarstLake(column, centerX, lakeY, centerZ, radius, lavaLake ? GameConfig.LAVA_SOURCE : GameConfig.WATER_SOURCE);
+            }
+        }
+    }
+
+    private void placeKarstLake(GeneratedChunkColumn column, int centerX, int lakeY, int centerZ, double radius, byte fluidBlock) {
+        int minX = (int) Math.floor(centerX - radius - 1.0);
+        int maxX = (int) Math.ceil(centerX + radius + 1.0);
+        int minZ = (int) Math.floor(centerZ - radius - 1.0);
+        int maxZ = (int) Math.ceil(centerZ + radius + 1.0);
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                if (!isInColumn(column, x, z)) {
+                    continue;
+                }
+                double nx = (x - centerX) / radius;
+                double nz = (z - centerZ) / (radius * 0.82);
+                double shape = nx * nx + nz * nz;
+                if (shape > 1.0) {
+                    continue;
+                }
+                int floorY = lakeY - 1;
+                byte floor = column.getBlock(x, floorY, z);
+                if (canReplaceCavePatchBlock(floor)) {
+                    column.setBlock(x, floorY, z, fluidBlock == GameConfig.LAVA_SOURCE ? GameConfig.COBBLESTONE : GameConfig.GRAVEL);
+                }
+                for (int y = lakeY; y <= lakeY + 1; y++) {
+                    if (!GameConfig.isWorldYInside(y)) {
+                        continue;
+                    }
+                    byte block = column.getBlock(x, y, z);
+                    if (block == GameConfig.AIR || canCarveCaveBlock(block)) {
+                        column.setNaturalFluid(x, y, z, fluidBlock);
+                    }
+                }
+            }
+        }
+    }
+
+    private void populateCaveFluids(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                byte terrainFlags = scratch.terrainFlags[index];
+                if (isAquaticTerrain(terrainFlags)) {
+                    continue;
+                }
+
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int surfaceHeight = scratch.surfaceHeights[index];
+                int topY = Math.min(surfaceHeight - 8, GameConfig.SEA_LEVEL - 4);
+                for (int worldY = 6; worldY <= topY; worldY++) {
+                    if (column.getBlock(worldX, worldY, worldZ) != GameConfig.AIR
+                        || !isSolidCaveFloor(column.getBlock(worldX, worldY - 1, worldZ))
+                        || !hasCaveAirSpace(column, worldX, worldY, worldZ)) {
+                        continue;
+                    }
+
+                    int lavaY = 10 + (int) Math.round(climate01(fractalNoise((worldX - 730.0) * 0.010, (worldZ + 410.0) * 0.010, 2, 0.54)) * 8.0);
+                    double lavaPool = climate01(fractalNoise((worldX + 180.0) * 0.055, (worldZ - 960.0) * 0.055, 2, 0.52));
+                    if (worldY <= 22 && Math.abs(worldY - lavaY) <= 1 && lavaPool > 0.84) {
+                        column.setNaturalFluid(worldX, worldY, worldZ, GameConfig.LAVA_SOURCE);
+                        continue;
+                    }
+
+                    int waterY = GameConfig.SEA_LEVEL - 22
+                        + (int) Math.round(fractalNoise((worldX + 1240.0) * 0.011, (worldZ - 640.0) * 0.011, 2, 0.55) * 5.0);
+                    double waterPool = climate01(fractalNoise((worldX - 520.0) * 0.047, (worldZ + 880.0) * 0.047, 2, 0.56));
+                    if (worldY >= 20 && Math.abs(worldY - waterY) <= 1 && waterPool > 0.88) {
+                        column.setNaturalFluid(worldX, worldY, worldZ, GameConfig.WATER_SOURCE);
+                        continue;
+                    }
+
+                    if (hasCaveWall(column, worldX, worldY, worldZ)) {
+                        double sourceNoise = climate01(fractalNoise3((worldX + 2600.0) * 0.061, (worldY - 35.0) * 0.043, (worldZ - 2200.0) * 0.061, 2, 0.52));
+                        if (worldY > 24 && worldY < GameConfig.SEA_LEVEL - 4 && sourceNoise > 0.991) {
+                            column.setNaturalFluid(worldX, worldY, worldZ, GameConfig.WATER_SOURCE);
+                        } else if (worldY < 16 && sourceNoise > 0.995) {
+                            column.setNaturalFluid(worldX, worldY, worldZ, GameConfig.LAVA_SOURCE);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean hasCaveWall(GeneratedChunkColumn column, int worldX, int worldY, int worldZ) {
+        return isSolidCaveFloor(column.getBlock(worldX + 1, worldY, worldZ))
+            || isSolidCaveFloor(column.getBlock(worldX - 1, worldY, worldZ))
+            || isSolidCaveFloor(column.getBlock(worldX, worldY, worldZ + 1))
+            || isSolidCaveFloor(column.getBlock(worldX, worldY, worldZ - 1));
+    }
+
+    private void populateCavePatches(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int topY = Math.min(scratch.surfaceHeights[index] - 4, GameConfig.SEA_LEVEL + 6);
+                for (int worldY = GameConfig.WORLD_MIN_Y + 8; worldY <= topY; worldY++) {
+                    if (column.getBlock(worldX, worldY, worldZ) != GameConfig.AIR) {
+                        continue;
+                    }
+                    byte floor = column.getBlock(worldX, worldY - 1, worldZ);
+                    if (!canReplaceCavePatchBlock(floor) || !hasCaveAirSpace(column, worldX, worldY, worldZ)) {
+                        continue;
+                    }
+                    double patchNoise = climate01(fractalNoise3((worldX + 3320.0) * 0.045, (worldY - 18.0) * 0.052, (worldZ - 2810.0) * 0.045, 2, 0.54));
+                    if (patchNoise > 0.88) {
+                        byte patchBlock = worldY < GameConfig.SEA_LEVEL - 34 && patchNoise > 0.965
+                            ? GameConfig.CLAY
+                            : (patchNoise > 0.93 ? GameConfig.DIRT : GameConfig.GRAVEL);
+                        column.setBlock(worldX, worldY - 1, worldZ, patchBlock);
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean canReplaceCavePatchBlock(byte block) {
+        return block == GameConfig.STONE
+            || block == GameConfig.COBBLESTONE
+            || block == GameConfig.DEEPSLATE;
+    }
+
+    private void floodBelowSeaLevel(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int surfaceHeight = findSurface(column, worldX, worldZ);
+                byte terrainFlags = scratch.terrainFlags[index];
+                RiverSample river = scratch.riverSamples[index];
+                if (river != null && river.wet) {
+                    fillRiverWaterColumn(column, worldX, worldZ, surfaceHeight, river);
+                    continue;
+                }
+
+                int waterLevel = waterLevelForTerrain(surfaceHeight, terrainFlags);
+                if (!shouldFillWithSeaWater(surfaceHeight, waterLevel, terrainFlags)) {
+                    continue;
+                }
+
+                for (int worldY = Math.min(waterLevel, GameConfig.WORLD_MAX_Y); worldY > GameConfig.WORLD_MIN_Y; worldY--) {
+                    byte block = column.getBlock(worldX, worldY, worldZ);
+                    if (block == GameConfig.AIR) {
+                        column.setNaturalFluid(worldX, worldY, worldZ, GameConfig.WATER_SOURCE);
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private void fillRiverWaterColumn(GeneratedChunkColumn column, int worldX, int worldZ, int surfaceHeight, RiverSample river) {
+        if (!isRiverWaterCore(river)) {
+            return;
+        }
+
+        int waterTop = river.waterLevel;
+        int bedY = Math.min(river.bedLevel, waterTop - 1);
+        if (surfaceHeight - waterTop > 5 || bedY <= GameConfig.WORLD_MIN_Y || waterTop > GameConfig.WORLD_MAX_Y) {
+            return;
+        }
+        if (!isRiverWaterColumnOpen(column, worldX, worldZ, surfaceHeight, waterTop)) {
+            return;
+        }
+        for (int y = waterTop + 1; y <= surfaceHeight; y++) {
+            byte block = column.getBlock(worldX, y, worldZ);
+            if (block != GameConfig.AIR && !GameConfig.isWaterBlock(block)) {
+                column.setBlock(worldX, y, worldZ, GameConfig.AIR);
+            }
+        }
+        column.setBlock(worldX, bedY, worldZ, riverBedBlock(worldX, worldZ, river));
+        for (int y = bedY + 1; y <= waterTop; y++) {
+            column.setNaturalFluid(worldX, y, worldZ, GameConfig.WATER_SOURCE);
+        }
+    }
+
+    private boolean isRiverWaterCore(RiverSample river) {
+        return river != null
+            && river.wet
+            && river.mask >= 0.42
+            && river.distanceToCenter <= river.width * 0.86;
+    }
+
+    private byte riverBedBlock(int worldX, int worldZ, RiverSample river) {
+        double center = 1.0 - smoothstep(0.0, river.width, river.distanceToCenter);
+        double mix = climate01(fractalNoise((worldX + 430.0) * 0.18, (worldZ - 770.0) * 0.18, 2, 0.50));
+        if (center > 0.72) {
+            if (mix < 0.42) {
+                return GameConfig.GRAVEL;
+            }
+            if (mix < 0.78) {
+                return GameConfig.SAND;
+            }
+            return GameConfig.CLAY;
+        }
+        if (mix < 0.35) {
+            return GameConfig.GRAVEL;
+        }
+        if (mix < 0.70) {
+            return GameConfig.SAND;
+        }
+        return GameConfig.DIRT;
+    }
+
+    private boolean isRiverWaterColumnOpen(GeneratedChunkColumn column, int worldX, int worldZ, int surfaceHeight, int waterLevel) {
+        for (int y = surfaceHeight + 1; y <= Math.min(waterLevel + 1, GameConfig.WORLD_MAX_Y); y++) {
+            byte block = column.getBlock(worldX, y, worldZ);
+            if (block != GameConfig.AIR && !isPlant(block) && !GameConfig.isWaterBlock(block)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void populateDeepLavaPockets(GeneratedChunkColumn column, int startX, int startZ) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                for (int worldY = GameConfig.WORLD_MIN_Y + 6; worldY <= -48; worldY++) {
+                    if (column.getBlock(worldX, worldY, worldZ) != GameConfig.AIR
+                        || !isSolidCaveFloor(column.getBlock(worldX, worldY - 1, worldZ))
+                        || !hasCaveAirSpace(column, worldX, worldY, worldZ)) {
+                        continue;
+                    }
+                    double lavaNoise = climate01(fractalNoise3((worldX + 650.0) * 0.045, (worldY - 20.0) * 0.060, (worldZ - 250.0) * 0.045, 2, 0.55));
+                    if (lavaNoise > 0.935) {
+                        column.setNaturalFluid(worldX, worldY, worldZ, GameConfig.LAVA_SOURCE);
+                    }
+                }
+            }
+        }
+    }
+
+    private void populateSmallSurfacePools(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        long chunkSeed = mix64(seed ^ ((long) column.chunkX * 341873128712L) ^ ((long) column.chunkZ * 132897987541L));
+        if (randomUnit(chunkSeed) < 0.12) {
+            tryPlaceSurfacePool(column, startX, startZ, scratch, chunkSeed, GameConfig.WATER_SOURCE);
+        }
+        long lavaSeed = mix64(chunkSeed ^ 0x6A09E667F3BCC909L);
+        if (randomUnit(lavaSeed) < 0.018) {
+            tryPlaceSurfacePool(column, startX, startZ, scratch, lavaSeed, GameConfig.LAVA_SOURCE);
+        }
+    }
+
+    private void tryPlaceSurfacePool(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch,
+                                     long noiseSeed, byte fluidBlock) {
+        int centerLocalX = 4 + (int) ((noiseSeed >>> 8) & 7L);
+        int centerLocalZ = 4 + (int) ((noiseSeed >>> 13) & 7L);
+        int index = columnIndex(centerLocalX, centerLocalZ);
+        Biome biome = BIOMES[scratch.biomeOrdinals[index] & 0xFF];
+        byte terrainFlags = scratch.terrainFlags[index];
+        int centerSurfaceY = findSurface(column, startX + centerLocalX, startZ + centerLocalZ);
+
+        if (centerSurfaceY <= GameConfig.SEA_LEVEL + 2
+            || centerSurfaceY + 2 > GameConfig.WORLD_MAX_Y
+            || isAquaticTerrain(terrainFlags)
+            || (scratch.riverSamples[index] != null && scratch.riverSamples[index].active)
+            || shouldPlaceSnow(startX + centerLocalX, startZ + centerLocalZ, biome)) {
+            return;
+        }
+        if (fluidBlock == GameConfig.LAVA_SOURCE && (biome == Biome.RAINFOREST || biome == Biome.SWAMPLAND || biome.snowCovered)) {
+            return;
+        }
+
+        int radius = fluidBlock == GameConfig.LAVA_SOURCE ? 2 : 2 + (int) ((noiseSeed >>> 19) & 1L);
+        int fluidY = centerSurfaceY - 1;
+        int floorY = fluidY - (fluidBlock == GameConfig.LAVA_SOURCE ? 1 : 2);
+        byte floorBlock = fluidBlock == GameConfig.LAVA_SOURCE
+            ? GameConfig.COBBLESTONE
+            : aquaticFloorBlock(startX + centerLocalX, fluidY, startZ + centerLocalZ, (byte) (TERRAIN_LAKE | TERRAIN_BEACH));
+
+        for (int offsetX = -radius - 1; offsetX <= radius + 1; offsetX++) {
+            for (int offsetZ = -radius - 1; offsetZ <= radius + 1; offsetZ++) {
+                int localX = centerLocalX + offsetX;
+                int localZ = centerLocalZ + offsetZ;
+                if (localX < 1 || localX >= GameConfig.CHUNK_SIZE - 1 || localZ < 1 || localZ >= GameConfig.CHUNK_SIZE - 1) {
+                    continue;
+                }
+                double shapeNoise = randomUnit(mix64(noiseSeed ^ ((long) offsetX * 73428767L) ^ ((long) offsetZ * 912931L))) * 0.45;
+                double distance = Math.sqrt(offsetX * offsetX + offsetZ * offsetZ) + shapeNoise;
+                if (distance > radius + 0.45) {
+                    continue;
+                }
+
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int surfaceY = findSurface(column, worldX, worldZ);
+                if (surfaceY < fluidY || surfaceY > centerSurfaceY + 3) {
+                    continue;
+                }
+
+                for (int y = floorY; y <= surfaceY + 1; y++) {
+                    if (y < floorY || y > GameConfig.WORLD_MAX_Y) {
+                        continue;
+                    }
+                    if (y < fluidY) {
+                        column.setBlock(worldX, y, worldZ, floorBlock);
+                    } else if (y == fluidY) {
+                        column.setNaturalFluid(worldX, y, worldZ, fluidBlock);
+                    } else {
+                        column.setBlock(worldX, y, worldZ, GameConfig.AIR);
+                    }
+                }
+            }
+        }
+    }
+
+    private void populateOreClusters(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int surfaceHeight = Math.max(scratch.surfaceHeights[index], findSurface(column, worldX, worldZ));
+                for (int worldY = GameConfig.WORLD_MIN_Y + 6; worldY < Math.min(surfaceHeight, GameConfig.WORLD_MAX_Y - 1); worldY++) {
+                    byte oreHost = column.getBlock(worldX, worldY, worldZ);
+                    if (oreHost != GameConfig.STONE && oreHost != GameConfig.DEEPSLATE && oreHost != GameConfig.COBBLESTONE) {
+                        continue;
+                    }
+
+                    int depthBelowSurface = surfaceHeight - worldY;
+                    if (depthBelowSurface > 10) {
+                        double patchNoise = climate01(fractalNoise3((worldX + 1550.0) * 0.046, (worldY + 40.0) * 0.030, (worldZ - 920.0) * 0.046, 2, 0.54));
+                        if (patchNoise > 0.982) {
+                            column.setBlock(worldX, worldY, worldZ, worldY < 0 && patchNoise > 0.994 ? GameConfig.CLAY : GameConfig.GRAVEL);
+                            continue;
+                        }
+                        if (worldY > -18 && patchNoise < 0.012) {
+                            column.setBlock(worldX, worldY, worldZ, GameConfig.DIRT);
+                            continue;
+                        }
+                    }
+
+                    double coalCluster = Math.abs(fractalNoise3((worldX - 90.0) * 0.115, worldY * 0.105, (worldZ + 150.0) * 0.115, 2, 0.58));
+                    double ironCluster = Math.abs(fractalNoise3((worldX + 40.0) * 0.138, (worldY - 18.0) * 0.126, (worldZ - 65.0) * 0.138, 2, 0.55));
+                    double diamondCluster = Math.abs(fractalNoise3((worldX - 170.0) * 0.185, (worldY + 11.0) * 0.192, (worldZ + 210.0) * 0.185, 2, 0.53));
+
+                    if (worldY < 18 && diamondCluster > (worldY < -32 ? 0.82 : 0.86)) {
+                        column.setBlock(worldX, worldY, worldZ, oreForHost(oreHost, GameConfig.DIAMOND_ORE));
+                    } else if (worldY < 54 && ironCluster > (worldY < 0 ? 0.80 : 0.84)) {
+                        column.setBlock(worldX, worldY, worldZ, oreForHost(oreHost, GameConfig.IRON_ORE));
+                    } else if (worldY < 72 && coalCluster > 0.78) {
+                        column.setBlock(worldX, worldY, worldZ, oreForHost(oreHost, GameConfig.COAL_ORE));
+                    }
+                }
+            }
+        }
+    }
+
+    private void populateCaveWallOres(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int surfaceHeight = scratch.surfaceHeights[index];
+                int maxY = Math.min(surfaceHeight - 5, GameConfig.SEA_LEVEL + 10);
+                for (int worldY = GameConfig.WORLD_MIN_Y + 8; worldY <= maxY; worldY++) {
+                    byte host = column.getBlock(worldX, worldY, worldZ);
+                    if (host != GameConfig.STONE && host != GameConfig.DEEPSLATE && host != GameConfig.COBBLESTONE) {
+                        continue;
+                    }
+                    if (!hasAdjacentCaveAir(column, worldX, worldY, worldZ)) {
+                        continue;
+                    }
+                    double seam = climate01(fractalNoise3((worldX + 3100.0) * 0.165, (worldY - 25.0) * 0.122, (worldZ - 2700.0) * 0.165, 2, 0.55));
+                    if (worldY < 12 && seam > 0.966) {
+                        column.setBlock(worldX, worldY, worldZ, oreForHost(host, GameConfig.DIAMOND_ORE));
+                    } else if (worldY < 56 && seam > 0.885) {
+                        column.setBlock(worldX, worldY, worldZ, oreForHost(host, GameConfig.IRON_ORE));
+                    } else if (worldY < 82 && seam < 0.150) {
+                        column.setBlock(worldX, worldY, worldZ, oreForHost(host, GameConfig.COAL_ORE));
+                    }
+                }
+            }
+        }
+    }
+
+    private byte oreForHost(byte host, byte normalOre) {
+        if (host != GameConfig.DEEPSLATE) {
+            return normalOre;
+        }
+        if (normalOre == GameConfig.IRON_ORE) {
+            return GameConfig.DEEPSLATE_IRON_ORE;
+        }
+        if (normalOre == GameConfig.DIAMOND_ORE) {
+            return GameConfig.DEEPSLATE_DIAMOND_ORE;
+        }
+        if (normalOre == GameConfig.COAL_ORE) {
+            return GameConfig.DEEPSLATE_COAL_ORE;
+        }
+        return normalOre;
+    }
+
+    private boolean hasAdjacentCaveAir(GeneratedChunkColumn column, int worldX, int worldY, int worldZ) {
+        return column.getBlock(worldX + 1, worldY, worldZ) == GameConfig.AIR
+            || column.getBlock(worldX - 1, worldY, worldZ) == GameConfig.AIR
+            || column.getBlock(worldX, worldY + 1, worldZ) == GameConfig.AIR
+            || column.getBlock(worldX, worldY - 1, worldZ) == GameConfig.AIR
+            || column.getBlock(worldX, worldY, worldZ + 1) == GameConfig.AIR
+            || column.getBlock(worldX, worldY, worldZ - 1) == GameConfig.AIR;
+    }
+
+    private void populateSurface(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                Biome biome = BIOMES[scratch.biomeOrdinals[index] & 0xFF];
+                byte terrainFlags = scratch.terrainFlags[index];
+                RiverSample river = scratch.riverSamples[index];
+                int surfaceY = findSurface(column, worldX, worldZ);
+                if (surfaceY <= GameConfig.WORLD_MIN_Y || surfaceY + 1 > GameConfig.WORLD_MAX_Y) {
+                    continue;
+                }
+                byte surfaceBlock = column.getBlock(worldX, surfaceY, worldZ);
+                if (column.getBlock(worldX, surfaceY + 1, worldZ) != GameConfig.AIR
+                    || isAquaticTerrain(terrainFlags)
+                    || (river != null && river.active && river.mask > 0.30)
+                    || surfaceY <= GameConfig.SEA_LEVEL) {
+                    continue;
+                }
+
+                long noiseSeed = mix64(seed ^ (((long) worldX) << 32) ^ (worldZ & 0xFFFFFFFFL));
+                if (biome == Biome.DESERT && surfaceBlock == GameConfig.SAND) {
+                    if (randomUnit(noiseSeed) < 0.052) {
+                        tryPlaceCactus(column, worldX, surfaceY + 1, worldZ, noiseSeed);
+                    }
+                    continue;
+                }
+
+                if (surfaceBlock != GameConfig.GRASS) {
+                    if (shouldPlaceSnow(worldX, worldZ, biome) && canSupportSnow(surfaceBlock)) {
+                        column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.SNOW_LAYER);
+                    }
+                    continue;
+                }
+
+                double treeRoll = randomUnit(noiseSeed);
+                if (biomeSupportsTrees(biome) && treeRoll < treeChanceForBiome(biome)) {
+                    if (biome.pineTrees) {
+                        tryPlacePineTree(column, worldX, worldZ, startX, startZ, noiseSeed);
+                    } else {
+                        tryPlaceTree(column, worldX, worldZ, startX, startZ, noiseSeed);
+                    }
+                    continue;
+                }
+
+                if (shouldPlaceSnow(worldX, worldZ, biome)) {
+                    column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.SNOW_LAYER);
+                    continue;
+                }
+
+                double floraNoise = fractalNoise((worldX + 120.0) * 0.120, (worldZ - 340.0) * 0.120, 2, 0.55);
+                if ((biome == Biome.FOREST || biome == Biome.RAINFOREST || biome == Biome.SEASONAL_FOREST) && floraNoise > 0.38) {
+                    column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.TALL_GRASS);
+                } else if ((biome == Biome.PLAINS || biome == Biome.SAVANNA) && floraNoise > 0.20) {
+                    column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.TALL_GRASS);
+                } else if (floraNoise < -0.46) {
+                    column.setBlock(worldX, surfaceY + 1, worldZ,
+                        ((noiseSeed >>> 5) & 1L) == 0L ? GameConfig.RED_FLOWER : GameConfig.YELLOW_FLOWER);
+                }
+            }
+        }
+    }
+
+    private boolean tryPlaceTree(GeneratedChunkColumn column, int worldX, int worldZ, int startX, int startZ, long noiseSeed) {
+        if (worldX < startX + 2 || worldX > startX + GameConfig.CHUNK_SIZE - 3
+            || worldZ < startZ + 2 || worldZ > startZ + GameConfig.CHUNK_SIZE - 3) {
+            return false;
+        }
+
+        int surfaceY = findSurface(column, worldX, worldZ);
+        if (surfaceY < GameConfig.SEA_LEVEL + 1 || surfaceY + 7 > GameConfig.WORLD_MAX_Y) {
+            return false;
+        }
+        if (column.getBlock(worldX, surfaceY, worldZ) != GameConfig.GRASS) {
+            return false;
+        }
+
+        int trunkBaseY = surfaceY + 1;
+        int trunkHeight = 4 + (int) ((noiseSeed >>> 8) & 1L);
+        for (int y = trunkBaseY; y <= trunkBaseY + trunkHeight + 2; y++) {
+            int radius = y >= trunkBaseY + trunkHeight - 1 ? 2 : 0;
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                    byte existing = column.getBlock(worldX + offsetX, y, worldZ + offsetZ);
+                    if (existing != GameConfig.AIR && !isPlant(existing)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        for (int y = 0; y < trunkHeight; y++) {
+            column.setBlock(worldX, trunkBaseY + y, worldZ, GameConfig.OAK_LOG);
+        }
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 1, worldZ, 2, false, GameConfig.OAK_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight, worldZ, 2, true, GameConfig.OAK_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight + 1, worldZ, 1, true, GameConfig.OAK_LEAVES);
+        column.setBlock(worldX, trunkBaseY + trunkHeight + 1, worldZ, GameConfig.OAK_LEAVES);
+        return true;
+    }
+
+    private boolean tryPlacePineTree(GeneratedChunkColumn column, int worldX, int worldZ, int startX, int startZ, long noiseSeed) {
+        if (worldX < startX + 2 || worldX > startX + GameConfig.CHUNK_SIZE - 3
+            || worldZ < startZ + 2 || worldZ > startZ + GameConfig.CHUNK_SIZE - 3) {
+            return false;
+        }
+
+        int surfaceY = findSurface(column, worldX, worldZ);
+        if (surfaceY < GameConfig.SEA_LEVEL + 1 || surfaceY + 9 > GameConfig.WORLD_MAX_Y) {
+            return false;
+        }
+        if (column.getBlock(worldX, surfaceY, worldZ) != GameConfig.GRASS) {
+            return false;
+        }
+
+        int trunkBaseY = surfaceY + 1;
+        int trunkHeight = 6 + (int) ((noiseSeed >>> 8) & 1L);
+        for (int y = trunkBaseY; y <= trunkBaseY + trunkHeight + 1; y++) {
+            int radius = y >= trunkBaseY + 2 ? 2 : 0;
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                    byte existing = column.getBlock(worldX + offsetX, y, worldZ + offsetZ);
+                    if (existing != GameConfig.AIR && !isPlant(existing)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        for (int y = 0; y < trunkHeight; y++) {
+            column.setBlock(worldX, trunkBaseY + y, worldZ, GameConfig.PINE_LOG);
+        }
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 4, worldZ, 2, true, GameConfig.PINE_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 3, worldZ, 1, false, GameConfig.PINE_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 2, worldZ, 2, true, GameConfig.PINE_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 1, worldZ, 1, false, GameConfig.PINE_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight, worldZ, 1, true, GameConfig.PINE_LEAVES);
+        column.setBlock(worldX, trunkBaseY + trunkHeight + 1, worldZ, GameConfig.PINE_LEAVES);
+        return true;
+    }
+
+    private boolean tryPlaceCactus(GeneratedChunkColumn column, int worldX, int baseY, int worldZ, long noiseSeed) {
+        int height = 2 + (int) ((noiseSeed >>> 9) & 1L);
+        if (((noiseSeed >>> 13) & 3L) == 0L) {
+            height++;
+        }
+        if (baseY + height > GameConfig.WORLD_MAX_Y) {
+            return false;
+        }
+        if (column.getBlock(worldX, baseY - 1, worldZ) != GameConfig.SAND) {
+            return false;
+        }
+        for (int y = baseY; y < baseY + height; y++) {
+            if (column.getBlock(worldX, y, worldZ) != GameConfig.AIR
+                || column.getBlock(worldX + 1, y, worldZ) != GameConfig.AIR
+                || column.getBlock(worldX - 1, y, worldZ) != GameConfig.AIR
+                || column.getBlock(worldX, y, worldZ + 1) != GameConfig.AIR
+                || column.getBlock(worldX, y, worldZ - 1) != GameConfig.AIR) {
+                return false;
+            }
+        }
+        for (int y = baseY; y < baseY + height; y++) {
+            column.setBlock(worldX, y, worldZ, GameConfig.CACTUS);
+        }
+        return true;
+    }
+
+    private void placeLeavesLayer(GeneratedChunkColumn column, int centerX, int y, int centerZ, int radius, boolean rounded, byte leafBlock) {
+        for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+            for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                if (rounded && Math.abs(offsetX) == radius && Math.abs(offsetZ) == radius) {
+                    continue;
+                }
+                byte existing = column.getBlock(centerX + offsetX, y, centerZ + offsetZ);
+                if (existing == GameConfig.AIR || isPlant(existing)) {
+                    column.setBlock(centerX + offsetX, y, centerZ + offsetZ, leafBlock);
+                }
+            }
+        }
+    }
+
+    private void recalculateSurfaceHeights(GeneratedChunkColumn column, int startX, int startZ) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                column.setSurfaceHeight(localX, localZ, findSurface(column, worldX, worldZ));
+            }
+        }
+    }
+
+    private int sampleSurfaceHeight(int worldX, int worldZ, Biome biome) {
+        return sampleSurfaceHeight(worldX, worldZ, biome, sampleContinentalness(worldX, worldZ), sampleLakeBasin(worldX, worldZ));
+    }
+
+    private int sampleSurfaceHeight(int worldX, int worldZ, Biome biome, double continentalness, double lakeBasin) {
+        double continentRelief = fractalNoise(worldX * CONTINENT_SCALE, worldZ * CONTINENT_SCALE, 3, 0.53);
+        double erosion = fractalNoise((worldX + 240.0) * EROSION_SCALE, (worldZ - 510.0) * EROSION_SCALE, 3, 0.58);
+        double ridges = Math.abs(fractalNoise((worldX - 680.0) * RIDGE_SCALE, (worldZ + 420.0) * RIDGE_SCALE, 3, 0.56));
+        double detail = fractalNoise((worldX + 120.0) * DETAIL_SCALE, (worldZ - 290.0) * DETAIL_SCALE, 3, 0.46);
+
+        double landBlend = smoothstep(OCEAN_COASTLINE - COASTLINE_WIDTH, OCEAN_COASTLINE + COASTLINE_WIDTH, continentalness);
+        double inland = smoothstep(OCEAN_COASTLINE + 0.07, 0.40, continentalness);
+        double oceanDepth = smoothstep(OCEAN_COASTLINE - 0.05, -0.72, continentalness);
+
+        double oceanHeight = GameConfig.SEA_LEVEL - 12.0
+            - oceanDepth * 34.0
+            + erosion * 2.2
+            + detail * 1.0;
+        double shoreLift = smoothstep(OCEAN_COASTLINE + 0.02, OCEAN_COASTLINE + 0.22, continentalness) * 2.4;
+        double landHeight = GameConfig.SEA_LEVEL + 4.0
+            + shoreLift
+            + inland * biome.continentAmplitude * 0.48
+            + continentRelief * biome.erosionAmplitude * 0.45
+            + erosion * biome.erosionAmplitude * 0.42
+            + ridges * ridges * biome.ridgeAmplitude * (0.16 + inland * 0.34)
+            + detail * biome.detailAmplitude * 0.55;
+
+        double baseHeight = lerp(oceanHeight, landHeight, landBlend);
+        if (continentalness > OCEAN_COASTLINE + 0.26 && lakeBasin < LAKE_BANK_WIDTH) {
+            double lakeBlend = smoothstep(LAKE_WIDTH, LAKE_BANK_WIDTH, lakeBasin);
+            double lakeFloor = GameConfig.SEA_LEVEL - 7.0 + detail * 0.25;
+            baseHeight = lerp(lakeFloor, baseHeight, lakeBlend);
+        }
+
+        RiverShape riverShape = sampleRiverShape(worldX, worldZ, continentalness, lakeBasin);
+        if (riverShape.active) {
+            double center = 1.0 - smoothstep(0.0, riverShape.width, riverShape.distanceToCenter);
+            double valley = 1.0 - smoothstep(riverShape.width * 0.45, riverShape.bankWidth, riverShape.distanceToCenter);
+            double lowlandWetness = 1.0 - smoothstep(GameConfig.SEA_LEVEL + 5.0, GameConfig.SEA_LEVEL + 16.0, baseHeight);
+            double wetFloor = Math.min(baseHeight - lerp(1.0, 2.4, center), GameConfig.SEA_LEVEL - lerp(1.0, 3.0, center));
+            double dryFloor = baseHeight - lerp(0.7, 2.0, center);
+            double targetFloor = lerp(dryFloor, wetFloor, lowlandWetness);
+            baseHeight = lerp(baseHeight, targetFloor, valley * 0.78);
+        }
+
+        return clamp((int) Math.round(baseHeight), 8, GameConfig.WORLD_MAX_Y - 9);
+    }
+
+    private int sampleDirtDepth(int worldX, int worldZ, Biome biome) {
+        double soilNoise = fractalNoise((worldX - 80.0) * 0.041, (worldZ + 60.0) * 0.041, 2, 0.55);
+        int variation = soilNoise > 0.35 ? 2 : (soilNoise > -0.15 ? 1 : 0);
+        return clamp(biome.baseSoilDepth + variation, 3, 5);
+    }
+
+    private int waterLevelForTerrain(int surfaceHeight, byte terrainFlags) {
+        if ((terrainFlags & TERRAIN_OCEAN) != 0) {
+            return GameConfig.SEA_LEVEL;
+        }
+        if ((terrainFlags & TERRAIN_LAKE) != 0) {
+            return GameConfig.SEA_LEVEL - 2;
+        }
+        return surfaceHeight;
+    }
+
+    private boolean shouldFillWithSeaWater(int surfaceHeight, int waterLevel, byte terrainFlags) {
+        if (surfaceHeight >= waterLevel) {
+            return false;
+        }
+        if ((terrainFlags & TERRAIN_OCEAN) != 0) {
+            return true;
+        }
+        return (terrainFlags & TERRAIN_LAKE) != 0;
+    }
+
+    private byte sampleTerrainFlags(int worldX, int worldZ, double continentalness, double lakeBasin, int surfaceHeight) {
+        byte flags = 0;
+        if (continentalness < OCEAN_COASTLINE) {
+            return TERRAIN_OCEAN;
+        }
+
+        boolean lake = continentalness > OCEAN_COASTLINE + 0.26 && lakeBasin < LAKE_WIDTH;
+        if (lake) {
+            return TERRAIN_LAKE;
+        }
+
+        if (Math.abs(continentalness - OCEAN_COASTLINE) <= BEACH_WIDTH
+            && surfaceHeight >= GameConfig.SEA_LEVEL
+            && surfaceHeight <= GameConfig.SEA_LEVEL + 8) {
+            return TERRAIN_BEACH;
+        }
+        return flags;
+    }
+
+    private double sampleContinentalness(int worldX, int worldZ) {
+        double primary = fractalNoise((worldX + 1800.0) * CONTINENTALNESS_SCALE, (worldZ - 900.0) * CONTINENTALNESS_SCALE, 5, 0.54);
+        double broad = fractalNoise((worldX - 2400.0) * CONTINENTALNESS_SCALE * 0.45, (worldZ + 1600.0) * CONTINENTALNESS_SCALE * 0.45, 3, 0.56);
+        return clamp(primary * 0.72 + broad * 0.28, -1.0, 1.0);
+    }
+
+    private RiverSample sampleRiver(int worldX, int worldZ, int approximateSurfaceHeight, double continentalness, double lakeBasin) {
+        RiverShape shape = sampleRiverShape(worldX, worldZ, continentalness, lakeBasin);
+        if (!shape.active) {
+            return RiverSample.INACTIVE;
+        }
+
+        double centerMask = 1.0 - smoothstep(0.0, shape.width, shape.distanceToCenter);
+        boolean wet = approximateSurfaceHeight <= GameConfig.SEA_LEVEL + 8 && centerMask > 0.12;
+        int waterLevel = clamp(
+            Math.min(approximateSurfaceHeight - 1, GameConfig.SEA_LEVEL + 4),
+            GameConfig.SEA_LEVEL,
+            GameConfig.SEA_LEVEL + 6
+        );
+        if (wet) {
+            double bedNoise = fractalNoise((worldX - 910.0) * 0.050, (worldZ + 310.0) * 0.050, 2, 0.50);
+            int depth = clamp(2 + (int) Math.round(centerMask * 1.2 + bedNoise * 0.5), 2, 4);
+            int bedLevel = waterLevel - depth;
+            return new RiverSample(true, true, shape.distanceToCenter, shape.width, shape.bankWidth, shape.mask, waterLevel, bedLevel);
+        }
+
+        int dryCut = 1 + (int) Math.round(smoothstep(0.35, 1.0, shape.mask) * 2.0);
+        return new RiverSample(true, false, shape.distanceToCenter, shape.width, shape.bankWidth, shape.mask, waterLevel, approximateSurfaceHeight - dryCut);
+    }
+
+    private RiverShape sampleRiverShape(int worldX, int worldZ, double continentalness, double lakeBasin) {
+        if (continentalness <= OCEAN_COASTLINE + 0.20 || lakeBasin < LAKE_BANK_WIDTH) {
+            return RiverShape.INACTIVE;
+        }
+
+        double line = sampleRiverField(worldX, worldZ);
+        double dx = sampleRiverField(worldX + 4, worldZ) - sampleRiverField(worldX - 4, worldZ);
+        double dz = sampleRiverField(worldX, worldZ + 4) - sampleRiverField(worldX, worldZ - 4);
+        double slope = Math.max(0.0014, (Math.abs(dx) + Math.abs(dz)) / 8.0);
+        double distance = Math.abs(line) / slope;
+
+        double widthNoise = climate01(fractalNoise((worldX + 1480.0) * 0.0022, (worldZ - 820.0) * 0.0022, 2, 0.54));
+        double width = lerp(RIVER_MIN_WIDTH_BLOCKS, RIVER_MAX_WIDTH_BLOCKS, widthNoise);
+        double bankWidth = width + lerp(RIVER_MIN_BANK_BLOCKS, RIVER_MAX_BANK_BLOCKS, widthNoise);
+        double mask = 1.0 - smoothstep(width, bankWidth, distance);
+        if (mask <= 0.0) {
+            return RiverShape.INACTIVE;
+        }
+        return new RiverShape(true, distance, width, bankWidth, mask);
+    }
+
+    private double sampleRiverField(int worldX, int worldZ) {
+        double primary = fractalNoise((worldX + 760.0) * RIVER_FIELD_SCALE, (worldZ - 1130.0) * RIVER_FIELD_SCALE, 3, 0.52);
+        double broad = fractalNoise((worldX - 340.0) * RIVER_FIELD_SCALE * 0.48, (worldZ + 910.0) * RIVER_FIELD_SCALE * 0.48, 2, 0.55);
+        return primary * 0.82 + broad * 0.18;
+    }
+
+    private double sampleLakeBasin(int worldX, int worldZ) {
+        double basin = climate01(fractalNoise((worldX - 2200.0) * 0.0048, (worldZ + 1770.0) * 0.0048, 2, 0.55));
+        double breakup = climate01(fractalNoise((worldX + 640.0) * 0.014, (worldZ - 480.0) * 0.014, 2, 0.52));
+        return 1.0 - (basin * 0.82 + breakup * 0.18);
+    }
+
+    private Biome sampleBiome(int worldX, int worldZ) {
+        double temperature = smoothClimate(
+            worldX,
+            worldZ,
+            TEMPERATURE_SCALE,
+            -380.0,
+            140.0,
+            4,
+            0.56
+        );
+        double humidity = smoothClimate(
+            worldX,
+            worldZ,
+            HUMIDITY_SCALE,
+            510.0,
+            -260.0,
+            4,
+            0.58
+        );
+        return betaBiomeFromClimate(temperature, humidity);
+    }
+
+    String debugBiomeName(int worldX, int worldZ) {
+        double continentalness = sampleContinentalness(worldX, worldZ);
+        double lakeBasin = sampleLakeBasin(worldX, worldZ);
+        int surfaceHeight = sampleSurfaceHeight(worldX, worldZ, sampleBiome(worldX, worldZ), continentalness, lakeBasin);
+        RiverSample river = sampleRiver(worldX, worldZ, surfaceHeight, continentalness, lakeBasin);
+        byte terrainFlags = sampleTerrainFlags(worldX, worldZ, continentalness, lakeBasin, surfaceHeight);
+        if ((terrainFlags & TERRAIN_OCEAN) != 0) {
+            return surfaceHeight < GameConfig.SEA_LEVEL - 10 ? "Deep Ocean" : "Ocean";
+        }
+        if (river.active) {
+            return "River";
+        }
+        if ((terrainFlags & TERRAIN_LAKE) != 0) {
+            return "Lake";
+        }
+        if ((terrainFlags & TERRAIN_BEACH) != 0) {
+            return "Beach";
+        }
+        return formatBiomeName(sampleBiome(worldX, worldZ));
+    }
+
+    int debugSurfaceHeight(int worldX, int worldZ) {
+        double continentalness = sampleContinentalness(worldX, worldZ);
+        return sampleSurfaceHeight(worldX, worldZ, sampleBiome(worldX, worldZ), continentalness, sampleLakeBasin(worldX, worldZ));
+    }
+
+    String debugTerrainInfo(int worldX, int worldZ) {
+        double continentalness = sampleContinentalness(worldX, worldZ);
+        double lakeBasin = sampleLakeBasin(worldX, worldZ);
+        Biome biome = sampleBiome(worldX, worldZ);
+        int surfaceHeight = sampleSurfaceHeight(worldX, worldZ, biome, continentalness, lakeBasin);
+        RiverSample river = sampleRiver(worldX, worldZ, surfaceHeight, continentalness, lakeBasin);
+        return "river active=" + river.active
+            + " wet=" + river.wet
+            + " riverDistance=" + formatDebug(river.distanceToCenter)
+            + " riverWidth=" + formatDebug(river.width)
+            + " riverBank=" + formatDebug(river.bankWidth)
+            + " riverMask=" + formatDebug(river.mask)
+            + " riverWaterLevel=" + river.waterLevel
+            + " riverBedLevel=" + river.bedLevel;
+    }
+
+    String debugDensityInfo(int worldX, int worldY, int worldZ) {
+        TerrainSample sample = terrainSampleAt(worldX, worldZ);
+        double density = densitySampler.sampleTerrainDensity(worldX, worldY, worldZ, sample);
+        double cave = densitySampler.sampleCaveDensity(worldX, worldY, worldZ);
+        int depthBelowSurface = sample.approximateSurfaceHeight - worldY;
+        double openThreshold = CAVE_TUNNEL_THRESHOLD + smoothstep(-4.0, GameConfig.WORLD_MIN_Y + 18.0, worldY) * 0.12;
+        return "density=" + formatDebug(density)
+            + " approx=" + sample.approximateSurfaceHeight
+            + " caveDensity=" + formatDebug(cave)
+            + " caveOpen=" + (depthBelowSurface >= CAVE_MIN_DEPTH_BELOW_SURFACE && cave > openThreshold)
+            + " depthBelowSurface=" + depthBelowSurface;
+    }
+
+    private TerrainSample terrainSampleAt(int worldX, int worldZ) {
+        double continentalness = densitySampler.sampleContinentalness(worldX, worldZ);
+        double lakeBasin = sampleLakeBasin(worldX, worldZ);
+        Biome biome = sampleBiome(worldX, worldZ);
+        int surfaceHeight = sampleSurfaceHeight(worldX, worldZ, biome, continentalness, lakeBasin);
+        byte terrainFlags = sampleTerrainFlags(worldX, worldZ, continentalness, lakeBasin, surfaceHeight);
+        return new TerrainSample(surfaceHeight, terrainFlags);
+    }
+
+    private String formatDebug(double value) {
+        return String.format(java.util.Locale.ROOT, "%.3f", value);
+    }
+
+    private String formatBiomeName(Biome biome) {
+        String[] parts = biome.name().toLowerCase().split("_");
+        StringBuilder builder = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return builder.toString();
+    }
+
+    private double smoothClimate(int worldX, int worldZ, double scale, double offsetX, double offsetZ, int octaves, double persistence) {
+        double center = climate01(fractalNoise((worldX + offsetX) * scale, (worldZ + offsetZ) * scale, octaves, persistence));
+        double broad = 0.0;
+        int samples = 0;
+        for (int offsetSampleX = -1; offsetSampleX <= 1; offsetSampleX++) {
+            for (int offsetSampleZ = -1; offsetSampleZ <= 1; offsetSampleZ++) {
+                int sampleX = worldX + offsetSampleX * GameConfig.CHUNK_SIZE * 2;
+                int sampleZ = worldZ + offsetSampleZ * GameConfig.CHUNK_SIZE * 2;
+                broad += climate01(fractalNoise((sampleX + offsetX) * scale, (sampleZ + offsetZ) * scale, octaves, persistence));
+                samples++;
+            }
+        }
+        return clamp(lerp(center, broad / samples, 0.42), 0.0, 1.0);
+    }
+
+    private boolean biomeSupportsTrees(Biome biome) {
+        return biome == Biome.RAINFOREST
+            || biome == Biome.SEASONAL_FOREST
+            || biome == Biome.FOREST
+            || biome == Biome.SWAMPLAND
+            || biome == Biome.TAIGA
+            || biome == Biome.PLAINS;
+    }
+
+    private boolean shouldPlaceSnow(int worldX, int worldZ, Biome biome) {
+        return biome.snowCovered;
+    }
+
+    private boolean canSupportSnow(byte block) {
+        return block == GameConfig.GRASS
+            || block == GameConfig.DIRT
+            || block == GameConfig.COBBLESTONE
+            || block == GameConfig.STONE
+            || block == GameConfig.DEEPSLATE
+            || block == GameConfig.SAND;
+    }
+
+    private boolean isAquaticPlantFloor(byte block) {
+        return block == GameConfig.SAND
+            || block == GameConfig.GRAVEL
+            || block == GameConfig.CLAY
+            || block == GameConfig.DIRT;
+    }
+
+    private void smoothSnowCoverage(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int index = columnIndex(localX, localZ);
+                Biome biome = BIOMES[scratch.biomeOrdinals[index] & 0xFF];
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                int surfaceY = findSurface(column, worldX, worldZ);
+                if (!shouldPlaceSnow(worldX, worldZ, biome)
+                    || surfaceY <= GameConfig.SEA_LEVEL
+                    || surfaceY + 1 > GameConfig.WORLD_MAX_Y
+                    || isAquaticTerrain(scratch.terrainFlags[index])
+                    || (scratch.riverSamples[index] != null && scratch.riverSamples[index].active && scratch.riverSamples[index].mask > 0.24)) {
+                    removeUnsupportedSnow(column, worldX, surfaceY + 1, worldZ);
+                    continue;
+                }
+
+                byte surfaceBlock = column.getBlock(worldX, surfaceY, worldZ);
+                byte above = column.getBlock(worldX, surfaceY + 1, worldZ);
+                if (canSupportSnow(surfaceBlock) && above == GameConfig.AIR) {
+                    column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.SNOW_LAYER);
+                } else if (above == GameConfig.SNOW_LAYER && !canSupportSnow(surfaceBlock)) {
+                    column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.AIR);
+                }
+            }
+        }
+    }
+
+    private void removeUnsupportedSnow(GeneratedChunkColumn column, int worldX, int worldY, int worldZ) {
+        if (GameConfig.isWorldYInside(worldY) && column.getBlock(worldX, worldY, worldZ) == GameConfig.SNOW_LAYER) {
+            column.setBlock(worldX, worldY, worldZ, GameConfig.AIR);
+        }
+    }
+
+    private void removeSubmergedPlantsAndSnow(GeneratedChunkColumn column, int startX, int startZ) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                for (int worldY = GameConfig.WORLD_MIN_Y + 1; worldY < GameConfig.WORLD_MAX_Y; worldY++) {
+                    byte block = column.getBlock(worldX, worldY, worldZ);
+                    if (!isPlant(block) || block == GameConfig.SEAGRASS) {
+                        continue;
+                    }
+                    if (GameConfig.isWaterBlock(column.getBlock(worldX, worldY - 1, worldZ))
+                        || GameConfig.isWaterBlock(column.getBlock(worldX, worldY + 1, worldZ))
+                        || hasAdjacentWater(column, worldX, worldY, worldZ)) {
+                        column.setBlock(worldX, worldY, worldZ, GameConfig.AIR);
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean hasAdjacentWater(GeneratedChunkColumn column, int worldX, int worldY, int worldZ) {
+        return GameConfig.isWaterBlock(column.getBlock(worldX + 1, worldY, worldZ))
+            || GameConfig.isWaterBlock(column.getBlock(worldX - 1, worldY, worldZ))
+            || GameConfig.isWaterBlock(column.getBlock(worldX, worldY, worldZ + 1))
+            || GameConfig.isWaterBlock(column.getBlock(worldX, worldY, worldZ - 1));
+    }
+
+    private double treeChanceForBiome(Biome biome) {
+        switch (biome) {
+            case RAINFOREST:
+                return 0.145;
+            case FOREST:
+            case SEASONAL_FOREST:
+                return 0.110;
+            case SWAMPLAND:
+                return 0.060;
+            case TAIGA:
+                return 0.085;
+            case PLAINS:
+                return 0.012;
+            default:
+                return 0.0;
+        }
+    }
+
+    private Biome betaBiomeFromClimate(double temperature, double humidity) {
+        double adjustedHumidity = humidity * temperature;
+        if (temperature < 0.12) {
+            return humidity < 0.10 ? Biome.ICE_DESERT : Biome.TUNDRA;
+        }
+        if (temperature > 0.92 && humidity < 0.12) {
+            return Biome.DESERT;
+        }
+        if (humidity < 0.24) {
+            return temperature > 0.58 ? Biome.SAVANNA : Biome.SHRUBLAND;
+        }
+        if (adjustedHumidity > 0.52 && temperature < 0.68) {
+            return Biome.SWAMPLAND;
+        }
+        if (temperature < 0.44) {
+            return Biome.TAIGA;
+        }
+        if (temperature < 0.82) {
+            if (humidity < 0.38) {
+                return Biome.SHRUBLAND;
+            }
+            return Biome.FOREST;
+        }
+        if (humidity < 0.44) {
+            return Biome.PLAINS;
+        }
+        if (humidity < 0.82) {
+            return Biome.SEASONAL_FOREST;
+        }
+        return Biome.RAINFOREST;
+    }
+
+    private double climate01(double value) {
+        return clamp(value * 0.5 + 0.5, 0.0, 1.0);
+    }
+
+    private boolean isAquaticTerrain(byte terrainFlags) {
+        return (terrainFlags & (TERRAIN_OCEAN | TERRAIN_BEACH | TERRAIN_LAKE)) != 0;
+    }
+
+    private int caveRoofDepth(byte terrainFlags) {
+        if ((terrainFlags & TERRAIN_OCEAN) != 0) {
+            return 22;
+        }
+        if ((terrainFlags & TERRAIN_LAKE) != 0) {
+            return 16;
+        }
+        if ((terrainFlags & TERRAIN_BEACH) != 0) {
+            return 12;
+        }
+        return 5;
+    }
+
+    private boolean canCarveCaveBlock(byte block) {
+        return block == GameConfig.COBBLESTONE
+            || block == GameConfig.STONE
+            || block == GameConfig.DEEPSLATE;
+    }
+
+    private boolean canCarveCaveEntranceBlock(byte block, boolean entranceColumn) {
+        if (!entranceColumn) {
+            return false;
+        }
+        return block == GameConfig.COBBLESTONE
+            || block == GameConfig.STONE
+            || block == GameConfig.DEEPSLATE
+            || block == GameConfig.DIRT
+            || block == GameConfig.GRASS
+            || block == GameConfig.SAND
+            || block == GameConfig.GRAVEL;
+    }
+
+    private boolean isCaveEntranceColumn(int worldX, int worldZ, int surfaceHeight, byte terrainFlags) {
+        if (isAquaticTerrain(terrainFlags) || surfaceHeight <= GameConfig.SEA_LEVEL + 2) {
+            return false;
+        }
+        double mouthLine = Math.abs(fractalNoise((worldX - 1600.0) * CAVE_ENTRANCE_SCALE, (worldZ + 1440.0) * CAVE_ENTRANCE_SCALE, 2, 0.55));
+        double mouthGate = climate01(fractalNoise((worldX + 420.0) * 0.012, (worldZ - 610.0) * 0.012, 2, 0.56));
+        return mouthLine < 0.046 && mouthGate > 0.52;
+    }
+
+    private boolean shouldCarveCaveEntrance(int worldX, int worldY, int worldZ, int surfaceHeight) {
+        int depth = surfaceHeight - worldY;
+        if (depth < 0 || depth > 30) {
+            return false;
+        }
+        double taper = lerp(0.054, 0.142, depth / 30.0);
+        double throat = Math.abs(fractalNoise3((worldX + 2100.0) * 0.034, (worldY + 70.0) * 0.058, (worldZ - 1900.0) * 0.034, 2, 0.52));
+        return throat < taper;
+    }
+
+    private boolean shouldCarveCanyon(int worldX, int worldY, int worldZ, int surfaceHeight, Biome biome, byte terrainFlags) {
+        if (isAquaticTerrain(terrainFlags)
+            || biome.canyonStrength < 0.13
+            || worldY < GameConfig.SEA_LEVEL - 24
+            || worldY > Math.min(surfaceHeight - 8, GameConfig.SEA_LEVEL + 9)) {
+            return false;
+        }
+
+        double canyonNoise = Math.abs(fractalNoise(worldX * CANYON_SCALE, worldZ * CANYON_SCALE, 2, 0.58));
+        if (canyonNoise < 0.985) {
+            return false;
+        }
+        double canyonFloor = GameConfig.SEA_LEVEL - 13.0
+            + fractalNoise((worldX + 540.0) * 0.011, (worldZ - 410.0) * 0.011, 2, 0.60) * 5.0;
+        double sideBreakup = climate01(fractalNoise3((worldX - 400.0) * 0.020, (worldY + 30.0) * 0.030, (worldZ + 520.0) * 0.020, 2, 0.52));
+        return worldY > canyonFloor && sideBreakup > 0.68;
+    }
+
+    private boolean isSolidCaveFloor(byte block) {
+        return isOpaque(block) && block != GameConfig.BEDROCK;
+    }
+
+    private boolean hasCaveAirSpace(GeneratedChunkColumn column, int worldX, int worldY, int worldZ) {
+        int air = 0;
+        if (column.getBlock(worldX + 1, worldY, worldZ) == GameConfig.AIR) {
+            air++;
+        }
+        if (column.getBlock(worldX - 1, worldY, worldZ) == GameConfig.AIR) {
+            air++;
+        }
+        if (column.getBlock(worldX, worldY, worldZ + 1) == GameConfig.AIR) {
+            air++;
+        }
+        if (column.getBlock(worldX, worldY, worldZ - 1) == GameConfig.AIR) {
+            air++;
+        }
+        if (column.getBlock(worldX, worldY + 1, worldZ) == GameConfig.AIR) {
+            air++;
+        }
+        return air >= 3;
+    }
+
+    private byte topBlockForTerrain(Biome biome, byte terrainFlags, int surfaceHeight, int worldX, int worldZ) {
+        if ((terrainFlags & TERRAIN_OCEAN) != 0 && surfaceHeight < GameConfig.SEA_LEVEL - 8) {
+            return aquaticFloorBlock(worldX, surfaceHeight, worldZ, terrainFlags);
+        }
+        if ((terrainFlags & TERRAIN_BEACH) != 0) {
+            return GameConfig.SAND;
+        }
+        if ((terrainFlags & TERRAIN_LAKE) != 0) {
+            return aquaticFloorBlock(worldX, surfaceHeight, worldZ, terrainFlags);
+        }
+        if ((terrainFlags & TERRAIN_OCEAN) != 0) {
+            return aquaticFloorBlock(worldX, surfaceHeight, worldZ, terrainFlags);
+        }
+        return biome.topBlock;
+    }
+
+    private byte fillerBlockForTerrain(Biome biome, byte terrainFlags) {
+        if ((terrainFlags & TERRAIN_OCEAN) != 0) {
+            return GameConfig.GRAVEL;
+        }
+        if ((terrainFlags & (TERRAIN_BEACH | TERRAIN_LAKE)) != 0) {
+            return GameConfig.DIRT;
+        }
+        return biome.fillerBlock;
+    }
+
+    private byte aquaticFloorBlock(int worldX, int surfaceHeight, int worldZ, byte terrainFlags) {
+        double floorNoise = fractalNoise((worldX + 930.0) * 0.070, (worldZ - 1210.0) * 0.070, 2, 0.52);
+        if ((terrainFlags & TERRAIN_BEACH) != 0) {
+            return floorNoise > 0.38 ? GameConfig.GRAVEL : GameConfig.SAND;
+        }
+        if ((terrainFlags & TERRAIN_LAKE) != 0) {
+            return floorNoise > 0.30 ? GameConfig.GRAVEL : (floorNoise < -0.35 ? GameConfig.SAND : GameConfig.DIRT);
+        }
+        int depth = GameConfig.SEA_LEVEL - surfaceHeight;
+        if (depth <= 3) {
+            return floorNoise < 0.35 ? GameConfig.SAND : GameConfig.GRAVEL;
+        }
+        return floorNoise > -0.18 ? GameConfig.GRAVEL : GameConfig.SAND;
+    }
+
+    private void stabilizeGeneratedSand(GeneratedChunkColumn column, int startX, int startZ) {
+        for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                int worldX = startX + localX;
+                int worldZ = startZ + localZ;
+                for (int worldY = GameConfig.WORLD_MIN_Y + 1; worldY <= GameConfig.WORLD_MAX_Y; worldY++) {
+                    if (column.getBlock(worldX, worldY, worldZ) != GameConfig.SAND) {
+                        continue;
+                    }
+
+                    byte support = column.getBlock(worldX, worldY - 1, worldZ);
+                    if (support == GameConfig.COBBLESTONE || support == GameConfig.DIRT || support == GameConfig.GRASS || support == GameConfig.STONE || support == GameConfig.DEEPSLATE || support == GameConfig.CLAY) {
+                        continue;
+                    }
+                    column.setBlock(worldX, worldY, worldZ, GameConfig.DIRT);
+                }
+            }
+        }
+    }
+
+    private int findSurface(GeneratedChunkColumn column, int worldX, int worldZ) {
+        for (int worldY = GameConfig.WORLD_MAX_Y; worldY >= GameConfig.WORLD_MIN_Y; worldY--) {
+            byte block = column.getBlock(worldX, worldY, worldZ);
+            if (block != GameConfig.AIR && !GameConfig.isLiquidBlock(block) && !isPlant(block)) {
+                return worldY;
+            }
+        }
+        return GameConfig.WORLD_MIN_Y;
+    }
+
+    private boolean isOpaque(byte block) {
+        return block != GameConfig.AIR
+            && !GameConfig.isLiquidBlock(block)
+            && !isPlant(block);
+    }
+
+    private boolean isPlant(byte block) {
+        return block == GameConfig.TALL_GRASS
+            || block == GameConfig.SEAGRASS
+            || block == GameConfig.RED_FLOWER
+            || block == GameConfig.YELLOW_FLOWER
+            || block == GameConfig.SNOW_LAYER
+            || block == GameConfig.WHEAT_CROP
+            || block == GameConfig.RAIL
+            || block == GameConfig.TORCH
+            || block == GameConfig.OAK_DOOR;
+    }
+
+    private void initializePermutation() {
+        int[] values = new int[256];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+
+        Random random = new Random(seed);
+        for (int i = values.length - 1; i > 0; i--) {
+            int swapIndex = random.nextInt(i + 1);
+            int temporary = values[i];
+            values[i] = values[swapIndex];
+            values[swapIndex] = temporary;
+        }
+
+        for (int i = 0; i < permutation.length; i++) {
+            permutation[i] = values[i & 255];
+        }
+    }
+
+    private int columnIndex(int localX, int localZ) {
+        return localZ * GameConfig.CHUNK_SIZE + localX;
+    }
+
+    private long mix64(long value) {
+        value ^= value >>> 33;
+        value *= 0xff51afd7ed558ccdL;
+        value ^= value >>> 33;
+        value *= 0xc4ceb9fe1a85ec53L;
+        value ^= value >>> 33;
+        return value;
+    }
+
+    private double randomUnit(long bits) {
+        return ((bits >>> 11) & ((1L << 53) - 1)) / (double) (1L << 53);
+    }
+
+    private double fractalNoise(double x, double z, int octaves, double persistence) {
+        double total = 0.0;
+        double amplitude = 1.0;
+        double frequency = 1.0;
+        double amplitudeSum = 0.0;
+
+        for (int octave = 0; octave < octaves; octave++) {
+            total += perlin(x * frequency, z * frequency) * amplitude;
+            amplitudeSum += amplitude;
+            amplitude *= persistence;
+            frequency *= 2.0;
+        }
+
+        return total / amplitudeSum;
+    }
+
+    private double fractalNoise3(double x, double y, double z, int octaves, double persistence) {
+        double total = 0.0;
+        double amplitude = 1.0;
+        double frequency = 1.0;
+        double amplitudeSum = 0.0;
+
+        for (int octave = 0; octave < octaves; octave++) {
+            total += perlin3(x * frequency, y * frequency, z * frequency) * amplitude;
+            amplitudeSum += amplitude;
+            amplitude *= persistence;
+            frequency *= 2.0;
+        }
+
+        return total / amplitudeSum;
+    }
+
+    private double perlin(double x, double y) {
+        int baseX = (int) Math.floor(x) & 255;
+        int baseY = (int) Math.floor(y) & 255;
+
+        double localX = x - Math.floor(x);
+        double localY = y - Math.floor(y);
+
+        double fadeX = fade(localX);
+        double fadeY = fade(localY);
+
+        int aa = permutation[permutation[baseX] + baseY];
+        int ab = permutation[permutation[baseX] + baseY + 1];
+        int ba = permutation[permutation[baseX + 1] + baseY];
+        int bb = permutation[permutation[baseX + 1] + baseY + 1];
+
+        double blendTop = lerp(grad(aa, localX, localY), grad(ba, localX - 1.0, localY), fadeX);
+        double blendBottom = lerp(grad(ab, localX, localY - 1.0), grad(bb, localX - 1.0, localY - 1.0), fadeX);
+        return lerp(blendTop, blendBottom, fadeY);
+    }
+
+    private double perlin3(double x, double y, double z) {
+        int baseX = (int) Math.floor(x) & 255;
+        int baseY = (int) Math.floor(y) & 255;
+        int baseZ = (int) Math.floor(z) & 255;
+
+        double localX = x - Math.floor(x);
+        double localY = y - Math.floor(y);
+        double localZ = z - Math.floor(z);
+
+        double fadeX = fade(localX);
+        double fadeY = fade(localY);
+        double fadeZ = fade(localZ);
+
+        int a = permutation[baseX] + baseY;
+        int aa = permutation[a] + baseZ;
+        int ab = permutation[a + 1] + baseZ;
+        int b = permutation[baseX + 1] + baseY;
+        int ba = permutation[b] + baseZ;
+        int bb = permutation[b + 1] + baseZ;
+
+        double x1 = lerp(grad3(permutation[aa], localX, localY, localZ), grad3(permutation[ba], localX - 1.0, localY, localZ), fadeX);
+        double x2 = lerp(grad3(permutation[ab], localX, localY - 1.0, localZ), grad3(permutation[bb], localX - 1.0, localY - 1.0, localZ), fadeX);
+        double y1 = lerp(x1, x2, fadeY);
+
+        double x3 = lerp(grad3(permutation[aa + 1], localX, localY, localZ - 1.0), grad3(permutation[ba + 1], localX - 1.0, localY, localZ - 1.0), fadeX);
+        double x4 = lerp(grad3(permutation[ab + 1], localX, localY - 1.0, localZ - 1.0), grad3(permutation[bb + 1], localX - 1.0, localY - 1.0, localZ - 1.0), fadeX);
+        double y2 = lerp(x3, x4, fadeY);
+
+        return lerp(y1, y2, fadeZ);
+    }
+
+    private double fade(double value) {
+        return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+    }
+
+    private double lerp(double a, double b, double t) {
+        return a + t * (b - a);
+    }
+
+    private double smoothstep(double edge0, double edge1, double value) {
+        double t = clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    private double grad(int hash, double x, double y) {
+        switch (hash & 7) {
+            case 0:
+                return x + y;
+            case 1:
+                return -x + y;
+            case 2:
+                return x - y;
+            case 3:
+                return -x - y;
+            case 4:
+                return x;
+            case 5:
+                return -x;
+            case 6:
+                return y;
+            default:
+                return -y;
+        }
+    }
+
+    private double grad3(int hash, double x, double y, double z) {
+        switch (hash & 15) {
+            case 0:
+                return x + y;
+            case 1:
+                return -x + y;
+            case 2:
+                return x - y;
+            case 3:
+                return -x - y;
+            case 4:
+                return x + z;
+            case 5:
+                return -x + z;
+            case 6:
+                return x - z;
+            case 7:
+                return -x - z;
+            case 8:
+                return y + z;
+            case 9:
+                return -y + z;
+            case 10:
+                return y - z;
+            case 11:
+                return -y - z;
+            case 12:
+                return x + y;
+            case 13:
+                return -x + y;
+            case 14:
+                return -y + z;
+            default:
+                return y - z;
+        }
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private enum Biome {
+        RAINFOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 18.0, 8.0, 9.0, 4.2, 0.10, false, false),
+        SWAMPLAND(GameConfig.GRASS, GameConfig.DIRT, 5, 13.0, 5.0, 4.0, 2.0, 0.04, false, false),
+        SEASONAL_FOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 17.0, 7.0, 8.0, 3.5, 0.10, false, false),
+        FOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 18.0, 8.0, 10.0, 4.0, 0.12, false, false),
+        SAVANNA(GameConfig.GRASS, GameConfig.DIRT, 4, 16.0, 6.0, 4.0, 2.4, 0.05, false, false),
+        SHRUBLAND(GameConfig.GRASS, GameConfig.DIRT, 4, 15.0, 6.0, 5.0, 2.6, 0.06, false, false),
+        TAIGA(GameConfig.GRASS, GameConfig.DIRT, 5, 17.0, 7.0, 11.0, 3.4, 0.14, true, true),
+        DESERT(GameConfig.SAND, GameConfig.SAND, 4, 16.0, 7.0, 5.0, 2.8, 0.05, false, false),
+        PLAINS(GameConfig.GRASS, GameConfig.DIRT, 4, 16.0, 7.0, 8.0, 3.0, 0.18, false, false),
+        ICE_DESERT(GameConfig.SAND, GameConfig.SAND, 4, 12.0, 4.0, 3.0, 1.8, 0.04, true, false),
+        TUNDRA(GameConfig.GRASS, GameConfig.DIRT, 4, 14.0, 5.0, 4.0, 2.0, 0.05, true, false);
+
+        final byte topBlock;
+        final byte fillerBlock;
+        final int baseSoilDepth;
+        final double continentAmplitude;
+        final double erosionAmplitude;
+        final double ridgeAmplitude;
+        final double detailAmplitude;
+        final double canyonStrength;
+        final boolean snowCovered;
+        final boolean pineTrees;
+
+        Biome(byte topBlock, byte fillerBlock, int baseSoilDepth, double continentAmplitude, double erosionAmplitude,
+              double ridgeAmplitude, double detailAmplitude, double canyonStrength,
+              boolean snowCovered, boolean pineTrees) {
+            this.topBlock = topBlock;
+            this.fillerBlock = fillerBlock;
+            this.baseSoilDepth = baseSoilDepth;
+            this.continentAmplitude = continentAmplitude;
+            this.erosionAmplitude = erosionAmplitude;
+            this.ridgeAmplitude = ridgeAmplitude;
+            this.detailAmplitude = detailAmplitude;
+            this.canyonStrength = canyonStrength;
+            this.snowCovered = snowCovered;
+            this.pineTrees = pineTrees;
+        }
+    }
+
+    private final class DensitySampler {
+        double sampleTerrainDensity(int worldX, int worldY, int worldZ, TerrainSample sample) {
+            if (worldY > sample.approximateSurfaceHeight + 36) {
+                return -64.0;
+            }
+            double terrainDensity = sample.approximateSurfaceHeight - worldY;
+            double surfaceBand = 1.0 - smoothstep(18.0, 72.0, Math.abs(sample.approximateSurfaceHeight - worldY));
+            double terrainNoise = surfaceBand > 0.001
+                ? fractalNoise3((worldX + 310.0) * 0.018, (worldY - 24.0) * 0.016, (worldZ - 190.0) * 0.018, 3, 0.53) * 4.2 * surfaceBand
+                : 0.0;
+            double coarseLift = Math.abs(sample.approximateSurfaceHeight - worldY) < 96.0
+                ? fractalNoise3((worldX - 820.0) * 0.006, (worldY + 48.0) * 0.010, (worldZ + 470.0) * 0.006, 2, 0.58) * 2.4
+                : 0.0;
+            double density = terrainDensity + terrainNoise + coarseLift;
+
+            double surfaceDepth = sample.approximateSurfaceHeight - worldY;
+            if (surfaceDepth < CAVE_MIN_DEPTH_BELOW_SURFACE) {
+                return density;
+            }
+            double cave = sampleCaveDensity(worldX, worldY, worldZ);
+            boolean protectedAquaticRoof = isAquaticTerrain(sample.terrainFlags) && surfaceDepth < caveRoofDepth(sample.terrainFlags) + 8;
+            double deepTightening = smoothstep(-4.0, GameConfig.WORLD_MIN_Y + 18.0, worldY) * 0.12;
+            double openThreshold = CAVE_TUNNEL_THRESHOLD + deepTightening;
+            if (!protectedAquaticRoof && cave > openThreshold && worldY > GameConfig.WORLD_MIN_Y + 7) {
+                density = Math.min(density, -4.0 - cave * 4.0);
+            } else if (!protectedAquaticRoof) {
+                density -= cave * 4.2;
+            }
+            return density;
+        }
+
+        double sampleContinentalness(int x, int z) {
+            return WorldGenerator.this.sampleContinentalness(x, z);
+        }
+
+        double sampleCaveDensity(int x, int y, int z) {
+            double midBand = smoothstep(GameConfig.SEA_LEVEL + 18.0, GameConfig.SEA_LEVEL - 26.0, y);
+            double deepBand = smoothstep(-10.0, GameConfig.WORLD_MIN_Y + 14.0, y);
+            double bedrockFade = 1.0 - smoothstep(GameConfig.WORLD_MIN_Y + 10.0, GameConfig.WORLD_MIN_Y + 22.0, y);
+            double depthFactor = clamp(0.22 + midBand * 0.56 + deepBand * 0.18 - bedrockFade * 0.18, 0.0, 1.0);
+            double upperCaveBonus = smoothstep(GameConfig.SEA_LEVEL + 12.0, GameConfig.SEA_LEVEL - 12.0, y) * 0.035;
+            double tunnelA = Math.abs(fractalNoise3((x + 120.0) * CAVE_FREQUENCY, (y - 18.0) * (CAVE_FREQUENCY * 1.28), (z - 240.0) * CAVE_FREQUENCY, 2, 0.56));
+            double tunnelB = Math.abs(fractalNoise3((x - 620.0) * (CAVE_FREQUENCY * 0.58), (y + 80.0) * (CAVE_FREQUENCY * 0.92), (z + 410.0) * (CAVE_FREQUENCY * 0.58), 2, 0.54));
+            double tunnelOpen = Math.max(
+                1.0 - smoothstep(0.014, 0.074, tunnelA),
+                (1.0 - smoothstep(0.010, 0.056, tunnelB)) * 0.78
+            );
+            double gate = climate01(fractalNoise3((x + 710.0) * 0.0085, (y - 90.0) * 0.010, (z - 330.0) * 0.0085, 2, 0.52));
+            double choke = climate01(fractalNoise3((x - 1330.0) * 0.018, (y + 240.0) * 0.022, (z + 970.0) * 0.018, 2, 0.52));
+            tunnelOpen *= smoothstep(0.34, 0.62, gate) * lerp(0.62, 1.0, choke);
+
+            double roomNoise = climate01(fractalNoise3((x - 940.0) * CAVE_ROOM_FREQUENCY, (y + 70.0) * (CAVE_ROOM_FREQUENCY * 1.36), (z + 610.0) * CAVE_ROOM_FREQUENCY, 3, 0.56));
+            double roomBand = smoothstep(GameConfig.SEA_LEVEL + 2.0, GameConfig.SEA_LEVEL - 34.0, y)
+                * (1.0 - smoothstep(-30.0, GameConfig.WORLD_MIN_Y + 12.0, y));
+            double roomOpen = smoothstep(CAVE_ROOM_THRESHOLD, 0.97, roomNoise) * roomBand * 0.25;
+            return clamp(Math.max(tunnelOpen * depthFactor, roomOpen) + upperCaveBonus, 0.0, 1.0);
+        }
+    }
+
+    private static final class TerrainSample {
+        final int approximateSurfaceHeight;
+        final byte terrainFlags;
+
+        TerrainSample(int approximateSurfaceHeight, byte terrainFlags) {
+            this.approximateSurfaceHeight = approximateSurfaceHeight;
+            this.terrainFlags = terrainFlags;
+        }
+    }
+
+    private static final class VillagePlan {
+        final int centerChunkX;
+        final int centerChunkZ;
+        final int centerX;
+        final int centerZ;
+        final int baseY;
+        final long seed;
+
+        VillagePlan(int centerChunkX, int centerChunkZ, int centerX, int centerZ, int baseY, long seed) {
+            this.centerChunkX = centerChunkX;
+            this.centerChunkZ = centerChunkZ;
+            this.centerX = centerX;
+            this.centerZ = centerZ;
+            this.baseY = baseY;
+            this.seed = seed;
+        }
+    }
+
+    private static final class MineshaftPlan {
+        final int centerChunkX;
+        final int centerChunkZ;
+        final int centerX;
+        final int centerZ;
+        final int y;
+        final long seed;
+
+        MineshaftPlan(int centerChunkX, int centerChunkZ, int centerX, int centerZ, int y, long seed) {
+            this.centerChunkX = centerChunkX;
+            this.centerChunkZ = centerChunkZ;
+            this.centerX = centerX;
+            this.centerZ = centerZ;
+            this.y = y;
+            this.seed = seed;
+        }
+    }
+
+    private static final class RiverShape {
+        static final RiverShape INACTIVE = new RiverShape(false, Double.POSITIVE_INFINITY, 0.0, 0.0, 0.0);
+
+        final boolean active;
+        final double distanceToCenter;
+        final double width;
+        final double bankWidth;
+        final double mask;
+
+        RiverShape(boolean active, double distanceToCenter, double width, double bankWidth, double mask) {
+            this.active = active;
+            this.distanceToCenter = distanceToCenter;
+            this.width = width;
+            this.bankWidth = bankWidth;
+            this.mask = mask;
+        }
+    }
+
+    private static final class RiverSample {
+        static final RiverSample INACTIVE = new RiverSample(false, false, Double.POSITIVE_INFINITY, 0.0, 0.0, 0.0, RIVER_WATER_LEVEL, GameConfig.SEA_LEVEL);
+
+        final boolean active;
+        final boolean wet;
+        final double distanceToCenter;
+        final double width;
+        final double bankWidth;
+        final double mask;
+        final int waterLevel;
+        final int bedLevel;
+
+        RiverSample(boolean active, boolean wet, double distanceToCenter, double width, double bankWidth, double mask, int waterLevel, int bedLevel) {
+            this.active = active;
+            this.wet = wet;
+            this.distanceToCenter = distanceToCenter;
+            this.width = width;
+            this.bankWidth = bankWidth;
+            this.mask = mask;
+            this.waterLevel = waterLevel;
+            this.bedLevel = bedLevel;
+        }
+    }
+
+    private static final class GenerationScratch {
+        final int[] surfaceHeights = new int[COLUMN_AREA];
+        final byte[] biomeOrdinals = new byte[COLUMN_AREA];
+        final byte[] dirtDepths = new byte[COLUMN_AREA];
+        final byte[] terrainFlags = new byte[COLUMN_AREA];
+        final double[] continentalness = new double[COLUMN_AREA];
+        final double[] lakeBasins = new double[COLUMN_AREA];
+        final RiverSample[] riverSamples = new RiverSample[COLUMN_AREA];
+        final TerrainSample[] samples = new TerrainSample[COLUMN_AREA];
+    }
+}
+
+final class GeneratedChunkColumn implements StructureTemplates.Target {
+    final int chunkX;
+    final int chunkZ;
+    private final Chunk[] sections = new Chunk[GameConfig.SECTION_COUNT];
+    private final short[] surfaceHeights = new short[GameConfig.CHUNK_SIZE * GameConfig.CHUNK_SIZE];
+    private ChunkGenerationStatus status = ChunkGenerationStatus.EMPTY;
+
+    GeneratedChunkColumn(int chunkX, int chunkZ) {
+        this.chunkX = chunkX;
+        this.chunkZ = chunkZ;
+        for (int chunkY = 0; chunkY < sections.length; chunkY++) {
+            sections[chunkY] = new Chunk(chunkX, chunkY, chunkZ);
+        }
+    }
+
+    Chunk[] sections() {
+        return sections;
+    }
+
+    ChunkGenerationStatus status() {
+        return status;
+    }
+
+    void setStatus(ChunkGenerationStatus status) {
+        this.status = status == null ? ChunkGenerationStatus.EMPTY : status;
+    }
+
+    byte getBlock(int worldX, int worldY, int worldZ) {
+        if (!GameConfig.isWorldYInside(worldY)) {
+            return GameConfig.AIR;
+        }
+        int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
+        int localY = GameConfig.localYForWorldY(worldY);
+        int localZ = Math.floorMod(worldZ, GameConfig.CHUNK_SIZE);
+        int chunkY = GameConfig.sectionIndexForY(worldY);
+        return sections[chunkY].getBlockLocal(localX, localY, localZ);
+    }
+
+    void setBlock(int worldX, int worldY, int worldZ, byte block) {
+        if (!GameConfig.isWorldYInside(worldY)) {
+            return;
+        }
+        int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
+        int localY = GameConfig.localYForWorldY(worldY);
+        int localZ = Math.floorMod(worldZ, GameConfig.CHUNK_SIZE);
+        int chunkY = GameConfig.sectionIndexForY(worldY);
+        Chunk chunk = sections[chunkY];
+        chunk.setBlockLocal(localX, localY, localZ, block);
+        if (GameConfig.isLiquidBlock(block)) {
+            chunk.setFluidDistanceLocal(localX, localY, localZ, 0);
+        }
+    }
+
+    public void setTemplateBlock(int worldX, int worldY, int worldZ, BlockState state) {
+        if (Math.floorDiv(worldX, GameConfig.CHUNK_SIZE) != chunkX
+            || Math.floorDiv(worldZ, GameConfig.CHUNK_SIZE) != chunkZ
+            || !GameConfig.isWorldYInside(worldY)) {
+            return;
+        }
+        int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
+        int localY = GameConfig.localYForWorldY(worldY);
+        int localZ = Math.floorMod(worldZ, GameConfig.CHUNK_SIZE);
+        int chunkY = GameConfig.sectionIndexForY(worldY);
+        sections[chunkY].setBlockStateLocal(localX, localY, localZ, state);
+        if (state != null && state.type.isLiquid()) {
+            sections[chunkY].setFluidDistanceLocal(localX, localY, localZ, 0);
+        }
+    }
+
+    public BlockState getTemplateBlock(int worldX, int worldY, int worldZ) {
+        return getBlockState(worldX, worldY, worldZ);
+    }
+
+    BlockState getBlockState(int worldX, int worldY, int worldZ) {
+        if (!GameConfig.isWorldYInside(worldY)) {
+            return Blocks.stateFromLegacyId(GameConfig.AIR);
+        }
+        int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
+        int localY = GameConfig.localYForWorldY(worldY);
+        int localZ = Math.floorMod(worldZ, GameConfig.CHUNK_SIZE);
+        int chunkY = GameConfig.sectionIndexForY(worldY);
+        return sections[chunkY].getBlockStateLocal(localX, localY, localZ);
+    }
+
+    void setNaturalFluid(int worldX, int worldY, int worldZ, byte block) {
+        setBlock(worldX, worldY, worldZ, block);
+        if (!GameConfig.isWorldYInside(worldY) || !GameConfig.isLiquidBlock(block)) {
+            return;
+        }
+        int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
+        int localY = GameConfig.localYForWorldY(worldY);
+        int localZ = Math.floorMod(worldZ, GameConfig.CHUNK_SIZE);
+        int chunkY = GameConfig.sectionIndexForY(worldY);
+        sections[chunkY].setFluidDistanceLocal(localX, localY, localZ, GameConfig.NATURAL_FLUID_DISTANCE);
+    }
+
+    void setSurfaceHeight(int localX, int localZ, int height) {
+        surfaceHeights[localZ * GameConfig.CHUNK_SIZE + localX] = (short) height;
+    }
+
+    int getSurfaceHeight(int localX, int localZ) {
+        return surfaceHeights[localZ * GameConfig.CHUNK_SIZE + localX];
+    }
+}

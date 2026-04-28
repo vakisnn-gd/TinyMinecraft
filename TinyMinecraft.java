@@ -1,0 +1,3241 @@
+import org.lwjgl.glfw.GLFWErrorCallback;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Random;
+
+import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MAJOR;
+import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MINOR;
+import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
+import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
+import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_NORMAL;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_1;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_2;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_3;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_4;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_5;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_6;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_7;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_8;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_9;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_A;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_D;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_E;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F5;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F11;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_S;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_TAB;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_T;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_UP;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_W;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
+import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_ANY_PROFILE;
+import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_PROFILE;
+import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
+import static org.lwjgl.glfw.GLFW.GLFW_RAW_MOUSE_MOTION;
+import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
+import static org.lwjgl.glfw.GLFW.GLFW_RESIZABLE;
+import static org.lwjgl.glfw.GLFW.GLFW_REPEAT;
+import static org.lwjgl.glfw.GLFW.GLFW_TRUE;
+import static org.lwjgl.glfw.GLFW.glfwCreateWindow;
+import static org.lwjgl.glfw.GLFW.glfwDefaultWindowHints;
+import static org.lwjgl.glfw.GLFW.glfwDestroyWindow;
+import static org.lwjgl.glfw.GLFW.glfwGetPrimaryMonitor;
+import static org.lwjgl.glfw.GLFW.glfwGetTime;
+import static org.lwjgl.glfw.GLFW.glfwGetVideoMode;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowPos;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
+import static org.lwjgl.glfw.GLFW.glfwInit;
+import static org.lwjgl.glfw.GLFW.glfwMakeContextCurrent;
+import static org.lwjgl.glfw.GLFW.glfwPollEvents;
+import static org.lwjgl.glfw.GLFW.glfwSetCursorPosCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetFramebufferSizeCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetInputMode;
+import static org.lwjgl.glfw.GLFW.glfwSetCharCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetKeyCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetMouseButtonCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetWindowMonitor;
+import static org.lwjgl.glfw.GLFW.glfwSetWindowShouldClose;
+import static org.lwjgl.glfw.GLFW.glfwShowWindow;
+import static org.lwjgl.glfw.GLFW.glfwSwapBuffers;
+import static org.lwjgl.glfw.GLFW.glfwSwapInterval;
+import static org.lwjgl.glfw.GLFW.glfwTerminate;
+import static org.lwjgl.glfw.GLFW.glfwWindowHint;
+import static org.lwjgl.glfw.GLFW.glfwWindowShouldClose;
+import static org.lwjgl.system.MemoryUtil.NULL;
+
+public class TinyMinecraft {
+    private final long bootstrapSeed = System.nanoTime() ^ new Random().nextLong();
+    private final PlayerState player = new PlayerState();
+    private final VoxelWorld world = new VoxelWorld(bootstrapSeed);
+    private final OpenGlRenderer renderer = new OpenGlRenderer(world);
+    private final AudioEngine audio = new AudioEngine();
+    private final PlayerInventory inventory = new PlayerInventory();
+    private final Random ambientRandom = new Random();
+    private final ArrayList<WorldInfo> availableWorlds = new ArrayList<>();
+    private final MutableVec3 playerFluidFlow = new MutableVec3();
+    private final FrameProfiler frameProfiler = new FrameProfiler();
+    private final ChatSystem chat = new ChatSystem();
+
+    private GLFWErrorCallback errorCallback;
+    private long window;
+
+    private boolean forward;
+    private boolean backward;
+    private boolean left;
+    private boolean right;
+    private boolean sprint;
+    private boolean sneak;
+    private boolean descend;
+    private boolean jumpQueued;
+    private boolean jumpHeld;
+    private boolean leftMouseHeld;
+    private boolean creativeMode;
+    private boolean spectatorMode;
+    private boolean creativeFlightEnabled;
+    private boolean thirdPersonView;
+    private boolean frontThirdPersonView;
+    private boolean paused;
+    private boolean deathScreenActive;
+    private boolean mainMenuActive;
+    private boolean inventoryOpen;
+    private int inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
+    private ContainerInventory activeChestContainer;
+    private FurnaceBlockEntity activeFurnace;
+    private boolean showDebugInfo;
+    private boolean hideHud;
+    private boolean f3Held;
+    private boolean gameModeSwitcherActive;
+    private boolean mouseInitialized;
+    private boolean worldLoaded;
+    private boolean mainMenuWorldActionsEnabled;
+    private double lastMouseX;
+    private double lastMouseY;
+    private double mouseX;
+    private double mouseY;
+    private int pauseSelection;
+    private int deathSelection;
+    private int mainMenuScreen;
+    private int mainMenuSelection;
+    private int selectedWorldIndex;
+    private int mainMenuScrollOffset;
+    private int gameModeSelection;
+    private int selectedSlot;
+    private int creativeTab;
+    private int activeMenuTextField = -1;
+    private int createWorldGameMode;
+    private int createWorldDifficulty = 2;
+    private int renderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
+    private int fovDegrees = (int) GameConfig.FOV_DEGREES;
+    private boolean optionsOpenedFromPause;
+    private byte selectedBlock = GameConfig.GRASS;
+    private String createWorldName = "New World";
+    private String createWorldSeed = "";
+    private String renameWorldName = "";
+    private RayHit hoveredBlock;
+    private int breakingBlockX = -1;
+    private int breakingBlockY = -1;
+    private int breakingBlockZ = -1;
+    private double breakingTimer;
+    private double breakingDuration;
+    private RayHit breakingHit;
+    private boolean fullscreen;
+    private int windowedX;
+    private int windowedY;
+    private int windowedWidth = GameConfig.WINDOW_WIDTH;
+    private int windowedHeight = GameConfig.WINDOW_HEIGHT;
+    private double lastCreativeJumpTapTime = -1.0;
+    private double waterAmbientCooldown;
+    private double lastWorldSlotClickTime = -1.0;
+    private String loadedWorldName;
+    private int lastWorldSlotClickIndex = -1;
+
+    public static void main(String[] args) {
+        new TinyMinecraft().run();
+    }
+
+    private void run() {
+        try {
+            Settings.load();
+            renderDistanceChunks = Settings.savedRenderDistance;
+            fovDegrees = Settings.savedFovDegrees;
+            world.setRenderDistanceChunks(renderDistanceChunks);
+            initWindow();
+            renderer.init();
+            audio.init();
+            refreshAvailableWorlds();
+            mainMenuActive = true;
+            mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+            mainMenuSelection = 0;
+            optionsOpenedFromPause = false;
+            syncPlayerModeState();
+            syncSelectedHotbarItem();
+            player.isGrounded = true;
+            updateCursorMode();
+            loop();
+        } finally {
+            cleanup();
+        }
+    }
+
+    private void initWindow() {
+        errorCallback = GLFWErrorCallback.createPrint(System.err);
+        errorCallback.set();
+
+        if (!glfwInit()) {
+            throw new IllegalStateException("Unable to initialize GLFW");
+        }
+
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+
+        long primaryMonitor = glfwGetPrimaryMonitor();
+        var videoMode = glfwGetVideoMode(primaryMonitor);
+        int initialWidth = videoMode != null ? videoMode.width() : GameConfig.WINDOW_WIDTH;
+        int initialHeight = videoMode != null ? videoMode.height() : GameConfig.WINDOW_HEIGHT;
+        long initialMonitor = videoMode != null ? primaryMonitor : NULL;
+        fullscreen = videoMode != null;
+
+        window = glfwCreateWindow(initialWidth, initialHeight, "Tiny Minecraft OpenGL", initialMonitor, NULL);
+        if (window == NULL) {
+            throw new IllegalStateException("Unable to create window");
+        }
+
+        if (videoMode != null) {
+            windowedWidth = GameConfig.WINDOW_WIDTH;
+            windowedHeight = GameConfig.WINDOW_HEIGHT;
+            windowedX = (videoMode.width() - windowedWidth) / 2;
+            windowedY = (videoMode.height() - windowedHeight) / 2;
+        }
+
+        glfwMakeContextCurrent(window);
+        if (window == NULL) {
+            throw new IllegalStateException("Window handle is invalid");
+        }
+        glfwSwapInterval(1);
+        glfwShowWindow(window);
+
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        if (org.lwjgl.glfw.GLFW.glfwRawMouseMotionSupported()) {
+            glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        }
+
+        glfwSetCursorPosCallback(window, (handle, xpos, ypos) -> {
+            mouseX = xpos;
+            mouseY = ypos;
+
+            if (mainMenuActive) {
+                int hoveredWorld = renderer.getMainMenuWorldAt(xpos, ypos, mainMenuScreen, availableWorlds.size(), mainMenuScrollOffset);
+                if (hoveredWorld != -1) {
+                    selectedWorldIndex = hoveredWorld;
+                }
+                int hoveredSlider = renderer.getOptionsSliderAt(xpos, ypos, mainMenuScreen);
+                if (hoveredSlider != -1) {
+                    mainMenuSelection = hoveredSlider;
+                    mouseInitialized = false;
+                    return;
+                }
+                int hoveredOption = renderer.getMainMenuOptionAt(xpos, ypos, mainMenuScreen);
+                if (hoveredOption != -1) {
+                    mainMenuSelection = hoveredOption;
+                }
+                mouseInitialized = false;
+                return;
+            }
+
+            if (deathScreenActive) {
+                int hoveredOption = renderer.getDeathOptionAt(xpos, ypos);
+                if (hoveredOption != -1) {
+                    deathSelection = hoveredOption;
+                }
+                mouseInitialized = false;
+                return;
+            }
+
+            if (paused) {
+                int hoveredOption = renderer.getPauseOptionAt(xpos, ypos);
+                if (hoveredOption != -1) {
+                    pauseSelection = hoveredOption;
+                }
+                mouseInitialized = false;
+                return;
+            }
+
+            if (inventoryOpen) {
+                mouseInitialized = false;
+                return;
+            }
+
+            if (!mouseInitialized) {
+                lastMouseX = xpos;
+                lastMouseY = ypos;
+                mouseInitialized = true;
+                return;
+            }
+
+            double deltaX = xpos - lastMouseX;
+            double deltaY = ypos - lastMouseY;
+            lastMouseX = xpos;
+            lastMouseY = ypos;
+
+            player.yaw = wrapAngle(player.yaw + deltaX * Settings.mouseSensitivity);
+            player.pitch -= deltaY * Settings.mouseSensitivity * Settings.mouseVerticalFactor;
+            player.pitch = clamp(player.pitch, -GameConfig.MAX_PITCH, GameConfig.MAX_PITCH);
+        });
+
+        glfwSetFramebufferSizeCallback(window, (handle, width, height) -> {
+            if (width <= 0 || height <= 0) {
+                return;
+            }
+            if (!fullscreen) {
+                windowedWidth = width;
+                windowedHeight = height;
+            }
+            mouseInitialized = false;
+        });
+
+        glfwSetScrollCallback(window, (handle, xoffset, yoffset) -> {
+            if (!mainMenuActive || mainMenuScreen != GameConfig.MENU_SCREEN_SINGLEPLAYER || availableWorlds.isEmpty()) {
+                return;
+            }
+            int maxOffset = Math.max(0, availableWorlds.size() - GameConfig.WORLD_MENU_VISIBLE_ROWS);
+            mainMenuScrollOffset = Math.max(0, Math.min(maxOffset, mainMenuScrollOffset - (int) Math.signum(yoffset)));
+            selectedWorldIndex = Math.max(0, Math.min(availableWorlds.size() - 1, selectedWorldIndex));
+        });
+
+        glfwSetCharCallback(window, (handle, codepoint) -> {
+            if (mainMenuActive && handleMainMenuCharacter(codepoint)) {
+                return;
+            }
+            chat.appendCharacter(codepoint);
+        });
+
+        glfwSetKeyCallback(window, (handle, key, scancode, action, mods) -> {
+            boolean pressed = action != GLFW_RELEASE;
+
+            if (key == GLFW_KEY_F11 && action == GLFW_PRESS) {
+                toggleFullscreen();
+                return;
+            }
+
+            if (chat.isActive()) {
+                if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+                    if (key == GLFW_KEY_ENTER) {
+                        chat.submit(new ChatSystem.CommandTarget() {
+                            @Override
+                            public void teleportPlayer(double x, double y, double z) {
+                                teleportPlayerTo(x, y, z);
+                            }
+
+                            @Override
+                            public void setWorldTime(double worldTime) {
+                                world.setWorldTime(worldTime);
+                            }
+
+                            @Override
+                            public void setGameMode(String mode) {
+                                TinyMinecraft.this.setGameMode(commandGameModeIndex(mode));
+                            }
+
+                            @Override
+                            public void clearInventory() {
+                                inventory.clearAll();
+                                updatePlayerArmorProtection();
+                                syncSelectedHotbarItem();
+                            }
+
+                            @Override
+                            public boolean giveItem(byte itemId, int amount) {
+                                if (!InventoryItems.isCollectible(itemId) && !InventoryItems.isPlaceable(itemId)) {
+                                    return false;
+                                }
+                                boolean added = inventory.addItem(itemId, amount);
+                                syncSelectedHotbarItem();
+                                return added;
+                            }
+
+                            @Override
+                            public void spawnZombieAtPlayer() {
+                                world.spawnZombieAt(player.x, player.y, player.z);
+                            }
+
+                            @Override
+                            public String currentSeed() {
+                                return Long.toUnsignedString(world.getSeed(), 16);
+                            }
+
+                            @Override
+                            public String locateBiome(String biomeName) {
+                                return locateBiomeAndTeleport(biomeName);
+                            }
+
+                            @Override
+                            public String locateStructure(String structureName) {
+                                return locateStructureAndTeleport(structureName);
+                            }
+
+                            @Override
+                            public String placeStructure(String structureName, int rotation) {
+                                return placeStructureNearPlayer(structureName, rotation);
+                            }
+
+                            @Override
+                            public String listStructures() {
+                                return world.structureTemplateList();
+                            }
+
+                            @Override
+                            public String currentDebugLocation() {
+                                int blockX = (int) Math.floor(player.x);
+                                int blockY = (int) Math.floor(player.y);
+                                int blockZ = (int) Math.floor(player.z);
+                                int chunkX = Math.floorDiv(blockX, GameConfig.CHUNK_SIZE);
+                                int chunkY = GameConfig.sectionIndexForY(blockY);
+                                int chunkZ = Math.floorDiv(blockZ, GameConfig.CHUNK_SIZE);
+                                int underY = (int) Math.floor(player.y - 0.12);
+                                byte underBlock = world.getBlock(blockX, underY, blockZ);
+                                BlockType underType = Blocks.typeFromLegacyId(underBlock);
+                                int actualSurface = world.getActualSurfaceHeight(blockX, blockZ);
+                                return String.format(
+                                    Locale.ROOT,
+                                    "seed=%s xyz=%.2f %.2f %.2f chunk=%d %d %d section=%d%nbiome=%s region=%s status=%s under=%s@%d%nactualSurface=%d %s%n%s%n%s",
+                                    Long.toUnsignedString(world.getSeed(), 16),
+                                    player.x,
+                                    player.y,
+                                    player.z,
+                                    chunkX,
+                                    chunkY,
+                                    chunkZ,
+                                    chunkY,
+                                    world.getBiomeName(blockX, blockZ),
+                                    world.getRegionFileName(chunkX, chunkZ),
+                                    world.getChunkStatus(chunkX, chunkZ),
+                                    underType.namespacedId,
+                                    underY,
+                                    actualSurface,
+                                    world.getDensityDebugInfo(blockX, blockY, blockZ),
+                                    world.getTerrainDebugInfo(blockX, blockZ),
+                                    nearestStructureDebug(blockX, blockZ)
+                                );
+                            }
+
+                            @Override
+                            public String terrainDebugAt(int x, int z) {
+                                int chunkX = Math.floorDiv(x, GameConfig.CHUNK_SIZE);
+                                int chunkZ = Math.floorDiv(z, GameConfig.CHUNK_SIZE);
+                                return String.format(
+                                    Locale.ROOT,
+                                    "seed=%s xz=%d %d chunk=%d %d %s",
+                                    Long.toUnsignedString(world.getSeed(), 16),
+                                    x,
+                                    z,
+                                    chunkX,
+                                    chunkZ,
+                                    world.getTerrainDebugInfo(x, z)
+                                );
+                            }
+
+                            @Override
+                            public String heightTest() {
+                                boolean pass = GameConfig.isWorldYInside(-64)
+                                    && GameConfig.isWorldYInside(319)
+                                    && !GameConfig.isWorldYInside(-65)
+                                    && !GameConfig.isWorldYInside(320)
+                                    && GameConfig.sectionIndexForY(-64) == 0
+                                    && GameConfig.sectionIndexForY(-49) == 0
+                                    && GameConfig.sectionIndexForY(-48) == 1
+                                    && GameConfig.sectionIndexForY(0) == 4
+                                    && GameConfig.sectionIndexForY(319) == 23;
+                                return pass
+                                    ? "Height test PASS (-64..319, sections OK)"
+                                    : "Height test FAIL";
+                            }
+
+                            @Override
+                            public String blockInfo() {
+                                RayHit hit = hoveredBlock != null ? hoveredBlock : world.raycastBlock(player);
+                                int blockX;
+                                int blockY;
+                                int blockZ;
+                                if (hit != null) {
+                                    blockX = hit.x;
+                                    blockY = hit.y;
+                                    blockZ = hit.z;
+                                } else {
+                                    blockX = (int) Math.floor(player.x);
+                                    blockY = (int) Math.floor(player.y - 0.05);
+                                    blockZ = (int) Math.floor(player.z);
+                                }
+                                byte legacyId = world.getBlock(blockX, blockY, blockZ);
+                                BlockType type = Blocks.typeFromLegacyId(legacyId);
+                                BlockState state = world.getBlockState(blockX, blockY, blockZ);
+                                String stateInfo = "";
+                                if (legacyId == GameConfig.OAK_DOOR) {
+                                    stateInfo = " doorOpen=" + Blocks.isDoorOpen(state)
+                                        + " upper=" + Blocks.isDoorUpper(state)
+                                        + " facing=" + Blocks.doorFacing(state);
+                                } else if (legacyId == GameConfig.STRUCTURE_BLOCK) {
+                                    int templateIndex = state.data & 0xFF;
+                                    int rotation = (state.data >>> 8) & 3;
+                                    stateInfo = " template=" + StructureTemplates.nameAt(templateIndex)
+                                        + " rotation=" + rotation
+                                        + " (right-click cycle, shift-right rotate, top-click place)";
+                                }
+                                return String.format(
+                                    Locale.ROOT,
+                                    "block %d %d %d legacy=%d id=%s name=%s solid=%s opaque=%s liquid=%s replaceable=%s plant=%s gravity=%s%s",
+                                    blockX,
+                                    blockY,
+                                    blockZ,
+                                    legacyId & 0xFF,
+                                    type.namespacedId,
+                                    type.displayName,
+                                    type.solid,
+                                    type.opaque,
+                                    type.liquid,
+                                    type.replaceable,
+                                    type.plant,
+                                    type.gravityAffected,
+                                    stateInfo
+                                );
+                            }
+                        });
+                    } else if (key == GLFW_KEY_BACKSPACE) {
+                        chat.backspace();
+                    } else if (key == GLFW_KEY_ESCAPE) {
+                        chat.close();
+                    }
+                }
+                resetMovement();
+                return;
+            }
+
+            if (mainMenuActive) {
+                if (action == GLFW_PRESS) {
+                    if (handleMainMenuTextKey(key)) {
+                        return;
+                    }
+                    handleMainMenuKey(key);
+                }
+                return;
+            }
+
+            if (deathScreenActive) {
+                if (action == GLFW_PRESS) {
+                    if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
+                        deathSelection = (deathSelection + GameConfig.DEATH_OPTIONS.length - 1) % GameConfig.DEATH_OPTIONS.length;
+                    } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
+                        deathSelection = (deathSelection + 1) % GameConfig.DEATH_OPTIONS.length;
+                    } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                        activateDeathOption();
+                    }
+                }
+                return;
+            }
+
+            if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+                if (inventoryOpen) {
+                    toggleInventory();
+                    return;
+                }
+                togglePause();
+                return;
+            }
+
+            if (key == GLFW_KEY_E && action == GLFW_PRESS && !paused && !spectatorMode) {
+                toggleInventory();
+                return;
+            }
+
+            if (paused) {
+                if (action == GLFW_PRESS) {
+                    if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
+                        pauseSelection = (pauseSelection + GameConfig.PAUSE_OPTIONS.length - 1) % GameConfig.PAUSE_OPTIONS.length;
+                    } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
+                        pauseSelection = (pauseSelection + 1) % GameConfig.PAUSE_OPTIONS.length;
+                    } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                        activatePauseOption();
+                    }
+                }
+                return;
+            }
+
+            if (key == GLFW_KEY_T && action == GLFW_PRESS && !inventoryOpen) {
+                chat.open();
+                resetMovement();
+                return;
+            }
+
+            switch (key) {
+                case GLFW_KEY_F1:
+                    if (action == GLFW_PRESS) {
+                        hideHud = !hideHud;
+                    }
+                    break;
+                case GLFW_KEY_F3:
+                    if (action == GLFW_PRESS) {
+                        f3Held = true;
+                    } else if (action == GLFW_RELEASE) {
+                        if (gameModeSwitcherActive) {
+                            applySelectedGameMode();
+                        } else {
+                            showDebugInfo = !showDebugInfo;
+                        }
+                        f3Held = false;
+                    }
+                    break;
+                case GLFW_KEY_F4:
+                    if (action == GLFW_PRESS && f3Held) {
+                        cycleGameModeSelection();
+                    }
+                    break;
+                case GLFW_KEY_F5:
+                    if (action == GLFW_PRESS) {
+                        if (!thirdPersonView) {
+                            thirdPersonView = true;
+                            frontThirdPersonView = false;
+                        } else if (!frontThirdPersonView) {
+                            frontThirdPersonView = true;
+                        } else {
+                            thirdPersonView = false;
+                            frontThirdPersonView = false;
+                        }
+                    }
+                    break;
+                case GLFW_KEY_1:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(0);
+                    }
+                    break;
+                case GLFW_KEY_2:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(1);
+                    }
+                    break;
+                case GLFW_KEY_3:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(2);
+                    }
+                    break;
+                case GLFW_KEY_4:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(3);
+                    }
+                    break;
+                case GLFW_KEY_5:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(4);
+                    }
+                    break;
+                case GLFW_KEY_6:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(5);
+                    }
+                    break;
+                case GLFW_KEY_7:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(6);
+                    }
+                    break;
+                case GLFW_KEY_8:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(7);
+                    }
+                    break;
+                case GLFW_KEY_9:
+                    if (action == GLFW_PRESS) {
+                        selectHotbarSlot(8);
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            if (inventoryOpen) {
+                return;
+            }
+
+            switch (key) {
+                case GLFW_KEY_W:
+                    forward = pressed;
+                    break;
+                case GLFW_KEY_S:
+                    backward = pressed;
+                    break;
+                case GLFW_KEY_A:
+                    left = pressed;
+                    break;
+                case GLFW_KEY_D:
+                    right = pressed;
+                    break;
+                case GLFW_KEY_LEFT_CONTROL:
+                    sprint = pressed;
+                    break;
+                case GLFW_KEY_LEFT_SHIFT:
+                    sneak = pressed;
+                    descend = pressed;
+                    break;
+                case GLFW_KEY_SPACE:
+                    jumpHeld = pressed;
+                    if (action == GLFW_PRESS) {
+                        handleJumpPress();
+                    }
+                    if (!spectatorMode && action == GLFW_PRESS && (!creativeMode || !creativeFlightEnabled)) {
+                        jumpQueued = true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        });
+
+        glfwSetMouseButtonCallback(window, (handle, button, action, mods) -> {
+            if (mainMenuActive) {
+                if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+                    int hoveredWorld = renderer.getMainMenuWorldAt(mouseX, mouseY, mainMenuScreen, availableWorlds.size(), mainMenuScrollOffset);
+                    if (hoveredWorld != -1) {
+                        double clickTime = glfwGetTime();
+                        boolean doubleClick = hoveredWorld == lastWorldSlotClickIndex
+                            && lastWorldSlotClickTime >= 0.0
+                            && clickTime - lastWorldSlotClickTime <= 0.35;
+                        selectedWorldIndex = hoveredWorld;
+                        mainMenuWorldActionsEnabled = true;
+                        lastWorldSlotClickIndex = hoveredWorld;
+                        lastWorldSlotClickTime = clickTime;
+                        if (doubleClick) {
+                            mainMenuSelection = 0;
+                            activateMainMenuOption();
+                            return;
+                        }
+                    }
+                    int hoveredOption = renderer.getMainMenuOptionAt(mouseX, mouseY, mainMenuScreen);
+                    if (hoveredOption != -1) {
+                        if (mainMenuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER && !isSingleplayerActionEnabled(hoveredOption)) {
+                            return;
+                        }
+                        mainMenuSelection = hoveredOption;
+                        activateMainMenuOption();
+                        return;
+                    }
+                    int hoveredSlider = renderer.getOptionsSliderAt(mouseX, mouseY, mainMenuScreen);
+                    if (hoveredSlider != -1) {
+                        mainMenuSelection = hoveredSlider;
+                        applyOptionsSlider(hoveredSlider, renderer.sliderPercentAt(mouseX));
+                        return;
+                    }
+                    if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
+                        int field = renderer.getCreateWorldFieldAt(mouseX, mouseY);
+                        if (field != -1) {
+                            activeMenuTextField = field;
+                            return;
+                        }
+                        int toggle = renderer.getCreateWorldToggleAt(mouseX, mouseY);
+                        if (toggle == 0) {
+                            createWorldGameMode = (createWorldGameMode + 1) % GameConfig.GAME_MODE_OPTIONS.length;
+                            return;
+                        }
+                        if (toggle == 1) {
+                            createWorldDifficulty = (createWorldDifficulty + 1) % GameConfig.DIFFICULTY_OPTIONS.length;
+                            return;
+                        }
+                    } else if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
+                        int field = renderer.getRenameWorldFieldAt(mouseX, mouseY);
+                        if (field != -1) {
+                            activeMenuTextField = field;
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
+            if (deathScreenActive) {
+                if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+                    int hoveredOption = renderer.getDeathOptionAt(mouseX, mouseY);
+                    if (hoveredOption != -1) {
+                        deathSelection = hoveredOption;
+                        activateDeathOption();
+                    }
+                }
+                return;
+            }
+
+            if (paused) {
+                if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+                    int hoveredOption = renderer.getPauseOptionAt(mouseX, mouseY);
+                    if (hoveredOption != -1) {
+                        pauseSelection = hoveredOption;
+                        activatePauseOption();
+                    }
+                }
+                return;
+            }
+
+            if (chat.isActive()) {
+                leftMouseHeld = false;
+                resetBreakingProgress();
+                return;
+            }
+
+            if (inventoryOpen) {
+                handleInventoryMouseClick(button, action, mods);
+                return;
+            }
+
+            if (spectatorMode) {
+                leftMouseHeld = false;
+                resetBreakingProgress();
+                return;
+            }
+
+            if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                if (action == GLFW_PRESS && world.attackMobInReach(player, attackDamageForHeldItem(), knockbackForHeldItem())) {
+                    player.handSwingTimer = 0.22;
+                    leftMouseHeld = false;
+                    resetBreakingProgress();
+                    return;
+                }
+                if (creativeMode) {
+                    if (action == GLFW_PRESS) {
+                        breakHoveredInstantly();
+                    }
+                    leftMouseHeld = false;
+                    return;
+                }
+                leftMouseHeld = action != GLFW_RELEASE;
+                if (!leftMouseHeld) {
+                    resetBreakingProgress();
+                }
+            } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+                RayHit hit = world.raycastBlock(player);
+                boolean shiftDown = (mods & GLFW_MOD_SHIFT) != 0;
+                if (world.interactBlock(hit, player, shiftDown)) {
+                    renderer.rebuildChunkSectionAroundBlock(hit.x, hit.y, hit.z);
+                    return;
+                }
+                if (hit != null && !shiftDown) {
+                    byte targetBlock = world.getBlock(hit.x, hit.y, hit.z);
+                    if (targetBlock == GameConfig.CRAFTING_TABLE) {
+                        openContainerScreen(GameConfig.INVENTORY_SCREEN_WORKBENCH, hit.x, hit.y, hit.z);
+                        return;
+                    }
+                    if (targetBlock == GameConfig.CHEST) {
+                        openContainerScreen(GameConfig.INVENTORY_SCREEN_CHEST, hit.x, hit.y, hit.z);
+                        return;
+                    }
+                    if (targetBlock == GameConfig.FURNACE) {
+                        openContainerScreen(GameConfig.INVENTORY_SCREEN_FURNACE, hit.x, hit.y, hit.z);
+                        return;
+                    }
+                }
+                byte heldItem = inventory.getSelectedItemId(selectedSlot);
+                MobKind spawnKind = InventoryItems.mobKindForSpawnEgg(heldItem);
+                if (spawnKind != null) {
+                    useSpawnEgg(spawnKind, hit);
+                    return;
+                }
+                if (world.feedPassiveMobInReach(player, heldItem)) {
+                    if (!creativeMode) {
+                        inventory.consumeSelectedItem(selectedSlot);
+                        syncSelectedHotbarItem();
+                    }
+                    return;
+                }
+                if (useHeldFood(heldItem)) {
+                    return;
+                }
+                if (!InventoryItems.isPlaceable(heldItem)) {
+                    return;
+                }
+                if (world.placeBlock(hit, heldItem, player)) {
+                    if (!creativeMode) {
+                        inventory.consumeSelectedItem(selectedSlot);
+                        syncSelectedHotbarItem();
+                    }
+                    renderer.rebuildChunkSectionAroundBlock(hit.previousX, hit.previousY, hit.previousZ);
+                }
+            }
+        });
+    }
+
+    private void loop() {
+        double lastTime = glfwGetTime();
+        while (!glfwWindowShouldClose(window)) {
+            double now = glfwGetTime();
+            double deltaTime = Math.min(0.05, now - lastTime);
+            lastTime = now;
+            long updateStartNs = System.nanoTime();
+
+            glfwPollEvents();
+            renderer.updateFramebufferSize(window);
+
+            boolean simulateWorld = shouldRunWorldSimulation();
+            long worldStartNs = System.nanoTime();
+            if (simulateWorld) {
+                world.setRenderDistanceChunks(renderDistanceChunks);
+                world.advanceWorldTime(deltaTime);
+                world.prepareForPlayer(player);
+                updatePlayerArmorProtection();
+                updatePlayer(deltaTime);
+                world.updateDroppedItems(player, inventory, deltaTime);
+                world.updateZombies(player, deltaTime);
+                if (!deathScreenActive && !creativeMode && !spectatorMode && player.health <= 0) {
+                    enterDeathScreen();
+                }
+                for (Zombie zombie : world.getZombies()) {
+                    if (zombie.growlQueued) {
+                        audio.playMobAmbient(zombie.kind, zombie.x, zombie.y + 1.4, zombie.z);
+                        zombie.growlQueued = false;
+                    }
+                    if (zombie.splashQueued) {
+                        audio.playSplash(zombie.x, zombie.y + 0.3, zombie.z);
+                        zombie.splashQueued = false;
+                    }
+                }
+                ColumnUpdateList dirtyColumns = world.updateWorldTicks(player, deltaTime);
+                for (int i = 0; i < dirtyColumns.size(); i++) {
+                    renderer.rebuildChunksAroundBlock(dirtyColumns.xAt(i), dirtyColumns.zAt(i));
+                }
+                updateWaterAmbientAudio(deltaTime);
+                if (!inventoryOpen && !chat.isActive() && !deathScreenActive && !mainMenuActive && !spectatorMode) {
+                    hoveredBlock = world.raycastBlock(player);
+                    updateBlockInteraction(deltaTime);
+                } else {
+                    hoveredBlock = null;
+                    resetBreakingProgress();
+                }
+            }
+            player.handSwingTimer = Math.max(0.0, player.handSwingTimer - deltaTime);
+            if (!simulateWorld) {
+                hoveredBlock = null;
+                resetBreakingProgress();
+            }
+
+            long renderStartNs = System.nanoTime();
+            audio.updateListener(player);
+            boolean sprinting = shouldRunWorldSimulation() && sprint && player.hunger > 6 && (forward || backward || left || right);
+            renderer.render(
+                player,
+                inventory,
+                hoveredBlock,
+                currentBreakingHit(),
+                getBreakingProgress(),
+                paused,
+                inventoryOpen,
+                inventoryScreenMode,
+                activeChestContainer,
+                activeFurnace,
+                deathScreenActive,
+                deathSelection,
+                mainMenuActive,
+                mainMenuScreen,
+                mainMenuSelection,
+                mainMenuWorldActionsEnabled,
+                createWorldName,
+                createWorldSeed,
+                createWorldGameMode,
+                createWorldDifficulty,
+                activeMenuTextField,
+                renameWorldName,
+                availableWorlds,
+                selectedWorldIndex,
+                mainMenuScrollOffset,
+                loadedWorldName,
+                showDebugInfo,
+                hideHud,
+                pauseSelection,
+                gameModeSwitcherActive,
+                gameModeSelection,
+                selectedBlock,
+                selectedSlot,
+                creativeTab,
+                creativeMode,
+                thirdPersonView,
+                frontThirdPersonView,
+                sprinting,
+                renderDistanceChunks,
+                fovDegrees,
+                world.getWorldTime(),
+                mouseX,
+                mouseY,
+                deltaTime,
+                chat
+            );
+            long frameEndNs = System.nanoTime();
+            glfwSwapBuffers(window);
+            frameProfiler.recordFrame(
+                deltaTime,
+                worldStartNs - updateStartNs,
+                renderStartNs - worldStartNs,
+                frameEndNs - renderStartNs,
+                0L
+            );
+        }
+    }
+
+    private void updatePlayer(double deltaTime) {
+        double moveX = 0.0;
+        double moveZ = 0.0;
+        boolean flightMode = spectatorMode || (creativeMode && creativeFlightEnabled);
+        player.sneaking = sneak && !spectatorMode;
+        boolean inWater = !flightMode && world.intersectsFluid(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.WATER);
+        player.headInWater = !flightMode && isPlayerHeadInWater();
+        boolean canSprint = sprint && player.hunger > 6;
+        double walkSpeed = flightMode ? GameConfig.CREATIVE_FLY_SPEED : (canSprint ? GameConfig.SPRINT_SPEED : GameConfig.WALK_SPEED);
+        if (flightMode && sprint) {
+            walkSpeed *= GameConfig.SPRINT_SPEED / GameConfig.WALK_SPEED;
+        }
+        if (player.sneaking && !flightMode) {
+            walkSpeed *= GameConfig.SNEAK_SPEED_FACTOR;
+        }
+        if (inWater) {
+            walkSpeed *= GameConfig.WATER_MOVE_FACTOR;
+        }
+        double sinYaw = Math.sin(player.yaw);
+        double cosYaw = Math.cos(player.yaw);
+        double forwardX = cosYaw;
+        double forwardZ = sinYaw;
+        double rightX = -sinYaw;
+        double rightZ = cosYaw;
+
+        if (forward) {
+            moveX += forwardX;
+            moveZ += forwardZ;
+        }
+        if (backward) {
+            moveX -= forwardX;
+            moveZ -= forwardZ;
+        }
+        if (left) {
+            moveX -= rightX;
+            moveZ -= rightZ;
+        }
+        if (right) {
+            moveX += rightX;
+            moveZ += rightZ;
+        }
+
+        double moveLengthSquared = moveX * moveX + moveZ * moveZ;
+        boolean movingHorizontally = moveLengthSquared > 0.0;
+        if (movingHorizontally) {
+            double speedScale = walkSpeed * deltaTime / Math.sqrt(moveLengthSquared);
+            moveX *= speedScale;
+            moveZ *= speedScale;
+        }
+
+        double horizontalSpeed = movingHorizontally && deltaTime > 1e-8
+            ? Math.sqrt(moveX * moveX + moveZ * moveZ) / deltaTime
+            : 0.0;
+
+        if (spectatorMode) {
+            jumpQueued = false;
+            player.verticalVelocity = 0.0;
+            player.isGrounded = false;
+            player.x += moveX;
+            player.z += moveZ;
+
+            double moveY = 0.0;
+            if (jumpHeld) {
+                moveY += walkSpeed * deltaTime;
+            }
+            if (descend) {
+                moveY -= walkSpeed * deltaTime;
+            }
+            player.y += moveY;
+            updateViewBobbing(0.0, deltaTime);
+            player.stepTimer = 0.0;
+            player.headInWater = false;
+            resetPlayerAirSupply();
+            player.wasInLiquid = false;
+            return;
+        }
+
+        if (creativeMode && creativeFlightEnabled) {
+            jumpQueued = false;
+            player.verticalVelocity = 0.0;
+            tryMoveHorizontal(moveX, moveZ);
+
+            double moveY = 0.0;
+            if (jumpHeld) {
+                moveY += walkSpeed * deltaTime;
+            }
+            if (descend) {
+                moveY -= walkSpeed * deltaTime;
+            }
+            if (Math.abs(moveY) > 1e-8) {
+                moveVertical(moveY);
+            }
+
+            player.isGrounded = isStandingOnGround();
+            updateViewBobbing(0.0, deltaTime);
+            updateMovementAudio(movingHorizontally, deltaTime);
+            player.headInWater = false;
+            resetPlayerAirSupply();
+            return;
+        }
+
+        if (inWater) {
+            applyWaterFlowToPlayer(deltaTime);
+            updateSwimmingVelocity(deltaTime);
+            if (jumpQueued && canJumpFromFlowingWater()) {
+                player.verticalVelocity = GameConfig.JUMP_SPEED;
+                player.isGrounded = false;
+            }
+        } else if (jumpQueued && player.isGrounded) {
+            player.verticalVelocity = GameConfig.JUMP_SPEED;
+            player.isGrounded = false;
+        }
+        jumpQueued = false;
+
+        tryMoveHorizontal(moveX, moveZ);
+        if (!inWater) {
+            player.verticalVelocity = Math.max(player.verticalVelocity - GameConfig.GRAVITY * deltaTime, -GameConfig.TERMINAL_VELOCITY);
+        }
+        moveVertical(player.verticalVelocity * deltaTime);
+        player.isGrounded = isStandingOnGround();
+        player.headInWater = isPlayerHeadInWater();
+        updateViewBobbing(horizontalSpeed, deltaTime);
+        updateMovementAudio(movingHorizontally, deltaTime);
+        updatePlayerAirSupply(deltaTime);
+        updateSuffocationDamage(deltaTime);
+        updateLavaAndFireDamage(deltaTime);
+        updatePlayerHunger(deltaTime, movingHorizontally && canSprint && player.isGrounded);
+    }
+
+    private void updatePlayerHunger(double deltaTime, boolean sprintingHorizontally) {
+        if (creativeMode || spectatorMode || player.health <= 0) {
+            player.hungerDrainTimer = 0.0;
+            player.hungerDamageTimer = 0.0;
+            return;
+        }
+        if (sprintingHorizontally && player.hunger > 0) {
+            player.hungerDrainTimer += deltaTime;
+            while (player.hungerDrainTimer >= GameConfig.HUNGER_SPRINT_DRAIN_SECONDS && player.hunger > 0) {
+                player.hungerDrainTimer -= GameConfig.HUNGER_SPRINT_DRAIN_SECONDS;
+                player.hunger--;
+            }
+        } else {
+            player.hungerDrainTimer = Math.max(0.0, player.hungerDrainTimer - deltaTime * 0.5);
+        }
+        if (player.hunger <= 0) {
+            player.hungerDamageTimer += deltaTime;
+            while (player.hungerDamageTimer >= GameConfig.HUNGER_STARVE_DAMAGE_INTERVAL && player.health > 0) {
+                player.hungerDamageTimer -= GameConfig.HUNGER_STARVE_DAMAGE_INTERVAL;
+                applyPlayerDamage(1);
+            }
+        } else {
+            player.hungerDamageTimer = 0.0;
+        }
+        if (player.hunger >= 18 && player.health < GameConfig.MAX_HEALTH) {
+            player.hungerRegenTimer += deltaTime;
+            while (player.hungerRegenTimer >= 4.0 && player.health < GameConfig.MAX_HEALTH) {
+                player.hungerRegenTimer -= 4.0;
+                player.health++;
+                if (player.hunger > 0) {
+                    player.hunger--;
+                }
+            }
+        } else {
+            player.hungerRegenTimer = 0.0;
+        }
+    }
+
+    private void updateSwimmingVelocity(double deltaTime) {
+        if (jumpHeld) {
+            player.verticalVelocity += GameConfig.WATER_SWIM_ACCELERATION * 1.5 * deltaTime;
+        } else if (descend) {
+            player.verticalVelocity -= GameConfig.WATER_SINK_ACCELERATION * 2.0 * deltaTime;
+        } else {
+            player.verticalVelocity -= GameConfig.WATER_SINK_ACCELERATION * deltaTime;
+        }
+        double tickScale = deltaTime / GameConfig.PHYSICS_TICK_SECONDS;
+        player.verticalVelocity *= Math.pow(GameConfig.WATER_DRAG_PER_TICK, tickScale);
+        player.verticalVelocity = clamp(player.verticalVelocity, -5.2, 6.4);
+    }
+
+    private void applyWaterFlowToPlayer(double deltaTime) {
+        world.sampleFluidFlow(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.WATER, playerFluidFlow);
+        double moveX = playerFluidFlow.x * GameConfig.WATER_FLOW_PUSH * deltaTime;
+        double moveZ = playerFluidFlow.z * GameConfig.WATER_FLOW_PUSH * deltaTime;
+        if (!world.collides(player.x + moveX, player.y, player.z, player.radius(), player.height())) {
+            player.x += moveX;
+        }
+        if (!world.collides(player.x, player.y, player.z + moveZ, player.radius(), player.height())) {
+            player.z += moveZ;
+        }
+        player.verticalVelocity += playerFluidFlow.y * GameConfig.WATER_VERTICAL_FLOW_PUSH * deltaTime;
+    }
+
+    private boolean isPlayerHeadInWater() {
+        return world.isPointInsideFluid(player.x, player.y + player.eyeHeight(), player.z, GameConfig.WATER)
+            || world.isPointInsideFluid(player.x, player.y + player.height() - 0.08, player.z, GameConfig.WATER);
+    }
+
+    private boolean canJumpFromFlowingWater() {
+        if (world.collides(player.x, player.y - 0.08, player.z, player.radius(), player.height())) {
+            return false;
+        }
+        return world.canStandOnFluid(player.x, player.y, player.z, player.radius(), GameConfig.WATER_FLOWING);
+    }
+
+    private void teleportPlayerTo(double x, double y, double z) {
+        player.x = x;
+        player.y = clamp(y, GameConfig.WORLD_MIN_Y + 1.0, GameConfig.WORLD_MAX_Y - 1.0);
+        player.z = z;
+        player.verticalVelocity = 0.0;
+        player.isGrounded = false;
+        resetPlayerFluidState();
+        resetBreakingProgress();
+        world.prepareForPlayer(player);
+        renderer.rebuildChunksAroundBlock((int) Math.floor(player.x), (int) Math.floor(player.z));
+    }
+
+    private String locateBiomeAndTeleport(String biomeName) {
+        String query = normalizeBiomeName(biomeName);
+        if (query.isEmpty()) {
+            return "Usage: /locate biome <name>";
+        }
+
+        int startX = (int) Math.floor(player.x);
+        int startZ = (int) Math.floor(player.z);
+        int step = GameConfig.CHUNK_SIZE;
+        int maxRadius = Math.max(512, renderDistanceChunks * GameConfig.CHUNK_SIZE * 10);
+        for (int radius = 0; radius <= maxRadius; radius += step) {
+            for (int offsetX = -radius; offsetX <= radius; offsetX += step) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ += step) {
+                    if (radius != 0 && Math.abs(offsetX) != radius && Math.abs(offsetZ) != radius) {
+                        continue;
+                    }
+                    int sampleX = startX + offsetX;
+                    int sampleZ = startZ + offsetZ;
+                    String candidate = world.getBiomeName(sampleX, sampleZ);
+                    if (!normalizeBiomeName(candidate).contains(query)) {
+                        continue;
+                    }
+                    int surfaceY = world.getSurfaceHeight(sampleX, sampleZ);
+                    teleportPlayerTo(sampleX + 0.5, surfaceY + 2.0, sampleZ + 0.5);
+                    return "Located " + candidate + " at " + sampleX + " " + surfaceY + " " + sampleZ + ".";
+                }
+            }
+        }
+        return "Could not find biome '" + biomeName + "' within " + maxRadius + " blocks.";
+    }
+
+    private String locateStructureAndTeleport(String structureName) {
+        String query = normalizeBiomeName(structureName);
+        if (query.isEmpty()) {
+            return "Usage: /locate structure <village|mineshaft>";
+        }
+        if (query.contains("village") || query.contains("деревн")) {
+            return locateVillageAndTeleport();
+        }
+        if (query.contains("mineshaft") || query.contains("shaft") || query.contains("шахт")) {
+            return locateMineshaftAndTeleport();
+        }
+        return "Unknown structure '" + structureName + "'. Try village or mineshaft.";
+    }
+
+    private String placeStructureNearPlayer(String structureName, int rotation) {
+        if ("list".equalsIgnoreCase(structureName)) {
+            return "Structures: " + world.structureTemplateList();
+        }
+        double horizontalLength = Math.cos(player.pitch);
+        int forwardX = (int) Math.round(Math.cos(player.yaw) * horizontalLength * 6.0);
+        int forwardZ = (int) Math.round(Math.sin(player.yaw) * horizontalLength * 6.0);
+        if (forwardX == 0 && forwardZ == 0) {
+            forwardX = 4;
+        }
+        int originX = (int) Math.floor(player.x) + forwardX;
+        int originZ = (int) Math.floor(player.z) + forwardZ;
+        int originY = world.getSurfaceHeight(originX, originZ) + 1;
+        String result = world.placeStructureTemplate(structureName, originX, originY, originZ, rotation);
+        renderer.rebuildChunksAroundBlock(originX, originZ);
+        return result;
+    }
+
+    private String nearestStructureDebug(int blockX, int blockZ) {
+        int chunkX = Math.floorDiv(blockX, GameConfig.CHUNK_SIZE);
+        int chunkZ = Math.floorDiv(blockZ, GameConfig.CHUNK_SIZE);
+        String village = nearestVillageDebug(chunkX, chunkZ, blockX, blockZ);
+        String mineshaft = nearestMineshaftDebug(chunkX, chunkZ, blockX, blockZ);
+        return "nearestStructure " + village + " " + mineshaft;
+    }
+
+    private String nearestVillageDebug(int chunkX, int chunkZ, int blockX, int blockZ) {
+        int villageCellSize = world.getVillageCellSizeChunks();
+        int cellX = Math.floorDiv(chunkX, villageCellSize);
+        int cellZ = Math.floorDiv(chunkZ, villageCellSize);
+        long bestDistance = Long.MAX_VALUE;
+        int bestX = 0;
+        int bestZ = 0;
+        int bestY = 0;
+        for (int dx = -16; dx <= 16; dx++) {
+            for (int dz = -16; dz <= 16; dz++) {
+                int[] center = world.getVillageCenterForCell(cellX + dx, cellZ + dz);
+                if (center == null) {
+                    continue;
+                }
+                int x = center[0];
+                int z = center[2];
+                long distance = squaredDistance2d(blockX, blockZ, x, z);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestX = x;
+                    bestZ = z;
+                    bestY = center[1];
+                }
+            }
+        }
+        if (bestDistance == Long.MAX_VALUE) {
+            return "village=none";
+        }
+        return "village=" + bestX + "," + bestY + "," + bestZ + " d=" + (int) Math.round(Math.sqrt(bestDistance));
+    }
+
+    private String nearestMineshaftDebug(int chunkX, int chunkZ, int blockX, int blockZ) {
+        int cellX = Math.floorDiv(chunkX, 7);
+        int cellZ = Math.floorDiv(chunkZ, 7);
+        long bestDistance = Long.MAX_VALUE;
+        int bestX = 0;
+        int bestZ = 0;
+        int bestY = 0;
+        for (int dx = -20; dx <= 20; dx++) {
+            for (int dz = -20; dz <= 20; dz++) {
+                MineshaftCenter center = sampleMineshaftCenter(cellX + dx, cellZ + dz);
+                if (center == null) {
+                    continue;
+                }
+                int x = center.chunkX * GameConfig.CHUNK_SIZE + 8;
+                int z = center.chunkZ * GameConfig.CHUNK_SIZE + 8;
+                long distance = squaredDistance2d(blockX, blockZ, x, z);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestX = x;
+                    bestZ = z;
+                    bestY = center.y;
+                }
+            }
+        }
+        if (bestDistance == Long.MAX_VALUE) {
+            return "mineshaft=none";
+        }
+        return "mineshaft=" + bestX + "," + bestY + "," + bestZ + " d=" + (int) Math.round(Math.sqrt(bestDistance));
+    }
+
+    private long squaredDistance2d(int ax, int az, int bx, int bz) {
+        long dx = (long) ax - bx;
+        long dz = (long) az - bz;
+        return dx * dx + dz * dz;
+    }
+
+    private String locateVillageAndTeleport() {
+        int playerChunkX = Math.floorDiv((int) Math.floor(player.x), GameConfig.CHUNK_SIZE);
+        int playerChunkZ = Math.floorDiv((int) Math.floor(player.z), GameConfig.CHUNK_SIZE);
+        int villageCellSize = world.getVillageCellSizeChunks();
+        int playerCellX = Math.floorDiv(playerChunkX, villageCellSize);
+        int playerCellZ = Math.floorDiv(playerChunkZ, villageCellSize);
+        int maxRadiusCells = 96;
+        for (int radius = 0; radius <= maxRadiusCells; radius++) {
+            for (int offsetCellX = -radius; offsetCellX <= radius; offsetCellX++) {
+                for (int offsetCellZ = -radius; offsetCellZ <= radius; offsetCellZ++) {
+                    if (radius != 0 && Math.abs(offsetCellX) != radius && Math.abs(offsetCellZ) != radius) {
+                        continue;
+                    }
+                    int cellX = playerCellX + offsetCellX;
+                    int cellZ = playerCellZ + offsetCellZ;
+                    int[] center = world.getVillageCenterForCell(cellX, cellZ);
+                    if (center == null) {
+                        continue;
+                    }
+                    int worldX = center[0];
+                    int surfaceY = center[1];
+                    int worldZ = center[2];
+                    teleportPlayerTo(worldX + 0.5, surfaceY + 2.0, worldZ + 0.5);
+                    return "Located village at " + worldX + " " + surfaceY + " " + worldZ + ".";
+                }
+            }
+        }
+        return "Could not find structure 'village' nearby.";
+    }
+
+    private String locateMineshaftAndTeleport() {
+        int playerChunkX = Math.floorDiv((int) Math.floor(player.x), GameConfig.CHUNK_SIZE);
+        int playerChunkZ = Math.floorDiv((int) Math.floor(player.z), GameConfig.CHUNK_SIZE);
+        int playerCellX = Math.floorDiv(playerChunkX, 7);
+        int playerCellZ = Math.floorDiv(playerChunkZ, 7);
+        int maxRadiusCells = 128;
+        for (int radius = 0; radius <= maxRadiusCells; radius++) {
+            for (int offsetCellX = -radius; offsetCellX <= radius; offsetCellX++) {
+                for (int offsetCellZ = -radius; offsetCellZ <= radius; offsetCellZ++) {
+                    if (radius != 0 && Math.abs(offsetCellX) != radius && Math.abs(offsetCellZ) != radius) {
+                        continue;
+                    }
+                    MineshaftCenter center = sampleMineshaftCenter(playerCellX + offsetCellX, playerCellZ + offsetCellZ);
+                    if (center == null) {
+                        continue;
+                    }
+                    int worldX = center.chunkX * GameConfig.CHUNK_SIZE + 8;
+                    int worldZ = center.chunkZ * GameConfig.CHUNK_SIZE + 8;
+                    int y = center.y;
+                    teleportPlayerTo(worldX + 0.5, y + 1.5, worldZ + 0.5);
+                    return "Located mineshaft at " + worldX + " " + y + " " + worldZ + ".";
+                }
+            }
+        }
+        return "Could not find structure 'mineshaft' nearby.";
+    }
+
+    private MineshaftCenter sampleMineshaftCenter(int cellX, int cellZ) {
+        long cellSeed = mix64(world.getSeed() ^ ((long) cellX * 73428767L) ^ ((long) cellZ * 912931L));
+        if (randomUnit(cellSeed) > 0.24) {
+            return null;
+        }
+        int centerChunkX = cellX * 7 + 2 + (int) (randomUnit(cellSeed ^ 0x31337L) * 3.0);
+        int centerChunkZ = cellZ * 7 + 2 + (int) (randomUnit(cellSeed ^ 0x51515L) * 3.0);
+        int y = GameConfig.SEA_LEVEL - 26 - (int) Math.round(randomUnit(cellSeed ^ 0x51EEDL) * 42.0);
+        y = clamp(y, GameConfig.WORLD_MIN_Y + 12, GameConfig.SEA_LEVEL - 12);
+        return new MineshaftCenter(centerChunkX, centerChunkZ, y);
+    }
+
+    private double randomUnit(long bits) {
+        long mantissa = (bits >>> 11) & ((1L << 53) - 1L);
+        return mantissa / (double) (1L << 53);
+    }
+
+    private long mix64(long value) {
+        value = (value ^ (value >>> 30)) * 0xbf58476d1ce4e5b9L;
+        value = (value ^ (value >>> 27)) * 0x94d049bb133111ebL;
+        return value ^ (value >>> 31);
+    }
+
+    private static final class MineshaftCenter {
+        final int chunkX;
+        final int chunkZ;
+        final int y;
+
+        MineshaftCenter(int chunkX, int chunkZ, int y) {
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+            this.y = y;
+        }
+    }
+
+    private String normalizeBiomeName(String name) {
+        if (name == null) {
+            return "";
+        }
+        return name.toLowerCase(Locale.ROOT).replace('_', ' ').trim();
+    }
+
+    private void updatePlayerAirSupply(double deltaTime) {
+        if (creativeMode || spectatorMode || player.health <= 0) {
+            resetPlayerAirSupply();
+            return;
+        }
+        if (!player.headInWater) {
+            recoverPlayerAirSupply(deltaTime);
+            return;
+        }
+
+        player.airUnitTimer += deltaTime;
+        while (player.airUnits > 0 && player.airUnitTimer >= GameConfig.AIR_UNIT_INTERVAL) {
+            player.airUnitTimer -= GameConfig.AIR_UNIT_INTERVAL;
+            player.airUnits--;
+        }
+
+        if (player.airUnits > 0) {
+            player.drowningTimer = 0.0;
+            return;
+        }
+
+        player.drowningTimer += deltaTime;
+        while (player.drowningTimer >= GameConfig.DROWNING_DAMAGE_INTERVAL && player.health > 0) {
+            player.drowningTimer -= GameConfig.DROWNING_DAMAGE_INTERVAL;
+            applyPlayerDamage(GameConfig.DROWNING_DAMAGE);
+        }
+    }
+
+    private void recoverPlayerAirSupply(double deltaTime) {
+        player.drowningTimer = 0.0;
+        if (player.airUnits >= GameConfig.MAX_AIR_UNITS) {
+            player.airUnits = GameConfig.MAX_AIR_UNITS;
+            player.airUnitTimer = 0.0;
+            return;
+        }
+
+        player.airUnitTimer += deltaTime;
+        while (player.airUnits < GameConfig.MAX_AIR_UNITS && player.airUnitTimer >= GameConfig.AIR_RECOVERY_INTERVAL) {
+            player.airUnitTimer -= GameConfig.AIR_RECOVERY_INTERVAL;
+            player.airUnits++;
+        }
+    }
+
+    private void resetPlayerAirSupply() {
+        player.airUnits = GameConfig.MAX_AIR_UNITS;
+        player.airUnitTimer = 0.0;
+        player.drowningTimer = 0.0;
+    }
+
+    private void tryMoveHorizontal(double moveX, double moveZ) {
+        int steps = Math.max(1, (int) Math.ceil(Math.max(Math.abs(moveX), Math.abs(moveZ)) / GameConfig.MAX_COLLISION_STEP));
+        double stepX = moveX / steps;
+        double stepZ = moveZ / steps;
+
+        for (int i = 0; i < steps; i++) {
+            double stepUpY = player.y + GameConfig.CAMERA_STEP_HEIGHT;
+            boolean currentlyInsideBlock = world.collides(player.x, player.y, player.z, player.radius(), player.height());
+
+            if (!world.collides(player.x + stepX, player.y, player.z, player.radius(), player.height())
+                && canSneakTo(player.x + stepX, player.z)) {
+                player.x += stepX;
+            } else if (!currentlyInsideBlock
+                && player.isGrounded
+                && !player.sneaking
+                && !world.collides(player.x + stepX, stepUpY, player.z, player.radius(), player.height())) {
+                player.x += stepX;
+                player.y = stepUpY;
+            }
+
+            if (!world.collides(player.x, player.y, player.z + stepZ, player.radius(), player.height())
+                && canSneakTo(player.x, player.z + stepZ)) {
+                player.z += stepZ;
+            } else if (!currentlyInsideBlock
+                && player.isGrounded
+                && !player.sneaking
+                && !world.collides(player.x, stepUpY, player.z + stepZ, player.radius(), player.height())) {
+                player.z += stepZ;
+                player.y = stepUpY;
+            }
+        }
+    }
+
+    private boolean canSneakTo(double x, double z) {
+        if (!player.sneaking || !player.isGrounded) {
+            return true;
+        }
+        return world.collides(x, player.y - 0.08, z, player.radius(), 0.05);
+    }
+
+    private void moveVertical(double moveY) {
+        if (Math.abs(moveY) < 1e-8) {
+            return;
+        }
+
+        double nextY = player.y + moveY;
+        if (!world.collides(player.x, nextY, player.z, player.radius(), player.height())) {
+            player.y = nextY;
+            return;
+        }
+
+        if (moveY < 0.0) {
+            player.isGrounded = true;
+        }
+        player.verticalVelocity = 0.0;
+    }
+
+    private boolean isStandingOnGround() {
+        return world.collides(player.x, player.y - 0.05, player.z, player.radius(), player.height());
+    }
+
+    private void updateSuffocationDamage(double deltaTime) {
+        if (creativeMode || spectatorMode || player.health <= 0) {
+            player.suffocationTimer = 0.0;
+            return;
+        }
+        if (!world.collides(player.x, player.y, player.z, player.radius(), player.height())) {
+            player.suffocationTimer = 0.0;
+            return;
+        }
+
+        player.suffocationTimer += deltaTime;
+        while (player.suffocationTimer >= GameConfig.SUFFOCATION_INTERVAL && player.health > 0) {
+            player.suffocationTimer -= GameConfig.SUFFOCATION_INTERVAL;
+            applyPlayerDamage(GameConfig.SUFFOCATION_DAMAGE);
+        }
+    }
+
+    private void updateLavaAndFireDamage(double deltaTime) {
+        if (creativeMode || spectatorMode || player.health <= 0) {
+            player.lavaDamageTimer = 0.0;
+            player.fireDamageTimer = 0.0;
+            player.fireTimer = 0.0;
+            return;
+        }
+
+        if (isPlayerTouchingBlock(GameConfig.WATER)) {
+            player.fireTimer = 0.0;
+            player.fireDamageTimer = 0.0;
+        }
+
+        if (isPlayerTouchingBlock(GameConfig.LAVA)) {
+            player.fireTimer = Math.max(player.fireTimer, 5.0);
+            player.lavaDamageTimer += deltaTime;
+            while (player.lavaDamageTimer >= GameConfig.LAVA_DAMAGE_INTERVAL && player.health > 0) {
+                player.lavaDamageTimer -= GameConfig.LAVA_DAMAGE_INTERVAL;
+                applyPlayerDamage(GameConfig.LAVA_DAMAGE);
+            }
+        } else {
+            player.lavaDamageTimer = 0.0;
+        }
+
+        if (player.fireTimer > 0.0) {
+            player.fireTimer = Math.max(0.0, player.fireTimer - deltaTime);
+            player.fireDamageTimer += deltaTime;
+            while (player.fireDamageTimer >= GameConfig.FIRE_DAMAGE_INTERVAL && player.health > 0) {
+                player.fireDamageTimer -= GameConfig.FIRE_DAMAGE_INTERVAL;
+                applyPlayerDamage(GameConfig.FIRE_DAMAGE);
+            }
+        } else {
+            player.fireDamageTimer = 0.0;
+        }
+    }
+
+    private void applyPlayerDamage(int amount) {
+        int armor = Math.max(0, Math.min(20, player.armorProtection));
+        int protectedDamage = (int) Math.ceil(amount * (1.0 - armor * 0.04));
+        player.health = Math.max(0, player.health - Math.max(1, protectedDamage));
+    }
+
+    private boolean useHeldFood(byte heldItem) {
+        int foodValue = InventoryItems.foodValue(heldItem);
+        if (foodValue <= 0 || creativeMode || spectatorMode || player.hunger >= GameConfig.MAX_HUNGER) {
+            return false;
+        }
+        player.hunger = Math.min(GameConfig.MAX_HUNGER, player.hunger + foodValue);
+        player.hungerDamageTimer = 0.0;
+        if (!creativeMode) {
+            inventory.consumeSelectedItem(selectedSlot);
+            syncSelectedHotbarItem();
+        }
+        return true;
+    }
+
+    private void useSpawnEgg(MobKind kind, RayHit hit) {
+        double horizontalLength = Math.cos(player.pitch);
+        double dirX = Math.cos(player.yaw) * horizontalLength;
+        double dirZ = Math.sin(player.yaw) * horizontalLength;
+        double spawnX = hit == null ? player.x + dirX * 1.8 : hit.previousX + 0.5;
+        double spawnY = hit == null ? player.y : hit.previousY + 0.05;
+        double spawnZ = hit == null ? player.z + dirZ * 1.8 : hit.previousZ + 0.5;
+        world.spawnMobAt(kind, spawnX, spawnY, spawnZ);
+        if (!creativeMode) {
+            inventory.consumeSelectedItem(selectedSlot);
+            syncSelectedHotbarItem();
+        }
+    }
+
+    private void updateBlockInteraction(double deltaTime) {
+        if (creativeMode || spectatorMode) {
+            resetBreakingProgress();
+            return;
+        }
+
+        if (!leftMouseHeld) {
+            resetBreakingProgress();
+            return;
+        }
+
+        if (!canBreak(hoveredBlock)) {
+            resetBreakingProgress();
+            return;
+        }
+
+        byte targetBlock = world.getBlock(hoveredBlock.x, hoveredBlock.y, hoveredBlock.z);
+        double targetDuration = getBreakDuration(targetBlock);
+        if (!isBreakingSameBlock(hoveredBlock)) {
+            breakingBlockX = hoveredBlock.x;
+            breakingBlockY = hoveredBlock.y;
+            breakingBlockZ = hoveredBlock.z;
+            breakingTimer = 0.0;
+            breakingDuration = targetDuration;
+            breakingHit = new RayHit(breakingBlockX, breakingBlockY, breakingBlockZ, breakingBlockX, breakingBlockY, breakingBlockZ);
+        }
+
+        breakingTimer += deltaTime;
+        if (breakingTimer < breakingDuration) {
+            return;
+        }
+
+        int blockX = hoveredBlock.x;
+        int blockY = hoveredBlock.y;
+        int blockZ = hoveredBlock.z;
+        if (world.breakBlock(hoveredBlock)) {
+            player.handSwingTimer = 0.18;
+            if (InventoryItems.isCollectible(targetBlock)) {
+                world.spawnDroppedItem(targetBlock, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+            }
+            audio.playBreak(targetBlock, blockX + 0.5, blockY + 0.5, blockZ + 0.5);
+            renderer.rebuildChunkSectionAroundBlock(blockX, blockY, blockZ);
+            hoveredBlock = world.raycastBlock(player);
+        }
+        resetBreakingProgress();
+    }
+
+    private int attackDamageForHeldItem() {
+        byte heldItem = inventory.getSelectedItemId(selectedSlot);
+        switch (heldItem) {
+            case InventoryItems.NETHERITE_SWORD:
+                return 9;
+            case InventoryItems.DIAMOND_SWORD:
+                return 8;
+            case InventoryItems.IRON_SWORD:
+                return 7;
+            case InventoryItems.STONE_SWORD:
+                return 6;
+            case InventoryItems.WOODEN_SWORD:
+                return 5;
+            case InventoryItems.NETHERITE_AXE:
+                return 10;
+            case InventoryItems.DIAMOND_AXE:
+                return 9;
+            case InventoryItems.IRON_AXE:
+                return 8;
+            case InventoryItems.STONE_AXE:
+                return 7;
+            case InventoryItems.WOODEN_AXE:
+                return 6;
+            case InventoryItems.NETHERITE_PICKAXE:
+                return 7;
+            case InventoryItems.DIAMOND_PICKAXE:
+                return 6;
+            case InventoryItems.IRON_PICKAXE:
+                return 5;
+            case InventoryItems.STONE_PICKAXE:
+            case InventoryItems.WOODEN_PICKAXE:
+                return 4;
+            case InventoryItems.NETHERITE_SHOVEL:
+            case InventoryItems.NETHERITE_HOE:
+                return 5;
+            case InventoryItems.DIAMOND_SHOVEL:
+            case InventoryItems.DIAMOND_HOE:
+                return 4;
+            case InventoryItems.IRON_SHOVEL:
+            case InventoryItems.IRON_HOE:
+                return 3;
+            default:
+                return 2;
+        }
+    }
+
+    private double knockbackForHeldItem() {
+        byte heldItem = inventory.getSelectedItemId(selectedSlot);
+        switch (heldItem) {
+            case InventoryItems.NETHERITE_SWORD:
+            case InventoryItems.NETHERITE_AXE:
+                return 1.15;
+            case InventoryItems.DIAMOND_SWORD:
+            case InventoryItems.DIAMOND_AXE:
+                return 0.95;
+            case InventoryItems.IRON_SWORD:
+            case InventoryItems.IRON_AXE:
+                return 0.82;
+            case InventoryItems.STONE_SWORD:
+            case InventoryItems.STONE_AXE:
+                return 0.72;
+            case InventoryItems.WOODEN_SWORD:
+            case InventoryItems.WOODEN_AXE:
+                return 0.62;
+            case InventoryItems.NETHERITE_PICKAXE:
+            case InventoryItems.NETHERITE_SHOVEL:
+            case InventoryItems.NETHERITE_HOE:
+                return 0.78;
+            case InventoryItems.DIAMOND_PICKAXE:
+            case InventoryItems.DIAMOND_SHOVEL:
+            case InventoryItems.DIAMOND_HOE:
+                return 0.64;
+            default:
+                return 0.42;
+        }
+    }
+
+    private void updateViewBobbing(double horizontalSpeed, double deltaTime) {
+        double targetAmount = player.isGrounded && horizontalSpeed > 0.05
+            ? clamp(horizontalSpeed / GameConfig.SPRINT_SPEED, 0.0, 1.0)
+            : 0.0;
+        player.cameraBobAmount += (targetAmount - player.cameraBobAmount) * Math.min(1.0, deltaTime * 10.0);
+        if (player.cameraBobAmount > 0.01) {
+            player.cameraBobPhase += horizontalSpeed * deltaTime * 2.4;
+        }
+    }
+
+    private void updateMovementAudio(boolean movingHorizontally, double deltaTime) {
+        boolean inLiquid = isPlayerInsideLiquid();
+        boolean inWater = world.intersectsFluid(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.WATER);
+        if (inWater != player.wasInWater) {
+            audio.playSplash(player.x, player.y + 0.2, player.z);
+        }
+        player.wasInWater = inWater;
+        player.wasInLiquid = inLiquid;
+
+        if (creativeMode || spectatorMode || !movingHorizontally || !player.isGrounded || inLiquid) {
+            player.stepTimer = 0.0;
+            return;
+        }
+
+        player.stepTimer -= deltaTime;
+        if (player.stepTimer > 0.0) {
+            return;
+        }
+
+        byte blockBelow = getBlockBelowPlayer();
+        audio.playStep(blockBelow, player.x, player.y, player.z);
+        player.stepTimer = sprint ? GameConfig.SPRINT_STEP_INTERVAL : GameConfig.WALK_STEP_INTERVAL;
+    }
+
+    private boolean isPlayerInsideLiquid() {
+        return world.intersectsFluid(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.WATER)
+            || world.intersectsFluid(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.LAVA);
+    }
+
+    private boolean isPlayerTouchingBlock(byte block) {
+        return world.touchesBlock(player.x, player.y, player.z, player.radius(), player.height(), block);
+    }
+
+    private void updateWaterAmbientAudio(double deltaTime) {
+        if (creativeMode || spectatorMode || paused || inventoryOpen || deathScreenActive || mainMenuActive) {
+            waterAmbientCooldown = 0.0;
+            return;
+        }
+        boolean nearbyWater = world.hasNearbyWater(player.x, player.y + 0.8, player.z, 4);
+        if (!player.headInWater && !nearbyWater) {
+            waterAmbientCooldown = 0.0;
+            return;
+        }
+
+        waterAmbientCooldown -= deltaTime;
+        if (waterAmbientCooldown > 0.0) {
+            return;
+        }
+
+        if (player.headInWater) {
+            audio.playWaterBubble(player.x, player.y + 1.0, player.z);
+            waterAmbientCooldown = 0.7 + ambientRandom.nextDouble() * 1.1;
+            return;
+        }
+
+        audio.playWaterAmbient(player.x, player.y + 1.0, player.z);
+        waterAmbientCooldown = GameConfig.WATER_AMBIENT_MIN_INTERVAL
+            + ambientRandom.nextDouble() * (GameConfig.WATER_AMBIENT_MAX_INTERVAL - GameConfig.WATER_AMBIENT_MIN_INTERVAL);
+    }
+
+    private byte getBlockBelowPlayer() {
+        int blockX = (int) Math.floor(player.x);
+        int blockY = (int) Math.floor(player.y - 0.12);
+        int blockZ = (int) Math.floor(player.z);
+        if (!world.isInside(blockX, blockY, blockZ)) {
+            return GameConfig.COBBLESTONE;
+        }
+        return world.getBlock(blockX, blockY, blockZ);
+    }
+
+    private boolean canBreak(RayHit hit) {
+        if (hit == null) {
+            return false;
+        }
+        byte block = world.getBlock(hit.x, hit.y, hit.z);
+        if (block == GameConfig.BEDROCK) {
+            return false;
+        }
+        if (block == GameConfig.OBSIDIAN) {
+            byte heldItem = inventory.getSelectedItemId(selectedSlot);
+            return heldItem == InventoryItems.DIAMOND_PICKAXE || heldItem == InventoryItems.NETHERITE_PICKAXE;
+        }
+        return true;
+    }
+
+    private boolean isBreakingSameBlock(RayHit hit) {
+        return hit != null
+            && hit.x == breakingBlockX
+            && hit.y == breakingBlockY
+            && hit.z == breakingBlockZ
+            && breakingDuration > 0.0;
+    }
+
+    private double getBreakDuration(byte block) {
+        if (isInstantBreakBlock(block)) {
+            return 0.0;
+        }
+        double baseDuration;
+        switch (block) {
+            case GameConfig.GRASS:
+            case GameConfig.DIRT:
+            case GameConfig.FARMLAND:
+                baseDuration = 0.75;
+                break;
+            case GameConfig.COBBLESTONE:
+            case GameConfig.STONE:
+                baseDuration = 1.5;
+                break;
+            case GameConfig.DEEPSLATE:
+                baseDuration = 2.2;
+                break;
+            case GameConfig.COAL_ORE:
+            case GameConfig.IRON_ORE:
+            case GameConfig.DIAMOND_ORE:
+                baseDuration = 2.0;
+                break;
+            case GameConfig.DEEPSLATE_COAL_ORE:
+            case GameConfig.DEEPSLATE_IRON_ORE:
+            case GameConfig.DEEPSLATE_DIAMOND_ORE:
+                baseDuration = 2.6;
+                break;
+            case GameConfig.OBSIDIAN:
+                baseDuration = 8.5;
+                break;
+            default:
+                baseDuration = 1.5;
+                break;
+        }
+        return baseDuration / breakSpeedMultiplierForHeldItem(block);
+    }
+
+    private boolean isInstantBreakBlock(byte block) {
+        return block == GameConfig.TORCH
+            || block == GameConfig.WHEAT_CROP
+            || block == GameConfig.TALL_GRASS
+            || block == GameConfig.SEAGRASS
+            || block == GameConfig.RED_FLOWER
+            || block == GameConfig.YELLOW_FLOWER
+            || block == GameConfig.RAIL;
+    }
+
+    private double breakSpeedMultiplierForHeldItem(byte block) {
+        byte heldItem = inventory.getSelectedItemId(selectedSlot);
+        boolean stoneLike = block == GameConfig.COBBLESTONE
+            || block == GameConfig.STONE
+            || block == GameConfig.DEEPSLATE
+            || block == GameConfig.COAL_ORE
+            || block == GameConfig.IRON_ORE
+            || block == GameConfig.DIAMOND_ORE
+            || block == GameConfig.DEEPSLATE_COAL_ORE
+            || block == GameConfig.DEEPSLATE_IRON_ORE
+            || block == GameConfig.DEEPSLATE_DIAMOND_ORE
+            || block == GameConfig.OBSIDIAN;
+        boolean dirtLike = block == GameConfig.GRASS
+            || block == GameConfig.DIRT
+            || block == GameConfig.SAND
+            || block == GameConfig.GRAVEL
+            || block == GameConfig.CLAY
+            || block == GameConfig.FARMLAND;
+        boolean woodLike = block == GameConfig.OAK_LOG
+            || block == GameConfig.PINE_LOG
+            || block == InventoryItems.OAK_PLANKS
+            || block == GameConfig.CHEST
+            || block == GameConfig.CRAFTING_TABLE
+            || block == GameConfig.OAK_FENCE
+            || block == GameConfig.OAK_DOOR;
+        if ((heldItem == InventoryItems.DIAMOND_PICKAXE || heldItem == InventoryItems.NETHERITE_PICKAXE) && stoneLike) {
+            return heldItem == InventoryItems.NETHERITE_PICKAXE ? 6.5 : 5.5;
+        }
+        if ((heldItem == InventoryItems.IRON_PICKAXE || heldItem == InventoryItems.STONE_PICKAXE || heldItem == InventoryItems.WOODEN_PICKAXE) && stoneLike) {
+            return heldItem == InventoryItems.IRON_PICKAXE ? 4.4 : (heldItem == InventoryItems.STONE_PICKAXE ? 3.2 : 2.0);
+        }
+        if ((heldItem == InventoryItems.DIAMOND_SHOVEL || heldItem == InventoryItems.NETHERITE_SHOVEL) && dirtLike) {
+            return heldItem == InventoryItems.NETHERITE_SHOVEL ? 6.0 : 5.0;
+        }
+        if ((heldItem == InventoryItems.IRON_SHOVEL || heldItem == InventoryItems.STONE_SHOVEL || heldItem == InventoryItems.WOODEN_SHOVEL) && dirtLike) {
+            return heldItem == InventoryItems.IRON_SHOVEL ? 4.2 : (heldItem == InventoryItems.STONE_SHOVEL ? 3.0 : 1.8);
+        }
+        if ((heldItem == InventoryItems.DIAMOND_AXE || heldItem == InventoryItems.NETHERITE_AXE) && woodLike) {
+            return heldItem == InventoryItems.NETHERITE_AXE ? 6.0 : 5.0;
+        }
+        if ((heldItem == InventoryItems.IRON_AXE || heldItem == InventoryItems.STONE_AXE || heldItem == InventoryItems.WOODEN_AXE) && woodLike) {
+            return heldItem == InventoryItems.IRON_AXE ? 4.2 : (heldItem == InventoryItems.STONE_AXE ? 3.0 : 1.8);
+        }
+        if ((heldItem == InventoryItems.DIAMOND_HOE || heldItem == InventoryItems.NETHERITE_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES)) {
+            return heldItem == InventoryItems.NETHERITE_HOE ? 5.0 : 4.0;
+        }
+        if ((heldItem == InventoryItems.IRON_HOE || heldItem == InventoryItems.STONE_HOE || heldItem == InventoryItems.WOODEN_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES)) {
+            return heldItem == InventoryItems.IRON_HOE ? 3.4 : (heldItem == InventoryItems.STONE_HOE ? 2.6 : 1.6);
+        }
+        return 1.0;
+    }
+
+    private void resetBreakingProgress() {
+        breakingBlockX = -1;
+        breakingBlockY = -1;
+        breakingBlockZ = -1;
+        breakingTimer = 0.0;
+        breakingDuration = 0.0;
+        breakingHit = null;
+    }
+
+    private RayHit currentBreakingHit() {
+        return breakingHit;
+    }
+
+    private double getBreakingProgress() {
+        if (breakingDuration <= 0.0) {
+            return 0.0;
+        }
+        return clamp(breakingTimer / breakingDuration, 0.0, 1.0);
+    }
+
+    private void breakHoveredInstantly() {
+        RayHit hit = creativeMode ? findPlayerIntersectingSolidBlock() : null;
+        if (hit == null) {
+            hit = hoveredBlock != null ? hoveredBlock : world.raycastBlock(player);
+        }
+        byte targetBlock = hit == null ? GameConfig.AIR : world.getBlock(hit.x, hit.y, hit.z);
+        if (world.breakBlock(hit)) {
+            player.handSwingTimer = 0.18;
+            audio.playBreak(targetBlock, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+            renderer.rebuildChunkSectionAroundBlock(hit.x, hit.y, hit.z);
+            hoveredBlock = world.raycastBlock(player);
+        }
+        resetBreakingProgress();
+    }
+
+    private RayHit findPlayerIntersectingSolidBlock() {
+        double minX = player.x - player.radius();
+        double maxX = player.x + player.radius();
+        double minY = player.y;
+        double maxY = player.y + player.height();
+        double minZ = player.z - player.radius();
+        double maxZ = player.z + player.radius();
+
+        int startX = (int) Math.floor(minX);
+        int endX = (int) Math.floor(Math.max(minX, Math.nextDown(maxX - 1.0e-7)));
+        int startY = (int) Math.floor(minY);
+        int endY = (int) Math.floor(Math.max(minY, Math.nextDown(maxY - 1.0e-7)));
+        int startZ = (int) Math.floor(minZ);
+        int endZ = (int) Math.floor(Math.max(minZ, Math.nextDown(maxZ - 1.0e-7)));
+
+        for (int y = startY; y <= endY; y++) {
+            for (int z = startZ; z <= endZ; z++) {
+                for (int x = startX; x <= endX; x++) {
+                    if (world.isInside(x, y, z) && world.isSolidBlock(world.getBlock(x, y, z))) {
+                        return new RayHit(x, y, z, x, y, z);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private void cycleGameModeSelection() {
+        if (!gameModeSwitcherActive) {
+            gameModeSelection = currentGameModeIndex();
+        }
+        gameModeSelection = (gameModeSelection + 1) % GameConfig.GAME_MODE_OPTIONS.length;
+        gameModeSwitcherActive = true;
+    }
+
+    private int currentGameModeIndex() {
+        if (spectatorMode) {
+            return 2;
+        }
+        return creativeMode ? 1 : 0;
+    }
+
+    private int commandGameModeIndex(String mode) {
+        if ("creative".equals(mode)) {
+            return 1;
+        }
+        if ("spectator".equals(mode)) {
+            return 2;
+        }
+        return 0;
+    }
+
+    private void applySelectedGameMode() {
+        setGameMode(gameModeSelection);
+        gameModeSwitcherActive = false;
+    }
+
+    private void setGameMode(int mode) {
+        creativeMode = mode == 1;
+        spectatorMode = mode == 2;
+        creativeFlightEnabled = spectatorMode;
+        player.verticalVelocity = 0.0;
+        player.isGrounded = spectatorMode ? false : isStandingOnGround();
+        player.cameraBobAmount = 0.0;
+        player.stepTimer = 0.0;
+        resetPlayerFluidState();
+        resetPlayerDamageTimers();
+        jumpQueued = false;
+        leftMouseHeld = false;
+        if (spectatorMode) {
+            inventoryOpen = false;
+            resetMovement();
+        }
+        resetBreakingProgress();
+        syncPlayerModeState();
+        syncSelectedHotbarItem();
+        updateCursorMode();
+    }
+
+    private void selectHotbarSlot(int slot) {
+        if (slot < 0 || slot >= PlayerInventory.HOTBAR_SIZE) {
+            return;
+        }
+        selectedSlot = slot;
+        syncSelectedHotbarItem();
+    }
+
+    private void togglePause() {
+        if (deathScreenActive || mainMenuActive) {
+            return;
+        }
+        paused = !paused;
+        if (paused) {
+            resetMovement();
+            resetBreakingProgress();
+            updateCursorMode();
+        } else {
+            updateCursorMode();
+        }
+    }
+
+    private void toggleFullscreen() {
+        var videoMode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+        if (videoMode == null) {
+            return;
+        }
+
+        if (!fullscreen) {
+            try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                var xBuffer = stack.mallocInt(1);
+                var yBuffer = stack.mallocInt(1);
+                var widthBuffer = stack.mallocInt(1);
+                var heightBuffer = stack.mallocInt(1);
+                glfwGetWindowPos(window, xBuffer, yBuffer);
+                glfwGetWindowSize(window, widthBuffer, heightBuffer);
+                windowedX = xBuffer.get(0);
+                windowedY = yBuffer.get(0);
+                windowedWidth = widthBuffer.get(0);
+                windowedHeight = heightBuffer.get(0);
+            }
+
+            glfwSetWindowMonitor(window, glfwGetPrimaryMonitor(), 0, 0, videoMode.width(), videoMode.height(), videoMode.refreshRate());
+        } else {
+            glfwSetWindowMonitor(
+                window,
+                NULL,
+                windowedX,
+                windowedY,
+                windowedWidth,
+                windowedHeight,
+                videoMode.refreshRate()
+            );
+        }
+
+        fullscreen = !fullscreen;
+        mouseInitialized = false;
+    }
+
+    private void toggleInventory() {
+        if (inventoryOpen) {
+            closeContainerScreen();
+            inventoryOpen = false;
+        } else {
+            inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
+            activeChestContainer = null;
+            activeFurnace = null;
+            inventoryOpen = true;
+        }
+        resetMovement();
+        resetBreakingProgress();
+        leftMouseHeld = false;
+
+        returnCursorToInventory();
+
+        updateCursorMode();
+        syncSelectedHotbarItem();
+    }
+
+    private void openContainerScreen(int mode, int x, int y, int z) {
+        inventory.returnTransientCraftingToInventory();
+        returnCursorToInventory();
+        inventoryScreenMode = mode;
+        activeChestContainer = mode == GameConfig.INVENTORY_SCREEN_CHEST ? world.chestContainerAt(x, y, z) : null;
+        activeFurnace = mode == GameConfig.INVENTORY_SCREEN_FURNACE ? world.furnaceAt(x, y, z) : null;
+        inventoryOpen = true;
+        resetMovement();
+        resetBreakingProgress();
+        leftMouseHeld = false;
+        updateCursorMode();
+    }
+
+    private void closeContainerScreen() {
+        inventory.returnTransientCraftingToInventory();
+        returnCursorToInventory();
+        activeChestContainer = null;
+        activeFurnace = null;
+        inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
+    }
+
+    private void returnCursorToInventory() {
+        if (!inventory.getCursorStack().isEmpty()) {
+            inventory.addItem(inventory.getCursorStack().itemId, inventory.getCursorStack().count);
+            inventory.clearCursor();
+        }
+    }
+
+    private void activatePauseOption() {
+        if (pauseSelection == 0) {
+            togglePause();
+            return;
+        }
+        if (pauseSelection == 1) {
+            paused = false;
+            mainMenuActive = true;
+            mainMenuScreen = GameConfig.MENU_SCREEN_OPTIONS;
+            mainMenuSelection = 0;
+            optionsOpenedFromPause = true;
+            updateCursorMode();
+            return;
+        }
+        if (pauseSelection == 2) {
+            enterMainMenu();
+        }
+    }
+
+    private void applyOptionsSlider(int slider, double percent) {
+        if (slider == 0) {
+            renderDistanceChunks = (int) Math.round(lerp(GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, percent));
+            world.setRenderDistanceChunks(renderDistanceChunks);
+        } else if (slider == 1) {
+            fovDegrees = (int) Math.round(lerp(55.0, 100.0, percent));
+        } else if (slider == 2) {
+            Settings.inventoryUiSize = clamp(1 + (int) Math.round(percent * 3.0), 1, 4);
+        }
+        Settings.save(renderDistanceChunks, fovDegrees);
+    }
+
+    private void nudgeOptionsSelection(int direction) {
+        if (mainMenuSelection == 0) {
+            renderDistanceChunks = clamp(renderDistanceChunks + direction, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
+            world.setRenderDistanceChunks(renderDistanceChunks);
+        } else if (mainMenuSelection == 1) {
+            fovDegrees = clamp(fovDegrees + direction * 2, 55, 100);
+        } else if (mainMenuSelection == 2) {
+            Settings.inventoryUiSize = clamp(Settings.inventoryUiSize + direction, 1, 4);
+        }
+        Settings.save(renderDistanceChunks, fovDegrees);
+    }
+
+    private void closeOptionsMenu() {
+        activeMenuTextField = -1;
+        if (optionsOpenedFromPause) {
+            mainMenuActive = false;
+            paused = true;
+            mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+            pauseSelection = 3;
+            optionsOpenedFromPause = false;
+            updateCursorMode();
+            return;
+        }
+        mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+        mainMenuSelection = 1;
+        optionsOpenedFromPause = false;
+    }
+
+    private void resetMovement() {
+        forward = false;
+        backward = false;
+        left = false;
+        right = false;
+        sprint = false;
+        sneak = false;
+        descend = false;
+        player.sneaking = false;
+        jumpQueued = false;
+        jumpHeld = false;
+        leftMouseHeld = false;
+    }
+
+    private void resetPlayerDamageTimers() {
+        player.suffocationTimer = 0.0;
+        player.lavaDamageTimer = 0.0;
+        player.fireTimer = 0.0;
+        player.fireDamageTimer = 0.0;
+    }
+
+    private void resetPlayerFluidState() {
+        player.headInWater = false;
+        player.wasInWater = false;
+        player.wasInLiquid = false;
+        waterAmbientCooldown = 0.0;
+        resetPlayerAirSupply();
+    }
+
+    private void handleInventoryMouseClick(int button, int action, int mods) {
+        if (action != GLFW_PRESS || (button != GLFW_MOUSE_BUTTON_LEFT && button != GLFW_MOUSE_BUTTON_RIGHT)) {
+            return;
+        }
+
+        boolean creativeInventory = creativeMode && inventoryScreenMode == GameConfig.INVENTORY_SCREEN_PLAYER;
+        if (creativeInventory) {
+            int clickedTab = renderer.getCreativeTabAt(mouseX, mouseY, creativeTab);
+            if (clickedTab != -1) {
+                creativeTab = clickedTab;
+                return;
+            }
+        }
+
+        InventorySlotRef slot = renderer.getInventorySlotAt(inventory, creativeInventory, creativeTab, inventoryScreenMode, mouseX, mouseY);
+        boolean insideInventory = renderer.isInventoryPointInside(creativeInventory, creativeTab, inventoryScreenMode, mouseX, mouseY);
+        if (slot == null && !insideInventory) {
+            inventory.clearCursor();
+            syncSelectedHotbarItem();
+            return;
+        }
+
+        if (slot != null) {
+            boolean rightClick = button == GLFW_MOUSE_BUTTON_RIGHT;
+            boolean shiftDown = (mods & GLFW_MOD_SHIFT) != 0;
+            inventory.handleClick(slot, creativeInventory, rightClick, shiftDown, activeChestContainer, activeFurnace);
+            syncSelectedHotbarItem();
+        }
+    }
+
+    private void syncSelectedHotbarItem() {
+        selectedBlock = inventory.getSelectedItemId(selectedSlot);
+    }
+
+    private void syncPlayerModeState() {
+        player.creativeMode = creativeMode;
+        player.spectatorMode = spectatorMode;
+        player.flightEnabled = spectatorMode || (creativeMode && creativeFlightEnabled);
+        player.sneaking = sneak && !spectatorMode;
+    }
+
+    private void syncLocalModeStateFromPlayer() {
+        creativeMode = player.creativeMode;
+        spectatorMode = player.spectatorMode;
+        creativeFlightEnabled = player.flightEnabled && creativeMode && !spectatorMode;
+        if (spectatorMode) {
+            creativeFlightEnabled = true;
+            sneak = false;
+        }
+    }
+
+    private void updatePlayerArmorProtection() {
+        player.armorProtection = inventory.getArmorProtection();
+    }
+
+    private void handleJumpPress() {
+        if (spectatorMode) {
+            jumpQueued = false;
+            return;
+        }
+        if (!creativeMode) {
+            return;
+        }
+
+        double now = glfwGetTime();
+        if (lastCreativeJumpTapTime >= 0.0 && now - lastCreativeJumpTapTime <= 0.30) {
+            creativeFlightEnabled = !creativeFlightEnabled;
+            if (!creativeFlightEnabled) {
+                player.verticalVelocity = 0.0;
+                player.isGrounded = isStandingOnGround();
+            } else {
+                player.verticalVelocity = 0.0;
+            }
+            syncPlayerModeState();
+            lastCreativeJumpTapTime = -1.0;
+        } else {
+            lastCreativeJumpTapTime = now;
+        }
+    }
+
+    private void updateCursorMode() {
+        int cursorMode = (paused || inventoryOpen || deathScreenActive || mainMenuActive) ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED;
+        glfwSetInputMode(window, GLFW_CURSOR, cursorMode);
+        mouseInitialized = false;
+    }
+
+    private boolean shouldRunWorldSimulation() {
+        return worldLoaded && !paused && !mainMenuActive;
+    }
+
+    private void enterDeathScreen() {
+        deathScreenActive = true;
+        gameModeSwitcherActive = false;
+        f3Held = false;
+        deathSelection = 0;
+        paused = false;
+        inventoryOpen = false;
+        mainMenuActive = false;
+        player.verticalVelocity = 0.0;
+        player.isGrounded = false;
+        player.stepTimer = 0.0;
+        resetPlayerFluidState();
+        resetPlayerDamageTimers();
+        hoveredBlock = null;
+        resetMovement();
+        resetBreakingProgress();
+        syncPlayerModeState();
+        syncSelectedHotbarItem();
+        updateCursorMode();
+    }
+
+    private void activateDeathOption() {
+        if (deathSelection == 0) {
+            respawnPlayer();
+            return;
+        }
+        enterMainMenu();
+    }
+
+    private void handleMainMenuKey(int key) {
+        if (key == GLFW_KEY_ESCAPE) {
+            if (mainMenuScreen == GameConfig.MENU_SCREEN_MAIN) {
+                return;
+            }
+            if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
+                closeOptionsMenu();
+                return;
+            }
+            if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD || mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
+                mainMenuScreen = GameConfig.MENU_SCREEN_SINGLEPLAYER;
+                mainMenuSelection = 1;
+                activeMenuTextField = -1;
+            } else {
+                mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+                mainMenuSelection = 0;
+                activeMenuTextField = -1;
+            }
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER) {
+            if (key == GLFW_KEY_A) {
+                mainMenuSelection = (mainMenuSelection + GameConfig.SINGLEPLAYER_ACTIONS.length - 1) % GameConfig.SINGLEPLAYER_ACTIONS.length;
+            } else if (key == GLFW_KEY_D) {
+                mainMenuSelection = (mainMenuSelection + 1) % GameConfig.SINGLEPLAYER_ACTIONS.length;
+            } else if ((key == GLFW_KEY_W || key == GLFW_KEY_UP) && !availableWorlds.isEmpty()) {
+                selectedWorldIndex = (selectedWorldIndex + availableWorlds.size() - 1) % availableWorlds.size();
+                mainMenuWorldActionsEnabled = false;
+                keepSelectedWorldVisible();
+            } else if ((key == GLFW_KEY_S || key == GLFW_KEY_DOWN) && !availableWorlds.isEmpty()) {
+                selectedWorldIndex = (selectedWorldIndex + 1) % availableWorlds.size();
+                mainMenuWorldActionsEnabled = false;
+                keepSelectedWorldVisible();
+            } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                activateMainMenuOption();
+            }
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
+            if (activeMenuTextField >= 0) {
+                if (key == GLFW_KEY_TAB) {
+                    activeMenuTextField = activeMenuTextField == 0 ? 1 : 0;
+                } else if (key == GLFW_KEY_ENTER) {
+                    activateMainMenuOption();
+                }
+                return;
+            }
+            if (key == GLFW_KEY_TAB) {
+                activeMenuTextField = 0;
+            } else if (key == GLFW_KEY_A) {
+                mainMenuSelection = (mainMenuSelection + GameConfig.CREATE_WORLD_ACTIONS.length - 1) % GameConfig.CREATE_WORLD_ACTIONS.length;
+            } else if (key == GLFW_KEY_D) {
+                mainMenuSelection = (mainMenuSelection + 1) % GameConfig.CREATE_WORLD_ACTIONS.length;
+            } else if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
+                activeMenuTextField = activeMenuTextField == 1 ? 0 : 1;
+            } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
+                activeMenuTextField = activeMenuTextField == 0 ? 1 : 0;
+            } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                activateMainMenuOption();
+            }
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
+            if (activeMenuTextField >= 0) {
+                if (key == GLFW_KEY_TAB) {
+                    activeMenuTextField = -1;
+                } else if (key == GLFW_KEY_ENTER) {
+                    activateMainMenuOption();
+                }
+                return;
+            }
+            if (key == GLFW_KEY_TAB) {
+                activeMenuTextField = 0;
+            } else if (key == GLFW_KEY_A) {
+                mainMenuSelection = (mainMenuSelection + GameConfig.RENAME_WORLD_ACTIONS.length - 1) % GameConfig.RENAME_WORLD_ACTIONS.length;
+            } else if (key == GLFW_KEY_D) {
+                mainMenuSelection = (mainMenuSelection + 1) % GameConfig.RENAME_WORLD_ACTIONS.length;
+            } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                activateMainMenuOption();
+            }
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
+            if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
+                mainMenuSelection = (mainMenuSelection + 3) % 4;
+            } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
+                mainMenuSelection = (mainMenuSelection + 1) % 4;
+            } else if (key == GLFW_KEY_A || key == GLFW_KEY_LEFT) {
+                nudgeOptionsSelection(-1);
+            } else if (key == GLFW_KEY_D || key == GLFW_KEY_RIGHT) {
+                nudgeOptionsSelection(1);
+            } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                if (mainMenuSelection == 3) {
+                    closeOptionsMenu();
+                }
+            }
+            return;
+        }
+
+        if (key == GLFW_KEY_W || key == GLFW_KEY_UP || key == GLFW_KEY_A) {
+            mainMenuSelection = (mainMenuSelection + GameConfig.WORLD_MENU_ACTIONS.length - 1) % GameConfig.WORLD_MENU_ACTIONS.length;
+        } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN || key == GLFW_KEY_D) {
+            mainMenuSelection = (mainMenuSelection + 1) % GameConfig.WORLD_MENU_ACTIONS.length;
+        } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+            activateMainMenuOption();
+        }
+    }
+
+    private boolean handleMainMenuTextKey(int key) {
+        if (!mainMenuActive || activeMenuTextField < 0 || key != GLFW_KEY_BACKSPACE) {
+            return false;
+        }
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
+            if (activeMenuTextField == 0 && !createWorldName.isEmpty()) {
+                createWorldName = createWorldName.substring(0, createWorldName.length() - 1);
+            } else if (activeMenuTextField == 1 && !createWorldSeed.isEmpty()) {
+                createWorldSeed = createWorldSeed.substring(0, createWorldSeed.length() - 1);
+            }
+            return true;
+        }
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
+            if (!renameWorldName.isEmpty()) {
+                renameWorldName = renameWorldName.substring(0, renameWorldName.length() - 1);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleMainMenuCharacter(int codepoint) {
+        if (!mainMenuActive || activeMenuTextField < 0 || codepoint < 32 || codepoint > Character.MAX_VALUE) {
+            return false;
+        }
+        char character = (char) codepoint;
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
+            if (activeMenuTextField == 0 && createWorldName.length() < 32 && isSafeWorldNameCharacter(character)) {
+                createWorldName += character;
+                return true;
+            }
+            if (activeMenuTextField == 1 && createWorldSeed.length() < 32 && isSeedCharacter(character)) {
+                createWorldSeed += character;
+                return true;
+            }
+            return true;
+        }
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
+            if (renameWorldName.length() < 32 && isSafeWorldNameCharacter(character)) {
+                renameWorldName += character;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isSafeWorldNameCharacter(char character) {
+        return Character.isLetterOrDigit(character) || character == ' ' || character == '_' || character == '-';
+    }
+
+    private boolean isSeedCharacter(char character) {
+        return Character.isLetterOrDigit(character) || character == '-' || character == '_';
+    }
+
+    private void activateMainMenuOption() {
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_MAIN) {
+            switch (mainMenuSelection) {
+                case 0:
+                    refreshAvailableWorlds();
+                    mainMenuScreen = GameConfig.MENU_SCREEN_SINGLEPLAYER;
+                    mainMenuSelection = 0;
+                    mainMenuWorldActionsEnabled = false;
+                    lastWorldSlotClickIndex = -1;
+                    lastWorldSlotClickTime = -1.0;
+                    return;
+                case 1:
+                    mainMenuScreen = GameConfig.MENU_SCREEN_OPTIONS;
+                    mainMenuSelection = 0;
+                    optionsOpenedFromPause = false;
+                    return;
+                default:
+                    glfwSetWindowShouldClose(window, true);
+                    return;
+            }
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER) {
+            if (!isSingleplayerActionEnabled(mainMenuSelection)) {
+                return;
+            }
+            switch (mainMenuSelection) {
+                case 0:
+                    ensureWorldLoaded();
+                    mainMenuActive = false;
+                    deathScreenActive = false;
+                    paused = false;
+                    inventoryOpen = false;
+                    updateCursorMode();
+                    return;
+                case 1:
+                    openCreateWorldScreen();
+                    return;
+                case 2:
+                    openRenameWorldScreen();
+                    return;
+                case 3:
+                    deleteSelectedWorld();
+                    mainMenuWorldActionsEnabled = false;
+                    lastWorldSlotClickIndex = -1;
+                    lastWorldSlotClickTime = -1.0;
+                    return;
+                default:
+                    mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+                    mainMenuSelection = 0;
+                    return;
+            }
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
+            if (mainMenuSelection == 0) {
+                createNewWorld(createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty);
+                showLoadingScreen("Generating terrain", "Building world");
+                ensureWorldLoaded();
+                mainMenuActive = false;
+                deathScreenActive = false;
+                paused = false;
+                inventoryOpen = false;
+                activeMenuTextField = -1;
+                updateCursorMode();
+                return;
+            }
+            mainMenuScreen = GameConfig.MENU_SCREEN_SINGLEPLAYER;
+            mainMenuSelection = 1;
+            activeMenuTextField = -1;
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
+            if (mainMenuSelection == 0) {
+                renameSelectedWorld(renameWorldName);
+                mainMenuWorldActionsEnabled = true;
+            }
+            mainMenuScreen = GameConfig.MENU_SCREEN_SINGLEPLAYER;
+            mainMenuSelection = 2;
+            activeMenuTextField = -1;
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
+            if (mainMenuSelection == 3) {
+                closeOptionsMenu();
+            }
+            return;
+        }
+
+        mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+        mainMenuSelection = 0;
+    }
+
+    private boolean isSingleplayerActionEnabled(int actionIndex) {
+        if (actionIndex == 1 || actionIndex == 4) {
+            return true;
+        }
+        return mainMenuWorldActionsEnabled && !availableWorlds.isEmpty();
+    }
+
+    private void showLoadingScreen(String message, String detail) {
+        renderer.renderLoadingScreen(message, detail);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    private void ensureWorldLoaded() {
+        if (availableWorlds.isEmpty()) {
+            createNewWorld(nextWorldName(), "", 0, 2);
+        }
+        WorldInfo worldInfo = selectedWorld();
+        if (worldInfo == null) {
+            return;
+        }
+
+        if (worldLoaded && worldInfo.name.equals(loadedWorldName)) {
+            return;
+        }
+
+        if (worldLoaded) {
+            syncPlayerModeState();
+            world.savePlayerState(player);
+            world.saveAllLoadedColumns();
+        }
+        renderer.clearWorldMeshes();
+        showLoadingScreen("Generating terrain", worldInfo.name);
+        long worldGenerationStart = System.nanoTime();
+        world.configureWorld(worldInfo.directory, worldInfo.seed);
+        world.initializeNoise();
+        world.generateWorld();
+        FrameProfiler.logTask("world.generateWorld", System.nanoTime() - worldGenerationStart);
+        if (!world.loadPlayerState(player)) {
+            creativeMode = false;
+            spectatorMode = false;
+            creativeFlightEnabled = false;
+            syncPlayerModeState();
+            world.placePlayerAtSpawn(player);
+            setGameMode(worldInfo.gameMode);
+        } else {
+            syncLocalModeStateFromPlayer();
+        }
+        world.prepareForPlayer(player);
+        long meshBuildStart = System.nanoTime();
+        renderer.buildAllChunkMeshes();
+        FrameProfiler.logTask("renderer.buildAllChunkMeshes", System.nanoTime() - meshBuildStart);
+        loadedWorldName = worldInfo.name;
+        worldLoaded = true;
+        player.health = Math.max(1, player.health);
+        player.hunger = Math.max(0, Math.min(GameConfig.MAX_HUNGER, player.hunger));
+        player.verticalVelocity = 0.0;
+        player.isGrounded = true;
+        resetPlayerDamageTimers();
+        resetPlayerFluidState();
+        resetMovement();
+        resetBreakingProgress();
+        syncPlayerModeState();
+        syncSelectedHotbarItem();
+    }
+
+    private void enterMainMenu() {
+        if (worldLoaded) {
+            syncPlayerModeState();
+            world.savePlayerState(player);
+            world.saveAllLoadedColumns();
+        }
+        refreshAvailableWorlds();
+        deathScreenActive = false;
+        gameModeSwitcherActive = false;
+        f3Held = false;
+        paused = false;
+        inventoryOpen = false;
+        mainMenuActive = true;
+        mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+        mainMenuSelection = 0;
+        optionsOpenedFromPause = false;
+        mainMenuWorldActionsEnabled = false;
+        creativeMode = false;
+        spectatorMode = false;
+        creativeFlightEnabled = false;
+        player.health = GameConfig.MAX_HEALTH;
+        player.verticalVelocity = 0.0;
+        player.isGrounded = true;
+        player.cameraBobPhase = 0.0;
+        player.cameraBobAmount = 0.0;
+        player.stepTimer = 0.0;
+        resetPlayerFluidState();
+        resetPlayerDamageTimers();
+        hoveredBlock = null;
+        resetMovement();
+        resetBreakingProgress();
+        syncPlayerModeState();
+        syncSelectedHotbarItem();
+        updateCursorMode();
+    }
+
+    private void refreshAvailableWorlds() {
+        availableWorlds.clear();
+        Path savesRoot = Path.of(GameConfig.SAVE_ROOT_DIRECTORY);
+        try {
+            Files.createDirectories(savesRoot);
+            try (var stream = Files.list(savesRoot)) {
+                stream.filter(Files::isDirectory).forEach(directory -> {
+                    try {
+                        WorldMetadata metadata = readWorldMetadata(directory);
+                        long lastModified = worldLastModified(directory);
+                        availableWorlds.add(new WorldInfo(directory.getFileName().toString(), directory, metadata.seed, lastModified, metadata.gameMode, metadata.difficulty));
+                    } catch (IOException | NumberFormatException ignored) {
+                    }
+                });
+            }
+        } catch (IOException ignored) {
+        }
+
+        availableWorlds.sort(Comparator.comparingLong((WorldInfo info) -> info.lastModifiedMillis).reversed().thenComparing(info -> info.name.toLowerCase()));
+        if (availableWorlds.isEmpty()) {
+            selectedWorldIndex = 0;
+            mainMenuScrollOffset = 0;
+            return;
+        }
+        if (loadedWorldName != null) {
+            for (int i = 0; i < availableWorlds.size(); i++) {
+                if (availableWorlds.get(i).name.equals(loadedWorldName)) {
+                    selectedWorldIndex = i;
+                    keepSelectedWorldVisible();
+                    return;
+                }
+            }
+        }
+        selectedWorldIndex = Math.max(0, Math.min(selectedWorldIndex, availableWorlds.size() - 1));
+        clampMainMenuScrollOffset();
+    }
+
+    private void keepSelectedWorldVisible() {
+        if (selectedWorldIndex < mainMenuScrollOffset) {
+            mainMenuScrollOffset = selectedWorldIndex;
+        } else if (selectedWorldIndex >= mainMenuScrollOffset + GameConfig.WORLD_MENU_VISIBLE_ROWS) {
+            mainMenuScrollOffset = selectedWorldIndex - GameConfig.WORLD_MENU_VISIBLE_ROWS + 1;
+        }
+        clampMainMenuScrollOffset();
+    }
+
+    private void clampMainMenuScrollOffset() {
+        int maxOffset = Math.max(0, availableWorlds.size() - GameConfig.WORLD_MENU_VISIBLE_ROWS);
+        mainMenuScrollOffset = Math.max(0, Math.min(maxOffset, mainMenuScrollOffset));
+    }
+
+    private WorldMetadata readWorldMetadata(Path directory) throws IOException {
+        Path levelPath = directory.resolve(GameConfig.SAVE_LEVEL_FILE);
+        if (Files.isRegularFile(levelPath)) {
+            return readLevelMetadata(levelPath);
+        }
+
+        Path seedPath = directory.resolve(GameConfig.SAVE_METADATA_FILE);
+        String[] lines = Files.readString(seedPath, StandardCharsets.UTF_8).split("\\R");
+        long seed = lines.length == 0 ? 0L : Long.parseUnsignedLong(lines[0].trim(), 16);
+        int gameMode = 0;
+        int difficulty = 2;
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (line.startsWith("mode=")) {
+                gameMode = clamp(Integer.parseInt(line.substring(5)), 0, GameConfig.GAME_MODE_OPTIONS.length - 1);
+            } else if (line.startsWith("difficulty=")) {
+                difficulty = clamp(Integer.parseInt(line.substring(11)), 0, GameConfig.DIFFICULTY_OPTIONS.length - 1);
+            }
+        }
+        return new WorldMetadata(seed, gameMode, difficulty);
+    }
+
+    private WorldMetadata readLevelMetadata(Path levelPath) throws IOException {
+        String json = Files.readString(levelPath, StandardCharsets.UTF_8);
+        String seedText = jsonValue(json, "seed");
+        long seed = parseStoredSeed(seedText);
+        int gameMode = clamp(jsonIntValue(json, "gameMode", 0), 0, GameConfig.GAME_MODE_OPTIONS.length - 1);
+        int difficulty = clamp(jsonIntValue(json, "difficulty", 2), 0, GameConfig.DIFFICULTY_OPTIONS.length - 1);
+        return new WorldMetadata(seed, gameMode, difficulty);
+    }
+
+    private void writeWorldMetadata(Path directory, long seed, int gameMode, int difficulty) throws IOException {
+        Files.createDirectories(directory);
+        Files.createDirectories(directory.resolve(GameConfig.SAVE_REGION_DIRECTORY));
+        int clampedGameMode = clamp(gameMode, 0, GameConfig.GAME_MODE_OPTIONS.length - 1);
+        int clampedDifficulty = clamp(difficulty, 0, GameConfig.DIFFICULTY_OPTIONS.length - 1);
+        String seedHex = Long.toUnsignedString(seed, 16);
+        String levelJson = "{"
+            + System.lineSeparator() + "  \"version\": 1,"
+            + System.lineSeparator() + "  \"seed\": \"" + jsonEscape(seedHex) + "\","
+            + System.lineSeparator() + "  \"gameMode\": " + clampedGameMode + ","
+            + System.lineSeparator() + "  \"difficulty\": " + clampedDifficulty + ","
+            + System.lineSeparator() + "  \"minY\": " + GameConfig.WORLD_MIN_Y + ","
+            + System.lineSeparator() + "  \"height\": " + GameConfig.WORLD_HEIGHT + ","
+            + System.lineSeparator() + "  \"seaLevel\": " + GameConfig.SEA_LEVEL + ","
+            + System.lineSeparator() + "  \"createdWith\": \"TinyMinecraft mcrx-1\""
+            + System.lineSeparator() + "}"
+            + System.lineSeparator();
+        Files.writeString(directory.resolve(GameConfig.SAVE_LEVEL_FILE), levelJson, StandardCharsets.UTF_8);
+
+        String metadata = seedHex
+            + System.lineSeparator() + "mode=" + clampedGameMode
+            + System.lineSeparator() + "difficulty=" + clampedDifficulty
+            + System.lineSeparator();
+        Files.writeString(directory.resolve(GameConfig.SAVE_METADATA_FILE), metadata, StandardCharsets.UTF_8);
+    }
+
+    private long parseStoredSeed(String seedText) {
+        if (seedText == null || seedText.isBlank()) {
+            return 0L;
+        }
+        String trimmed = seedText.trim();
+        try {
+            return Long.parseUnsignedLong(trimmed, 16);
+        } catch (NumberFormatException ignored) {
+            try {
+                return Long.parseLong(trimmed);
+            } catch (NumberFormatException ignoredAgain) {
+                return trimmed.hashCode();
+            }
+        }
+    }
+
+    private int jsonIntValue(String json, String key, int defaultValue) {
+        String value = jsonValue(json, key);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    private String jsonValue(String json, String key) {
+        if (json == null || key == null) {
+            return null;
+        }
+        String marker = "\"" + key + "\"";
+        int keyIndex = json.indexOf(marker);
+        if (keyIndex < 0) {
+            return null;
+        }
+        int colonIndex = json.indexOf(':', keyIndex + marker.length());
+        if (colonIndex < 0) {
+            return null;
+        }
+        int valueStart = colonIndex + 1;
+        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
+            valueStart++;
+        }
+        if (valueStart >= json.length()) {
+            return null;
+        }
+        if (json.charAt(valueStart) == '"') {
+            StringBuilder value = new StringBuilder();
+            boolean escaped = false;
+            for (int i = valueStart + 1; i < json.length(); i++) {
+                char character = json.charAt(i);
+                if (escaped) {
+                    value.append(character);
+                    escaped = false;
+                } else if (character == '\\') {
+                    escaped = true;
+                } else if (character == '"') {
+                    return value.toString();
+                } else {
+                    value.append(character);
+                }
+            }
+            return null;
+        }
+
+        int valueEnd = valueStart;
+        while (valueEnd < json.length()) {
+            char character = json.charAt(valueEnd);
+            if (character == ',' || character == '}' || Character.isWhitespace(character)) {
+                break;
+            }
+            valueEnd++;
+        }
+        return json.substring(valueStart, valueEnd);
+    }
+
+    private String jsonEscape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private void openCreateWorldScreen() {
+        createWorldName = nextWorldName();
+        createWorldSeed = "";
+        createWorldGameMode = 0;
+        createWorldDifficulty = 2;
+        activeMenuTextField = 0;
+        mainMenuScreen = GameConfig.MENU_SCREEN_CREATE_WORLD;
+        mainMenuSelection = 0;
+    }
+
+    private void openRenameWorldScreen() {
+        WorldInfo worldInfo = selectedWorld();
+        if (worldInfo == null) {
+            return;
+        }
+        renameWorldName = worldInfo.name;
+        activeMenuTextField = 0;
+        mainMenuScreen = GameConfig.MENU_SCREEN_RENAME_WORLD;
+        mainMenuSelection = 0;
+    }
+
+    private void createNewWorld(String requestedName, String requestedSeed, int gameMode, int difficulty) {
+        String worldName = uniqueWorldName(sanitizeWorldName(requestedName, nextWorldName()));
+        long seed = parseSeed(requestedSeed);
+        Path worldDirectory = Path.of(GameConfig.SAVE_ROOT_DIRECTORY, worldName);
+        try {
+            writeWorldMetadata(worldDirectory, seed, gameMode, difficulty);
+        } catch (IOException ignored) {
+            return;
+        }
+        refreshAvailableWorlds();
+        selectWorldByName(worldName);
+    }
+
+    private long parseSeed(String seedText) {
+        String trimmed = seedText == null ? "" : seedText.trim();
+        if (trimmed.isEmpty()) {
+            return System.nanoTime() ^ new Random().nextLong();
+        }
+        try {
+            return Long.parseLong(trimmed);
+        } catch (NumberFormatException ignored) {
+            return trimmed.hashCode();
+        }
+    }
+
+    private void renameSelectedWorld(String requestedName) {
+        WorldInfo worldInfo = selectedWorld();
+        if (worldInfo == null) {
+            return;
+        }
+        String newName = uniqueWorldName(sanitizeWorldName(requestedName, worldInfo.name), worldInfo.name);
+        if (newName.equals(worldInfo.name)) {
+            return;
+        }
+        Path target = worldInfo.directory.resolveSibling(newName);
+        try {
+            if (worldInfo.name.equals(loadedWorldName)) {
+                syncPlayerModeState();
+                world.savePlayerState(player);
+                world.saveAllLoadedColumns();
+                world.discardLoadedWorld();
+                loadedWorldName = null;
+                worldLoaded = false;
+                hoveredBlock = null;
+            }
+            Files.move(worldInfo.directory, target);
+        } catch (IOException ignored) {
+            return;
+        }
+        refreshAvailableWorlds();
+        selectWorldByName(newName);
+    }
+
+    private void deleteSelectedWorld() {
+        WorldInfo worldInfo = selectedWorld();
+        if (worldInfo == null) {
+            return;
+        }
+        try {
+            if (worldInfo.name.equals(loadedWorldName)) {
+                world.discardLoadedWorld();
+                loadedWorldName = null;
+                worldLoaded = false;
+                hoveredBlock = null;
+            }
+            deleteDirectory(worldInfo.directory);
+        } catch (IOException ignored) {
+        }
+        refreshAvailableWorlds();
+    }
+
+    private long worldLastModified(Path directory) throws IOException {
+        long lastModified = Files.getLastModifiedTime(directory).toMillis();
+        Path levelPath = directory.resolve(GameConfig.SAVE_LEVEL_FILE);
+        if (Files.exists(levelPath)) {
+            lastModified = Math.max(lastModified, Files.getLastModifiedTime(levelPath).toMillis());
+        }
+        Path seedPath = directory.resolve(GameConfig.SAVE_METADATA_FILE);
+        if (Files.exists(seedPath)) {
+            lastModified = Math.max(lastModified, Files.getLastModifiedTime(seedPath).toMillis());
+        }
+        Path regionPath = directory.resolve(GameConfig.SAVE_REGION_DIRECTORY);
+        if (Files.exists(regionPath)) {
+            lastModified = Math.max(lastModified, Files.getLastModifiedTime(regionPath).toMillis());
+        }
+        Path chunksPath = directory.resolve(GameConfig.SAVE_CHUNKS_DIRECTORY);
+        if (Files.exists(chunksPath)) {
+            lastModified = Math.max(lastModified, Files.getLastModifiedTime(chunksPath).toMillis());
+        }
+        return lastModified;
+    }
+
+    private void deleteDirectory(Path directory) throws IOException {
+        try (var stream = Files.walk(directory)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                }
+            });
+        }
+    }
+
+    private String nextWorldName() {
+        HashSet<String> names = new HashSet<>();
+        for (WorldInfo worldInfo : availableWorlds) {
+            names.add(worldInfo.name);
+        }
+        int index = 1;
+        while (true) {
+            String candidate = "World " + index;
+            if (!names.contains(candidate)) {
+                return candidate;
+            }
+            index++;
+        }
+    }
+
+    private String sanitizeWorldName(String requestedName, String fallbackName) {
+        String source = requestedName == null ? "" : requestedName.trim();
+        if (source.isEmpty()) {
+            source = fallbackName;
+        }
+        String cleaned = source.replaceAll("[\\\\/:*?\"<>|]", "").trim();
+        if (cleaned.isEmpty()) {
+            cleaned = fallbackName;
+        }
+        return cleaned.length() > GameConfig.WORLD_MENU_NAME_LIMIT ? cleaned.substring(0, GameConfig.WORLD_MENU_NAME_LIMIT) : cleaned;
+    }
+
+    private String uniqueWorldName(String baseName) {
+        return uniqueWorldName(baseName, null);
+    }
+
+    private String uniqueWorldName(String baseName, String allowedExistingName) {
+        HashSet<String> names = new HashSet<>();
+        for (WorldInfo worldInfo : availableWorlds) {
+            if (!worldInfo.name.equals(allowedExistingName)) {
+                names.add(worldInfo.name);
+            }
+        }
+        if (!names.contains(baseName)) {
+            return baseName;
+        }
+        int index = 2;
+        while (true) {
+            String candidate = baseName + " (" + index + ")";
+            if (!names.contains(candidate)) {
+                return candidate;
+            }
+            index++;
+        }
+    }
+
+    private void selectWorldByName(String worldName) {
+        for (int i = 0; i < availableWorlds.size(); i++) {
+            if (availableWorlds.get(i).name.equals(worldName)) {
+                selectedWorldIndex = i;
+                keepSelectedWorldVisible();
+                return;
+            }
+        }
+    }
+
+    private WorldInfo selectedWorld() {
+        if (availableWorlds.isEmpty() || selectedWorldIndex < 0 || selectedWorldIndex >= availableWorlds.size()) {
+            return null;
+        }
+        return availableWorlds.get(selectedWorldIndex);
+    }
+
+    private void respawnPlayer() {
+        deathScreenActive = false;
+        mainMenuActive = false;
+        gameModeSwitcherActive = false;
+        f3Held = false;
+        paused = false;
+        inventoryOpen = false;
+        creativeMode = false;
+        spectatorMode = false;
+        creativeFlightEnabled = false;
+        player.health = GameConfig.MAX_HEALTH;
+        player.hunger = GameConfig.MAX_HUNGER;
+        if (player.hasCustomSpawn) {
+            player.x = player.spawnX;
+            player.y = player.spawnY;
+            player.z = player.spawnZ;
+        } else {
+            world.placePlayerAtSpawn(player);
+        }
+        player.verticalVelocity = 0.0;
+        player.isGrounded = true;
+        player.yaw = PlayerState.DEFAULT_YAW;
+        player.pitch = PlayerState.DEFAULT_PITCH;
+        player.cameraBobPhase = 0.0;
+        player.cameraBobAmount = 0.0;
+        player.stepTimer = 0.0;
+        resetPlayerFluidState();
+        resetPlayerDamageTimers();
+        hoveredBlock = null;
+        lastCreativeJumpTapTime = -1.0;
+        resetMovement();
+        resetBreakingProgress();
+        syncPlayerModeState();
+        syncSelectedHotbarItem();
+        updateCursorMode();
+    }
+
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private double lerp(double start, double end, double amount) {
+        return start + (end - start) * clamp(amount, 0.0, 1.0);
+    }
+
+    private double wrapAngle(double value) {
+        while (value > Math.PI) {
+            value -= Math.PI * 2.0;
+        }
+        while (value < -Math.PI) {
+            value += Math.PI * 2.0;
+        }
+        return value;
+    }
+
+    private void cleanup() {
+        closeContainerScreen();
+        Settings.save(renderDistanceChunks, fovDegrees);
+        if (worldLoaded) {
+            syncPlayerModeState();
+            world.savePlayerState(player);
+        }
+        world.cleanup();
+        renderer.cleanup();
+        audio.cleanup();
+        if (window != NULL) {
+            glfwDestroyWindow(window);
+        }
+        glfwTerminate();
+        if (errorCallback != null) {
+            errorCallback.free();
+        }
+    }
+
+    private static final class WorldMetadata {
+        final long seed;
+        final int gameMode;
+        final int difficulty;
+
+        WorldMetadata(long seed, int gameMode, int difficulty) {
+            this.seed = seed;
+            this.gameMode = gameMode;
+            this.difficulty = difficulty;
+        }
+    }
+}
+

@@ -1,0 +1,1764 @@
+import java.util.Arrays;
+
+final class InventoryItems {
+    static final byte OAK_PLANKS = 26;
+    static final byte STICK = 27;
+    static final byte IRON_HELMET = 28;
+    static final byte IRON_CHESTPLATE = 29;
+    static final byte IRON_LEGGINGS = 30;
+    static final byte IRON_BOOTS = 31;
+    static final byte SHIELD = 32;
+    static final byte TOTEM = 33;
+    static final byte IRON_INGOT = 34;
+    static final byte DIAMOND_PICKAXE = 35;
+    static final byte NETHERITE_PICKAXE = 36;
+    static final byte DIAMOND_SWORD = 63;
+    static final byte DIAMOND_AXE = 64;
+    static final byte DIAMOND_SHOVEL = 65;
+    static final byte DIAMOND_HOE = 66;
+    static final byte NETHERITE_SWORD = 67;
+    static final byte NETHERITE_AXE = 68;
+    static final byte NETHERITE_SHOVEL = 69;
+    static final byte NETHERITE_HOE = 70;
+    static final byte WOODEN_PICKAXE = 72;
+    static final byte WOODEN_SWORD = 73;
+    static final byte WOODEN_AXE = 74;
+    static final byte WOODEN_SHOVEL = 75;
+    static final byte WOODEN_HOE = 76;
+    static final byte STONE_PICKAXE = 77;
+    static final byte STONE_SWORD = 78;
+    static final byte STONE_AXE = 79;
+    static final byte STONE_SHOVEL = 80;
+    static final byte STONE_HOE = 81;
+    static final byte IRON_PICKAXE = 82;
+    static final byte IRON_SWORD = 83;
+    static final byte IRON_AXE = 84;
+    static final byte IRON_SHOVEL = 85;
+    static final byte IRON_HOE = 86;
+    static final byte ZOMBIE_SPAWN_EGG = 87;
+    static final byte SKELETON_SPAWN_EGG = 88;
+    static final byte PIG_SPAWN_EGG = 89;
+    static final byte SHEEP_SPAWN_EGG = 90;
+    static final byte COW_SPAWN_EGG = 91;
+    static final byte VILLAGER_SPAWN_EGG = 92;
+    static final byte RAW_PORK = 93;
+    static final byte RAW_BEEF = 94;
+    static final byte RAW_MUTTON = 95;
+    static final byte LEATHER = 96;
+    static final byte WOOL = 97;
+    static final byte ROTTEN_FLESH = 98;
+    static final byte BONE = 99;
+    static final byte COOKED_PORK = 100;
+    static final byte COOKED_BEEF = 101;
+    static final byte COOKED_MUTTON = 102;
+    static final byte BAKED_POTATO = 103;
+    static final byte BREAD = 49;
+    static final byte POTATO = 50;
+    static final byte CARROT = 51;
+    static final byte WHEAT_SEEDS = 52;
+
+    static final byte[] CREATIVE_ITEMS = {
+        GameConfig.GRASS,
+        GameConfig.DIRT,
+        GameConfig.COBBLESTONE,
+        GameConfig.BEDROCK,
+        GameConfig.IRON_ORE,
+        GameConfig.DIAMOND_ORE,
+        GameConfig.COAL_ORE,
+        GameConfig.DEEPSLATE_IRON_ORE,
+        GameConfig.DEEPSLATE_DIAMOND_ORE,
+        GameConfig.DEEPSLATE_COAL_ORE,
+        GameConfig.ZOMBIE_SKIN,
+        GameConfig.ZOMBIE_SHIRT,
+        GameConfig.ZOMBIE_PANTS,
+        GameConfig.ZOMBIE_EYE,
+        GameConfig.WATER,
+        GameConfig.LAVA,
+        GameConfig.SAND,
+        GameConfig.GRAVEL,
+        GameConfig.CLAY,
+        GameConfig.OAK_LOG,
+        GameConfig.OAK_LEAVES,
+        GameConfig.PINE_LOG,
+        GameConfig.PINE_LEAVES,
+        GameConfig.CACTUS,
+        GameConfig.SNOW_LAYER,
+        GameConfig.SEAGRASS,
+        GameConfig.TALL_GRASS,
+        GameConfig.RED_FLOWER,
+        GameConfig.YELLOW_FLOWER,
+        GameConfig.STONE,
+        GameConfig.DEEPSLATE,
+        GameConfig.OBSIDIAN,
+        OAK_PLANKS,
+        GameConfig.OAK_FENCE,
+        GameConfig.CHEST,
+        GameConfig.CRAFTING_TABLE,
+        GameConfig.FURNACE,
+        GameConfig.GLASS,
+        GameConfig.RED_BED,
+        GameConfig.WHEAT_CROP,
+        GameConfig.RAIL,
+        GameConfig.OAK_DOOR,
+        GameConfig.FARMLAND,
+        GameConfig.TORCH,
+        GameConfig.STRUCTURE_BLOCK,
+        STICK,
+        BREAD,
+        POTATO,
+        CARROT,
+        WHEAT_SEEDS,
+        IRON_INGOT,
+        WOODEN_PICKAXE,
+        WOODEN_SWORD,
+        WOODEN_AXE,
+        WOODEN_SHOVEL,
+        WOODEN_HOE,
+        STONE_PICKAXE,
+        STONE_SWORD,
+        STONE_AXE,
+        STONE_SHOVEL,
+        STONE_HOE,
+        IRON_PICKAXE,
+        IRON_SWORD,
+        IRON_AXE,
+        IRON_SHOVEL,
+        IRON_HOE,
+        DIAMOND_PICKAXE,
+        NETHERITE_PICKAXE,
+        DIAMOND_SWORD,
+        DIAMOND_AXE,
+        DIAMOND_SHOVEL,
+        DIAMOND_HOE,
+        NETHERITE_SWORD,
+        NETHERITE_AXE,
+        NETHERITE_SHOVEL,
+        NETHERITE_HOE,
+        IRON_HELMET,
+        IRON_CHESTPLATE,
+        IRON_LEGGINGS,
+        IRON_BOOTS,
+        SHIELD,
+        TOTEM,
+        ZOMBIE_SPAWN_EGG,
+        SKELETON_SPAWN_EGG,
+        PIG_SPAWN_EGG,
+        SHEEP_SPAWN_EGG,
+        COW_SPAWN_EGG,
+        VILLAGER_SPAWN_EGG,
+        RAW_PORK,
+        RAW_BEEF,
+        RAW_MUTTON,
+        COOKED_PORK,
+        COOKED_BEEF,
+        COOKED_MUTTON,
+        BAKED_POTATO,
+        LEATHER,
+        WOOL,
+        ROTTEN_FLESH,
+        BONE
+    };
+
+    static final int[][] CREATIVE_TAB_INDICES = buildCreativeTabIndices();
+
+    private InventoryItems() {
+    }
+
+    private static int[][] buildCreativeTabIndices() {
+        return new int[][]{
+            indicesFor(
+                GameConfig.GRASS,
+                GameConfig.DIRT,
+                GameConfig.COBBLESTONE,
+                GameConfig.BEDROCK,
+                GameConfig.STONE,
+                GameConfig.DEEPSLATE,
+                GameConfig.OBSIDIAN,
+                GameConfig.SAND,
+                GameConfig.GRAVEL,
+                GameConfig.CLAY,
+                GameConfig.OAK_LOG,
+                InventoryItems.OAK_PLANKS,
+                GameConfig.OAK_FENCE,
+                GameConfig.CHEST,
+                GameConfig.CRAFTING_TABLE,
+                GameConfig.FURNACE,
+                GameConfig.GLASS,
+                GameConfig.RED_BED,
+                GameConfig.RAIL,
+                GameConfig.OAK_DOOR,
+                GameConfig.FARMLAND,
+                GameConfig.TORCH,
+                GameConfig.STRUCTURE_BLOCK,
+                GameConfig.IRON_ORE,
+                GameConfig.COAL_ORE,
+                GameConfig.DIAMOND_ORE,
+                GameConfig.DEEPSLATE_IRON_ORE,
+                GameConfig.DEEPSLATE_COAL_ORE,
+                GameConfig.DEEPSLATE_DIAMOND_ORE
+            ),
+            indicesFor(
+                GameConfig.OAK_LEAVES,
+                GameConfig.PINE_LOG,
+                GameConfig.PINE_LEAVES,
+                GameConfig.CACTUS,
+                GameConfig.SNOW_LAYER,
+                GameConfig.SEAGRASS,
+                GameConfig.TALL_GRASS,
+                GameConfig.RED_FLOWER,
+                GameConfig.YELLOW_FLOWER,
+                GameConfig.WHEAT_CROP,
+                GameConfig.FARMLAND,
+                GameConfig.TORCH,
+                InventoryItems.BREAD,
+                InventoryItems.POTATO,
+                InventoryItems.CARROT,
+                InventoryItems.WHEAT_SEEDS,
+                InventoryItems.RAW_PORK,
+                InventoryItems.RAW_BEEF,
+                InventoryItems.RAW_MUTTON,
+                InventoryItems.COOKED_PORK,
+                InventoryItems.COOKED_BEEF,
+                InventoryItems.COOKED_MUTTON,
+                InventoryItems.BAKED_POTATO,
+                InventoryItems.LEATHER,
+                InventoryItems.WOOL,
+                InventoryItems.ROTTEN_FLESH,
+                InventoryItems.BONE,
+                InventoryItems.ZOMBIE_SPAWN_EGG,
+                InventoryItems.SKELETON_SPAWN_EGG,
+                InventoryItems.PIG_SPAWN_EGG,
+                InventoryItems.SHEEP_SPAWN_EGG,
+                InventoryItems.COW_SPAWN_EGG,
+                InventoryItems.VILLAGER_SPAWN_EGG
+            ),
+            indicesFor(
+                InventoryItems.STICK,
+                InventoryItems.IRON_INGOT,
+                InventoryItems.WOODEN_PICKAXE,
+                InventoryItems.WOODEN_SWORD,
+                InventoryItems.WOODEN_AXE,
+                InventoryItems.WOODEN_SHOVEL,
+                InventoryItems.WOODEN_HOE,
+                InventoryItems.STONE_PICKAXE,
+                InventoryItems.STONE_SWORD,
+                InventoryItems.STONE_AXE,
+                InventoryItems.STONE_SHOVEL,
+                InventoryItems.STONE_HOE,
+                InventoryItems.IRON_PICKAXE,
+                InventoryItems.IRON_SWORD,
+                InventoryItems.IRON_AXE,
+                InventoryItems.IRON_SHOVEL,
+                InventoryItems.IRON_HOE,
+                InventoryItems.DIAMOND_PICKAXE,
+                InventoryItems.NETHERITE_PICKAXE,
+                InventoryItems.DIAMOND_SWORD,
+                InventoryItems.DIAMOND_AXE,
+                InventoryItems.DIAMOND_SHOVEL,
+                InventoryItems.DIAMOND_HOE,
+                InventoryItems.NETHERITE_SWORD,
+                InventoryItems.NETHERITE_AXE,
+                InventoryItems.NETHERITE_SHOVEL,
+                InventoryItems.NETHERITE_HOE,
+                InventoryItems.IRON_HELMET,
+                InventoryItems.IRON_CHESTPLATE,
+                InventoryItems.IRON_LEGGINGS,
+                InventoryItems.IRON_BOOTS,
+                InventoryItems.SHIELD,
+                InventoryItems.TOTEM
+            ),
+            indicesFor(
+                GameConfig.WATER,
+                GameConfig.LAVA,
+                GameConfig.ZOMBIE_SKIN,
+                GameConfig.ZOMBIE_SHIRT,
+                GameConfig.ZOMBIE_PANTS,
+                GameConfig.ZOMBIE_EYE
+            )
+        };
+    }
+
+    private static int[] indicesFor(byte... itemIds) {
+        int[] indices = new int[itemIds.length];
+        int count = 0;
+        for (byte itemId : itemIds) {
+            int index = creativeIndexOf(itemId);
+            if (index >= 0) {
+                indices[count++] = index;
+            }
+        }
+        return Arrays.copyOf(indices, count);
+    }
+
+    private static int creativeIndexOf(byte itemId) {
+        for (int i = 0; i < CREATIVE_ITEMS.length; i++) {
+            if (CREATIVE_ITEMS[i] == itemId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    static String name(byte itemId) {
+        if (Blocks.isKnownLegacyId(itemId)) {
+            return Blocks.typeFromLegacyId(itemId).displayName;
+        }
+        switch (itemId) {
+            case GameConfig.GRASS:
+                return "Grass Block";
+            case GameConfig.DIRT:
+                return "Dirt";
+            case GameConfig.COBBLESTONE:
+                return "Cobblestone";
+            case GameConfig.BEDROCK:
+                return "Bedrock";
+            case GameConfig.IRON_ORE:
+                return "Iron Ore";
+            case GameConfig.DIAMOND_ORE:
+                return "Diamond Ore";
+            case GameConfig.COAL_ORE:
+                return "Coal Ore";
+            case GameConfig.ZOMBIE_SKIN:
+                return "Zombie Skin";
+            case GameConfig.ZOMBIE_SHIRT:
+                return "Zombie Shirt";
+            case GameConfig.ZOMBIE_PANTS:
+                return "Zombie Pants";
+            case GameConfig.ZOMBIE_EYE:
+                return "Zombie Eye";
+            case GameConfig.WATER:
+                return "Water";
+            case GameConfig.LAVA:
+                return "Lava";
+            case GameConfig.SAND:
+                return "Sand";
+            case GameConfig.GRAVEL:
+                return "Gravel";
+            case GameConfig.CLAY:
+                return "Clay";
+            case GameConfig.OAK_LOG:
+                return "Oak Log";
+            case GameConfig.OAK_LEAVES:
+                return "Oak Leaves";
+            case GameConfig.PINE_LOG:
+                return "Pine Log";
+            case GameConfig.PINE_LEAVES:
+                return "Pine Leaves";
+            case GameConfig.CACTUS:
+                return "Cactus";
+            case GameConfig.SNOW_LAYER:
+                return "Snow Layer";
+            case GameConfig.SEAGRASS:
+                return "Seagrass";
+            case GameConfig.TALL_GRASS:
+                return "Tall Grass";
+            case GameConfig.RED_FLOWER:
+                return "Red Flower";
+            case GameConfig.YELLOW_FLOWER:
+                return "Yellow Flower";
+            case GameConfig.STONE:
+                return "Stone";
+            case GameConfig.DEEPSLATE:
+                return "Deepslate";
+            case GameConfig.OBSIDIAN:
+                return "Obsidian";
+            case OAK_PLANKS:
+                return "Oak Planks";
+            case GameConfig.OAK_FENCE:
+                return "Oak Fence";
+            case GameConfig.CHEST:
+                return "Chest";
+            case GameConfig.CRAFTING_TABLE:
+                return "Crafting Table";
+            case GameConfig.FURNACE:
+                return "Furnace";
+            case GameConfig.GLASS:
+                return "Glass";
+            case GameConfig.WHEAT_CROP:
+                return "Wheat";
+            case GameConfig.RAIL:
+                return "Rail";
+            case GameConfig.OAK_DOOR:
+                return "Oak Door";
+            case GameConfig.FARMLAND:
+                return "Farmland";
+            case GameConfig.TORCH:
+                return "Torch";
+            case GameConfig.STRUCTURE_BLOCK:
+                return "Structure Block";
+            case GameConfig.RED_BED:
+                return "Red Bed";
+            case STICK:
+                return "Stick";
+            case BREAD:
+                return "Bread";
+            case POTATO:
+                return "Potato";
+            case CARROT:
+                return "Carrot";
+            case WHEAT_SEEDS:
+                return "Seeds";
+            case IRON_HELMET:
+                return "Iron Helmet";
+            case IRON_CHESTPLATE:
+                return "Iron Chestplate";
+            case IRON_LEGGINGS:
+                return "Iron Leggings";
+            case IRON_BOOTS:
+                return "Iron Boots";
+            case SHIELD:
+                return "Shield";
+            case TOTEM:
+                return "Totem";
+            case IRON_INGOT:
+                return "Iron Ingot";
+            case WOODEN_PICKAXE:
+                return "Wooden Pickaxe";
+            case WOODEN_SWORD:
+                return "Wooden Sword";
+            case WOODEN_AXE:
+                return "Wooden Axe";
+            case WOODEN_SHOVEL:
+                return "Wooden Shovel";
+            case WOODEN_HOE:
+                return "Wooden Hoe";
+            case STONE_PICKAXE:
+                return "Stone Pickaxe";
+            case STONE_SWORD:
+                return "Stone Sword";
+            case STONE_AXE:
+                return "Stone Axe";
+            case STONE_SHOVEL:
+                return "Stone Shovel";
+            case STONE_HOE:
+                return "Stone Hoe";
+            case IRON_PICKAXE:
+                return "Iron Pickaxe";
+            case IRON_SWORD:
+                return "Iron Sword";
+            case IRON_AXE:
+                return "Iron Axe";
+            case IRON_SHOVEL:
+                return "Iron Shovel";
+            case IRON_HOE:
+                return "Iron Hoe";
+            case DIAMOND_PICKAXE:
+                return "Diamond Pickaxe";
+            case NETHERITE_PICKAXE:
+                return "Netherite Pickaxe";
+            case DIAMOND_SWORD:
+                return "Diamond Sword";
+            case DIAMOND_AXE:
+                return "Diamond Axe";
+            case DIAMOND_SHOVEL:
+                return "Diamond Shovel";
+            case DIAMOND_HOE:
+                return "Diamond Hoe";
+            case NETHERITE_SWORD:
+                return "Netherite Sword";
+            case NETHERITE_AXE:
+                return "Netherite Axe";
+            case NETHERITE_SHOVEL:
+                return "Netherite Shovel";
+            case NETHERITE_HOE:
+                return "Netherite Hoe";
+            case ZOMBIE_SPAWN_EGG:
+                return "Zombie Spawn Egg";
+            case SKELETON_SPAWN_EGG:
+                return "Skeleton Spawn Egg";
+            case PIG_SPAWN_EGG:
+                return "Pig Spawn Egg";
+            case SHEEP_SPAWN_EGG:
+                return "Sheep Spawn Egg";
+            case COW_SPAWN_EGG:
+                return "Cow Spawn Egg";
+            case VILLAGER_SPAWN_EGG:
+                return "Villager Spawn Egg";
+            case RAW_PORK:
+                return "Raw Pork";
+            case RAW_BEEF:
+                return "Raw Beef";
+            case RAW_MUTTON:
+                return "Raw Mutton";
+            case COOKED_PORK:
+                return "Cooked Pork";
+            case COOKED_BEEF:
+                return "Steak";
+            case COOKED_MUTTON:
+                return "Cooked Mutton";
+            case BAKED_POTATO:
+                return "Baked Potato";
+            case LEATHER:
+                return "Leather";
+            case WOOL:
+                return "Wool";
+            case ROTTEN_FLESH:
+                return "Rotten Flesh";
+            case BONE:
+                return "Bone";
+            default:
+                return "Item " + itemId;
+        }
+    }
+
+    static boolean isPlaceable(byte itemId) {
+        return Blocks.isKnownLegacyId(itemId) && !Blocks.typeFromLegacyId(itemId).isAir();
+    }
+
+    static boolean isCollectible(byte itemId) {
+        return itemId != GameConfig.AIR
+            && itemId != GameConfig.BEDROCK
+            && itemId != GameConfig.WATER
+            && itemId != GameConfig.LAVA
+            && !Blocks.isLiquid(itemId);
+    }
+
+    static int maxStackSize(byte itemId) {
+        switch (itemId) {
+            case IRON_HELMET:
+            case IRON_CHESTPLATE:
+            case IRON_LEGGINGS:
+            case IRON_BOOTS:
+            case SHIELD:
+            case TOTEM:
+            case WOODEN_PICKAXE:
+            case WOODEN_SWORD:
+            case WOODEN_AXE:
+            case WOODEN_SHOVEL:
+            case WOODEN_HOE:
+            case STONE_PICKAXE:
+            case STONE_SWORD:
+            case STONE_AXE:
+            case STONE_SHOVEL:
+            case STONE_HOE:
+            case IRON_PICKAXE:
+            case IRON_SWORD:
+            case IRON_AXE:
+            case IRON_SHOVEL:
+            case IRON_HOE:
+            case DIAMOND_PICKAXE:
+            case NETHERITE_PICKAXE:
+            case DIAMOND_SWORD:
+            case DIAMOND_AXE:
+            case DIAMOND_SHOVEL:
+            case DIAMOND_HOE:
+            case NETHERITE_SWORD:
+            case NETHERITE_AXE:
+            case NETHERITE_SHOVEL:
+            case NETHERITE_HOE:
+                return 1;
+            default:
+                return 64;
+        }
+    }
+
+    static boolean isArmor(byte itemId) {
+        return armorSlotIndex(itemId) >= 0;
+    }
+
+    static int armorSlotIndex(byte itemId) {
+        switch (itemId) {
+            case IRON_HELMET:
+                return 0;
+            case IRON_CHESTPLATE:
+                return 1;
+            case IRON_LEGGINGS:
+                return 2;
+            case IRON_BOOTS:
+                return 3;
+            default:
+                return -1;
+        }
+    }
+
+    static boolean isOffhandPreferred(byte itemId) {
+        return itemId == SHIELD || itemId == TOTEM;
+    }
+
+    static boolean isSpawnEgg(byte itemId) {
+        return mobKindForSpawnEgg(itemId) != null;
+    }
+
+    static MobKind mobKindForSpawnEgg(byte itemId) {
+        switch (itemId) {
+            case ZOMBIE_SPAWN_EGG:
+                return MobKind.ZOMBIE;
+            case SKELETON_SPAWN_EGG:
+                return MobKind.SKELETON;
+            case PIG_SPAWN_EGG:
+                return MobKind.PIG;
+            case SHEEP_SPAWN_EGG:
+                return MobKind.SHEEP;
+            case COW_SPAWN_EGG:
+                return MobKind.COW;
+            case VILLAGER_SPAWN_EGG:
+                return MobKind.VILLAGER;
+            default:
+                return null;
+        }
+    }
+
+    static int foodValue(byte itemId) {
+        switch (itemId) {
+            case BREAD:
+                return 5;
+            case CARROT:
+                return 3;
+            case POTATO:
+                return 2;
+            case RAW_PORK:
+            case RAW_BEEF:
+            case RAW_MUTTON:
+                return 3;
+            case COOKED_PORK:
+            case COOKED_BEEF:
+                return 8;
+            case COOKED_MUTTON:
+                return 6;
+            case BAKED_POTATO:
+                return 5;
+            case ROTTEN_FLESH:
+                return 2;
+            default:
+                return 0;
+        }
+    }
+}
+
+final class ItemStack {
+    byte itemId;
+    int count;
+
+    ItemStack() {
+        clear();
+    }
+
+    ItemStack(byte itemId, int count) {
+        set(itemId, count);
+    }
+
+    boolean isEmpty() {
+        return itemId == GameConfig.AIR || count <= 0;
+    }
+
+    void set(byte itemId, int count) {
+        if (itemId == GameConfig.AIR || count <= 0) {
+            clear();
+            return;
+        }
+        this.itemId = itemId;
+        this.count = count;
+    }
+
+    void clear() {
+        itemId = GameConfig.AIR;
+        count = 0;
+    }
+
+    void copyFrom(ItemStack other) {
+        if (other == null || other.isEmpty()) {
+            clear();
+        } else {
+            set(other.itemId, other.count);
+        }
+    }
+
+    ItemStack copy() {
+        return new ItemStack(itemId, count);
+    }
+}
+
+enum InventorySlotGroup {
+    STORAGE,
+    HOTBAR,
+    ARMOR,
+    OFFHAND,
+    CRAFT,
+    CRAFT_RESULT,
+    CRAFT_3X3,
+    CRAFT_3X3_RESULT,
+    CHEST_CONTAINER,
+    FURNACE_INPUT,
+    FURNACE_FUEL,
+    FURNACE_OUTPUT,
+    CREATIVE
+}
+
+final class InventorySlotRef {
+    final InventorySlotGroup group;
+    final int index;
+
+    InventorySlotRef(InventorySlotGroup group, int index) {
+        this.group = group;
+        this.index = index;
+    }
+}
+
+final class CraftingRecipe {
+    final int width;
+    final int height;
+    final byte[] pattern;
+    final byte[] shapelessIngredients;
+    final byte resultItem;
+    final int resultCount;
+
+    private CraftingRecipe(int width, int height, byte[] pattern, byte[] shapelessIngredients, byte resultItem, int resultCount) {
+        this.width = width;
+        this.height = height;
+        this.pattern = pattern;
+        this.shapelessIngredients = shapelessIngredients;
+        this.resultItem = resultItem;
+        this.resultCount = resultCount;
+    }
+
+    static CraftingRecipe shaped(int width, int height, byte resultItem, int resultCount, byte... pattern) {
+        return new CraftingRecipe(width, height, pattern, null, resultItem, resultCount);
+    }
+
+    static CraftingRecipe shapeless(byte resultItem, int resultCount, byte... ingredients) {
+        return new CraftingRecipe(0, 0, null, ingredients, resultItem, resultCount);
+    }
+
+    boolean shapeless() {
+        return shapelessIngredients != null;
+    }
+}
+
+final class CraftingRecipes {
+    private static final CraftingRecipe[] RECIPES = {
+        CraftingRecipe.shapeless(InventoryItems.OAK_PLANKS, 4, GameConfig.OAK_LOG),
+        CraftingRecipe.shapeless(InventoryItems.OAK_PLANKS, 4, GameConfig.PINE_LOG),
+        CraftingRecipe.shaped(1, 2, InventoryItems.STICK, 4,
+            InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(2, 2, GameConfig.CRAFTING_TABLE, 1,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(3, 3, GameConfig.CHEST, 1,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, GameConfig.AIR, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(3, 3, GameConfig.FURNACE, 1,
+            GameConfig.COBBLESTONE, GameConfig.COBBLESTONE, GameConfig.COBBLESTONE,
+            GameConfig.COBBLESTONE, GameConfig.AIR, GameConfig.COBBLESTONE,
+            GameConfig.COBBLESTONE, GameConfig.COBBLESTONE, GameConfig.COBBLESTONE),
+        CraftingRecipe.shaped(1, 2, GameConfig.TORCH, 4,
+            GameConfig.COAL_ORE,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 3, GameConfig.OAK_DOOR, 3,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(3, 3, GameConfig.RAIL, 16,
+            GameConfig.IRON_ORE, GameConfig.AIR, GameConfig.IRON_ORE,
+            GameConfig.IRON_ORE, InventoryItems.STICK, GameConfig.IRON_ORE,
+            GameConfig.IRON_ORE, GameConfig.AIR, GameConfig.IRON_ORE),
+        CraftingRecipe.shaped(3, 1, InventoryItems.BREAD, 1,
+            GameConfig.WHEAT_CROP, GameConfig.WHEAT_CROP, GameConfig.WHEAT_CROP),
+        CraftingRecipe.shaped(3, 2, GameConfig.OAK_FENCE, 6,
+            InventoryItems.OAK_PLANKS, InventoryItems.STICK, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.STICK, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shapeless(GameConfig.GRAVEL, 1, GameConfig.COBBLESTONE, GameConfig.DIRT),
+        CraftingRecipe.shapeless(GameConfig.CLAY, 1, GameConfig.SAND, GameConfig.DIRT),
+        CraftingRecipe.shaped(3, 3, InventoryItems.WOODEN_PICKAXE, 1,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR),
+        CraftingRecipe.shaped(1, 3, InventoryItems.WOODEN_SWORD, 1,
+            InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 3, InventoryItems.WOODEN_AXE, 1,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.STICK,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(1, 3, InventoryItems.WOODEN_SHOVEL, 1,
+            InventoryItems.OAK_PLANKS,
+            InventoryItems.STICK,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 2, InventoryItems.WOODEN_HOE, 1,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(3, 3, InventoryItems.STONE_PICKAXE, 1,
+            GameConfig.COBBLESTONE, GameConfig.COBBLESTONE, GameConfig.COBBLESTONE,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR),
+        CraftingRecipe.shaped(1, 3, InventoryItems.STONE_SWORD, 1,
+            GameConfig.COBBLESTONE,
+            GameConfig.COBBLESTONE,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 3, InventoryItems.STONE_AXE, 1,
+            GameConfig.COBBLESTONE, GameConfig.COBBLESTONE,
+            GameConfig.COBBLESTONE, InventoryItems.STICK,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(1, 3, InventoryItems.STONE_SHOVEL, 1,
+            GameConfig.COBBLESTONE,
+            InventoryItems.STICK,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 2, InventoryItems.STONE_HOE, 1,
+            GameConfig.COBBLESTONE, GameConfig.COBBLESTONE,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(3, 3, InventoryItems.IRON_PICKAXE, 1,
+            InventoryItems.IRON_INGOT, InventoryItems.IRON_INGOT, InventoryItems.IRON_INGOT,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR),
+        CraftingRecipe.shaped(1, 3, InventoryItems.IRON_SWORD, 1,
+            InventoryItems.IRON_INGOT,
+            InventoryItems.IRON_INGOT,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 3, InventoryItems.IRON_AXE, 1,
+            InventoryItems.IRON_INGOT, InventoryItems.IRON_INGOT,
+            InventoryItems.IRON_INGOT, InventoryItems.STICK,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(1, 3, InventoryItems.IRON_SHOVEL, 1,
+            InventoryItems.IRON_INGOT,
+            InventoryItems.STICK,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 2, InventoryItems.IRON_HOE, 1,
+            InventoryItems.IRON_INGOT, InventoryItems.IRON_INGOT,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(3, 2, GameConfig.RED_BED, 1,
+            InventoryItems.WOOL, InventoryItems.WOOL, InventoryItems.WOOL,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(3, 2, InventoryItems.DIAMOND_PICKAXE, 1,
+            GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE,
+            GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR),
+        CraftingRecipe.shaped(1, 3, InventoryItems.DIAMOND_SWORD, 1,
+            GameConfig.DIAMOND_ORE,
+            GameConfig.DIAMOND_ORE,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 3, InventoryItems.DIAMOND_AXE, 1,
+            GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE,
+            GameConfig.DIAMOND_ORE, InventoryItems.STICK,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(1, 3, InventoryItems.DIAMOND_SHOVEL, 1,
+            GameConfig.DIAMOND_ORE,
+            InventoryItems.STICK,
+            InventoryItems.STICK),
+        CraftingRecipe.shaped(2, 2, InventoryItems.DIAMOND_HOE, 1,
+            GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE,
+            GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_PICKAXE, 1, InventoryItems.DIAMOND_PICKAXE, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_SWORD, 1, InventoryItems.DIAMOND_SWORD, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_AXE, 1, InventoryItems.DIAMOND_AXE, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_SHOVEL, 1, InventoryItems.DIAMOND_SHOVEL, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_HOE, 1, InventoryItems.DIAMOND_HOE, GameConfig.OBSIDIAN),
+        CraftingRecipe.shaped(3, 2, InventoryItems.IRON_HELMET, 1,
+            GameConfig.IRON_ORE, GameConfig.IRON_ORE, GameConfig.IRON_ORE,
+            GameConfig.IRON_ORE, GameConfig.AIR, GameConfig.IRON_ORE)
+    };
+
+    private CraftingRecipes() {
+    }
+
+    static CraftingRecipe findMatch(ItemStack[] craftGrid) {
+        return findMatch(craftGrid, 2, 2);
+    }
+
+    static CraftingRecipe findMatch(ItemStack[] craftGrid, int gridWidth, int gridHeight) {
+        CraftingRecipe shapeless = findShapelessMatch(craftGrid);
+        if (shapeless != null) {
+            return shapeless;
+        }
+        int minX = gridWidth;
+        int minY = gridHeight;
+        int maxX = -1;
+        int maxY = -1;
+        for (int index = 0; index < craftGrid.length; index++) {
+            if (craftGrid[index].isEmpty()) {
+                continue;
+            }
+            int x = index % gridWidth;
+            int y = index / gridWidth;
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+
+        if (maxX < minX || maxY < minY) {
+            return null;
+        }
+
+        int width = maxX - minX + 1;
+        int height = maxY - minY + 1;
+        for (CraftingRecipe recipe : RECIPES) {
+            if (recipe.shapeless()) {
+                continue;
+            }
+            if (recipe.width != width || recipe.height != height) {
+                continue;
+            }
+
+            boolean matches = true;
+            for (int y = 0; y < height && matches; y++) {
+                for (int x = 0; x < width; x++) {
+                    byte actual = craftGrid[(minY + y) * gridWidth + (minX + x)].isEmpty()
+                        ? GameConfig.AIR
+                        : craftGrid[(minY + y) * gridWidth + (minX + x)].itemId;
+                    byte expected = recipe.pattern[y * recipe.width + x];
+                    if (actual != expected) {
+                        matches = false;
+                        break;
+                    }
+                }
+            }
+            if (matches) {
+                return recipe;
+            }
+        }
+        return null;
+    }
+
+    private static CraftingRecipe findShapelessMatch(ItemStack[] craftGrid) {
+        byte[] actual = new byte[craftGrid.length];
+        int actualCount = 0;
+        for (ItemStack stack : craftGrid) {
+            if (!stack.isEmpty()) {
+                actual[actualCount++] = stack.itemId;
+            }
+        }
+        if (actualCount == 0) {
+            return null;
+        }
+        for (CraftingRecipe recipe : RECIPES) {
+            if (!recipe.shapeless() || recipe.shapelessIngredients.length != actualCount) {
+                continue;
+            }
+            boolean[] used = new boolean[actualCount];
+            boolean matches = true;
+            for (byte expected : recipe.shapelessIngredients) {
+                boolean found = false;
+                for (int i = 0; i < actualCount; i++) {
+                    if (!used[i] && actual[i] == expected) {
+                        used[i] = true;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return recipe;
+            }
+        }
+        return null;
+    }
+}
+
+final class FurnaceRecipe {
+    final byte input;
+    final byte output;
+    final int outputCount;
+    final double cookSeconds;
+
+    FurnaceRecipe(byte input, byte output, int outputCount, double cookSeconds) {
+        this.input = input;
+        this.output = output;
+        this.outputCount = outputCount;
+        this.cookSeconds = cookSeconds;
+    }
+}
+
+final class FurnaceRecipes {
+    private static final FurnaceRecipe[] RECIPES = {
+        new FurnaceRecipe(GameConfig.IRON_ORE, InventoryItems.IRON_INGOT, 1, 6.0),
+        new FurnaceRecipe(GameConfig.DEEPSLATE_IRON_ORE, InventoryItems.IRON_INGOT, 1, 6.0),
+        new FurnaceRecipe(GameConfig.SAND, GameConfig.GLASS, 1, 5.0),
+        new FurnaceRecipe(GameConfig.COBBLESTONE, GameConfig.STONE, 1, 5.0),
+        new FurnaceRecipe(InventoryItems.RAW_PORK, InventoryItems.COOKED_PORK, 1, 5.0),
+        new FurnaceRecipe(InventoryItems.RAW_BEEF, InventoryItems.COOKED_BEEF, 1, 5.0),
+        new FurnaceRecipe(InventoryItems.RAW_MUTTON, InventoryItems.COOKED_MUTTON, 1, 5.0),
+        new FurnaceRecipe(InventoryItems.POTATO, InventoryItems.BAKED_POTATO, 1, 4.0)
+    };
+
+    private FurnaceRecipes() {
+    }
+
+    static FurnaceRecipe find(byte input) {
+        for (FurnaceRecipe recipe : RECIPES) {
+            if (recipe.input == input) {
+                return recipe;
+            }
+        }
+        return null;
+    }
+
+    static double fuelSeconds(byte item) {
+        switch (item) {
+            case GameConfig.COAL_ORE:
+            case GameConfig.DEEPSLATE_COAL_ORE:
+                return 80.0;
+            case GameConfig.OAK_LOG:
+            case GameConfig.PINE_LOG:
+                return 15.0;
+            case InventoryItems.OAK_PLANKS:
+                return 10.0;
+            case InventoryItems.STICK:
+                return 4.0;
+            default:
+                return 0.0;
+        }
+    }
+}
+
+final class ContainerInventory {
+    final ItemStack[] slots;
+
+    ContainerInventory(int size) {
+        slots = new ItemStack[size];
+        Arrays.setAll(slots, index -> new ItemStack());
+    }
+
+    ItemStack getStack(int index) {
+        return slots[index];
+    }
+}
+
+final class FurnaceBlockEntity {
+    final ItemStack input = new ItemStack();
+    final ItemStack fuel = new ItemStack();
+    final ItemStack output = new ItemStack();
+    double burnRemaining;
+    double burnTotal;
+    double cookProgress;
+    double cookTotal;
+
+    void tick(double deltaTime) {
+        FurnaceRecipe recipe = input.isEmpty() ? null : FurnaceRecipes.find(input.itemId);
+        if (recipe == null || !canOutput(recipe)) {
+            cookProgress = 0.0;
+            cookTotal = 0.0;
+            burnRemaining = Math.max(0.0, burnRemaining - deltaTime);
+            return;
+        }
+
+        if (burnRemaining <= 0.0) {
+            double fuelSeconds = fuel.isEmpty() ? 0.0 : FurnaceRecipes.fuelSeconds(fuel.itemId);
+            if (fuelSeconds <= 0.0) {
+                cookProgress = 0.0;
+                cookTotal = recipe.cookSeconds;
+                return;
+            }
+            fuel.count--;
+            if (fuel.count <= 0) {
+                fuel.clear();
+            }
+            burnRemaining = fuelSeconds;
+            burnTotal = fuelSeconds;
+        }
+
+        burnRemaining = Math.max(0.0, burnRemaining - deltaTime);
+        cookTotal = recipe.cookSeconds;
+        cookProgress += deltaTime;
+        if (cookProgress >= recipe.cookSeconds) {
+            input.count--;
+            if (input.count <= 0) {
+                input.clear();
+            }
+            if (output.isEmpty()) {
+                output.set(recipe.output, recipe.outputCount);
+            } else {
+                output.count += recipe.outputCount;
+            }
+            cookProgress = 0.0;
+        }
+    }
+
+    private boolean canOutput(FurnaceRecipe recipe) {
+        if (output.isEmpty()) {
+            return true;
+        }
+        return output.itemId == recipe.output
+            && output.count + recipe.outputCount <= InventoryItems.maxStackSize(recipe.output);
+    }
+}
+
+final class PlayerInventory {
+    static final int STORAGE_SIZE = 36;
+    static final int HOTBAR_SIZE = 9;
+    static final int ARMOR_SIZE = 4;
+    static final int CRAFT_SIZE = 4;
+    static final int WORKBENCH_CRAFT_SIZE = 9;
+
+    private final ItemStack[] storage = createSlots(STORAGE_SIZE);
+    private final ItemStack[] hotbar = createSlots(HOTBAR_SIZE);
+    private final ItemStack[] armor = createSlots(ARMOR_SIZE);
+    private final ItemStack[] craftGrid = createSlots(CRAFT_SIZE);
+    private final ItemStack[] workbenchGrid = createSlots(WORKBENCH_CRAFT_SIZE);
+    private final ItemStack offhand = new ItemStack();
+    private final ItemStack cursor = new ItemStack();
+    private final ItemStack craftResult = new ItemStack();
+    private final ItemStack workbenchResult = new ItemStack();
+    private boolean craftDirty = true;
+    private boolean workbenchCraftDirty = true;
+
+    PlayerInventory() {
+    }
+
+    ItemStack getStorageStack(int index) {
+        return storage[index];
+    }
+
+    ItemStack getHotbarStack(int index) {
+        return hotbar[index];
+    }
+
+    ItemStack getArmorStack(int index) {
+        return armor[index];
+    }
+
+    ItemStack getCraftStack(int index) {
+        return craftGrid[index];
+    }
+
+    ItemStack getWorkbenchCraftStack(int index) {
+        return workbenchGrid[index];
+    }
+
+    ItemStack getOffhandStack() {
+        return offhand;
+    }
+
+    int getArmorProtection() {
+        int protection = 0;
+        for (ItemStack stack : armor) {
+            if (stack.isEmpty()) {
+                continue;
+            }
+            switch (stack.itemId) {
+                case InventoryItems.IRON_HELMET:
+                    protection += 2;
+                    break;
+                case InventoryItems.IRON_CHESTPLATE:
+                    protection += 6;
+                    break;
+                case InventoryItems.IRON_LEGGINGS:
+                    protection += 5;
+                    break;
+                case InventoryItems.IRON_BOOTS:
+                    protection += 2;
+                    break;
+                default:
+                    break;
+            }
+        }
+        return protection;
+    }
+
+    ItemStack getCursorStack() {
+        return cursor;
+    }
+
+    ItemStack getCraftResultStack() {
+        refreshCraftResult();
+        return craftResult;
+    }
+
+    ItemStack getWorkbenchCraftResultStack() {
+        refreshWorkbenchCraftResult();
+        return workbenchResult;
+    }
+
+    byte getSelectedItemId(int hotbarSlot) {
+        if (hotbarSlot < 0 || hotbarSlot >= hotbar.length || hotbar[hotbarSlot].isEmpty()) {
+            return GameConfig.AIR;
+        }
+        return hotbar[hotbarSlot].itemId;
+    }
+
+    boolean consumeSelectedItem(int hotbarSlot) {
+        if (hotbarSlot < 0 || hotbarSlot >= hotbar.length) {
+            return false;
+        }
+        ItemStack stack = hotbar[hotbarSlot];
+        if (stack.isEmpty()) {
+            return false;
+        }
+        stack.count--;
+        if (stack.count <= 0) {
+            stack.clear();
+        }
+        return true;
+    }
+
+    void clearCursor() {
+        cursor.clear();
+    }
+
+    void clearAll() {
+        clearSlots(storage);
+        clearSlots(hotbar);
+        clearSlots(armor);
+        clearSlots(craftGrid);
+        clearSlots(workbenchGrid);
+        offhand.clear();
+        cursor.clear();
+        craftResult.clear();
+        workbenchResult.clear();
+        markCraftDirty();
+        markWorkbenchCraftDirty();
+    }
+
+    ItemStack peekSlot(InventorySlotRef ref, boolean creativeMode) {
+        return peekSlot(ref, creativeMode, null, null);
+    }
+
+    ItemStack peekSlot(InventorySlotRef ref, boolean creativeMode, ContainerInventory chest, FurnaceBlockEntity furnace) {
+        if (ref == null) {
+            return null;
+        }
+        switch (ref.group) {
+            case STORAGE:
+                return storage[ref.index];
+            case HOTBAR:
+                return hotbar[ref.index];
+            case ARMOR:
+                return armor[ref.index];
+            case OFFHAND:
+                return offhand;
+            case CRAFT:
+                return craftGrid[ref.index];
+            case CRAFT_RESULT:
+                refreshCraftResult();
+                return craftResult;
+            case CRAFT_3X3:
+                return workbenchGrid[ref.index];
+            case CRAFT_3X3_RESULT:
+                refreshWorkbenchCraftResult();
+                return workbenchResult;
+            case CHEST_CONTAINER:
+                return chest == null ? null : chest.getStack(ref.index);
+            case FURNACE_INPUT:
+                return furnace == null ? null : furnace.input;
+            case FURNACE_FUEL:
+                return furnace == null ? null : furnace.fuel;
+            case FURNACE_OUTPUT:
+                return furnace == null ? null : furnace.output;
+            case CREATIVE:
+                if (!creativeMode || ref.index < 0 || ref.index >= InventoryItems.CREATIVE_ITEMS.length) {
+                    return null;
+                }
+                byte creativeItem = InventoryItems.CREATIVE_ITEMS[ref.index];
+                return new ItemStack(creativeItem, InventoryItems.maxStackSize(creativeItem));
+            default:
+                return null;
+        }
+    }
+
+    boolean isSlotAccepting(InventorySlotRef ref, ItemStack stack) {
+        if (ref == null || stack == null || stack.isEmpty()) {
+            return false;
+        }
+        switch (ref.group) {
+            case STORAGE:
+            case HOTBAR:
+            case CRAFT:
+            case CRAFT_3X3:
+            case CHEST_CONTAINER:
+            case FURNACE_INPUT:
+                return true;
+            case FURNACE_FUEL:
+                return FurnaceRecipes.fuelSeconds(stack.itemId) > 0.0;
+            case ARMOR:
+                return InventoryItems.armorSlotIndex(stack.itemId) == ref.index;
+            case OFFHAND:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    boolean handleClick(InventorySlotRef ref, boolean creativeMode, boolean rightClick, boolean shiftDown) {
+        return handleClick(ref, creativeMode, rightClick, shiftDown, null, null);
+    }
+
+    boolean handleClick(InventorySlotRef ref, boolean creativeMode, boolean rightClick, boolean shiftDown,
+                        ContainerInventory chest, FurnaceBlockEntity furnace) {
+        refreshCraftResult();
+        refreshWorkbenchCraftResult();
+        if (shiftDown && !rightClick) {
+            return quickMove(ref, creativeMode, chest, furnace);
+        }
+        if (ref == null) {
+            cursor.clear();
+            return true;
+        }
+        if (ref.group == InventorySlotGroup.CREATIVE) {
+            return takeFromCreative(ref, creativeMode);
+        }
+        if (ref.group == InventorySlotGroup.CRAFT_RESULT) {
+            return takeCraftResult(rightClick);
+        }
+        if (ref.group == InventorySlotGroup.CRAFT_3X3_RESULT) {
+            return takeWorkbenchCraftResult(rightClick);
+        }
+        if (ref.group == InventorySlotGroup.FURNACE_OUTPUT && furnace != null) {
+            return rightClick ? handleRightClick(ref, chest, furnace) : handleLeftClick(ref, chest, furnace);
+        }
+        return rightClick ? handleRightClick(ref, chest, furnace) : handleLeftClick(ref, chest, furnace);
+    }
+
+    boolean addItem(byte itemId, int count) {
+        if (itemId == GameConfig.AIR || count <= 0) {
+            return true;
+        }
+
+        int remaining = mergeIntoExisting(hotbar, itemId, count, null);
+        remaining = mergeIntoExisting(storage, itemId, remaining, null);
+        remaining = mergeIntoEmpty(hotbar, itemId, remaining, null);
+        remaining = mergeIntoEmpty(storage, itemId, remaining, null);
+        return remaining == 0;
+    }
+
+    void markCraftDirty() {
+        craftDirty = true;
+    }
+
+    void markWorkbenchCraftDirty() {
+        workbenchCraftDirty = true;
+    }
+
+    void returnTransientCraftingToInventory() {
+        returnSlotsToInventory(craftGrid);
+        returnSlotsToInventory(workbenchGrid);
+        craftResult.clear();
+        workbenchResult.clear();
+        markCraftDirty();
+        markWorkbenchCraftDirty();
+    }
+
+    private boolean takeFromCreative(InventorySlotRef ref, boolean creativeMode) {
+        if (!creativeMode || ref.index < 0 || ref.index >= InventoryItems.CREATIVE_ITEMS.length) {
+            return false;
+        }
+        byte itemId = InventoryItems.CREATIVE_ITEMS[ref.index];
+        int count = InventoryItems.maxStackSize(itemId);
+        cursor.set(itemId, count);
+        return true;
+    }
+
+    private boolean takeCraftResult(boolean rightClick) {
+        refreshCraftResult();
+        if (craftResult.isEmpty()) {
+            return false;
+        }
+
+        int amount = rightClick ? 1 : craftResult.count;
+        if (cursor.isEmpty()) {
+            cursor.set(craftResult.itemId, amount);
+        } else if (cursor.itemId == craftResult.itemId
+            && cursor.count + amount <= InventoryItems.maxStackSize(cursor.itemId)) {
+            cursor.count += amount;
+        } else {
+            return false;
+        }
+
+        consumeCraftIngredients();
+        refreshCraftResult();
+        return true;
+    }
+
+    private boolean takeWorkbenchCraftResult(boolean rightClick) {
+        refreshWorkbenchCraftResult();
+        if (workbenchResult.isEmpty()) {
+            return false;
+        }
+
+        int amount = rightClick ? 1 : workbenchResult.count;
+        if (cursor.isEmpty()) {
+            cursor.set(workbenchResult.itemId, amount);
+        } else if (cursor.itemId == workbenchResult.itemId
+            && cursor.count + amount <= InventoryItems.maxStackSize(cursor.itemId)) {
+            cursor.count += amount;
+        } else {
+            return false;
+        }
+
+        consumeWorkbenchCraftIngredients();
+        refreshWorkbenchCraftResult();
+        return true;
+    }
+
+    private boolean handleLeftClick(InventorySlotRef ref, ContainerInventory chest, FurnaceBlockEntity furnace) {
+        ItemStack slot = mutableSlot(ref, chest, furnace);
+        if (slot == null) {
+            return false;
+        }
+
+        if (cursor.isEmpty()) {
+            if (slot.isEmpty()) {
+                return false;
+            }
+            cursor.copyFrom(slot);
+            slot.clear();
+            onSlotChanged(ref);
+            return true;
+        }
+
+        if (slot.isEmpty()) {
+            if (!isSlotAccepting(ref, cursor)) {
+                return false;
+            }
+            slot.copyFrom(cursor);
+            cursor.clear();
+            onSlotChanged(ref);
+            return true;
+        }
+
+        if (slot.itemId == cursor.itemId && isSlotAccepting(ref, cursor)) {
+            int maxStack = InventoryItems.maxStackSize(slot.itemId);
+            int transfer = Math.min(maxStack - slot.count, cursor.count);
+            if (transfer <= 0) {
+                return false;
+            }
+            slot.count += transfer;
+            cursor.count -= transfer;
+            if (cursor.count <= 0) {
+                cursor.clear();
+            }
+            onSlotChanged(ref);
+            return true;
+        }
+
+        if (!isSlotAccepting(ref, cursor)) {
+            return false;
+        }
+
+        ItemStack temp = slot.copy();
+        slot.copyFrom(cursor);
+        cursor.copyFrom(temp);
+        onSlotChanged(ref);
+        return true;
+    }
+
+    private boolean handleRightClick(InventorySlotRef ref, ContainerInventory chest, FurnaceBlockEntity furnace) {
+        ItemStack slot = mutableSlot(ref, chest, furnace);
+        if (slot == null) {
+            return false;
+        }
+
+        if (cursor.isEmpty()) {
+            if (slot.isEmpty()) {
+                return false;
+            }
+            int amount = (slot.count + 1) / 2;
+            cursor.set(slot.itemId, amount);
+            slot.count -= amount;
+            if (slot.count <= 0) {
+                slot.clear();
+            }
+            onSlotChanged(ref);
+            return true;
+        }
+
+        if (!isSlotAccepting(ref, cursor)) {
+            return false;
+        }
+
+        if (slot.isEmpty()) {
+            slot.set(cursor.itemId, 1);
+            cursor.count--;
+            if (cursor.count <= 0) {
+                cursor.clear();
+            }
+            onSlotChanged(ref);
+            return true;
+        }
+
+        if (slot.itemId == cursor.itemId && slot.count < InventoryItems.maxStackSize(slot.itemId)) {
+            slot.count++;
+            cursor.count--;
+            if (cursor.count <= 0) {
+                cursor.clear();
+            }
+            onSlotChanged(ref);
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean quickMove(InventorySlotRef ref, boolean creativeMode, ContainerInventory chest, FurnaceBlockEntity furnace) {
+        if (ref == null) {
+            return false;
+        }
+        if (ref.group == InventorySlotGroup.CREATIVE) {
+            if (!creativeMode || ref.index < 0 || ref.index >= InventoryItems.CREATIVE_ITEMS.length) {
+                return false;
+            }
+            byte itemId = InventoryItems.CREATIVE_ITEMS[ref.index];
+            return addItem(itemId, InventoryItems.maxStackSize(itemId));
+        }
+        if (ref.group == InventorySlotGroup.CRAFT_RESULT) {
+            boolean changed = false;
+            refreshCraftResult();
+            while (!craftResult.isEmpty() && addItem(craftResult.itemId, craftResult.count)) {
+                consumeCraftIngredients();
+                refreshCraftResult();
+                changed = true;
+            }
+            return changed;
+        }
+        if (ref.group == InventorySlotGroup.CRAFT_3X3_RESULT) {
+            boolean changed = false;
+            refreshWorkbenchCraftResult();
+            while (!workbenchResult.isEmpty() && addItem(workbenchResult.itemId, workbenchResult.count)) {
+                consumeWorkbenchCraftIngredients();
+                refreshWorkbenchCraftResult();
+                changed = true;
+            }
+            return changed;
+        }
+
+        ItemStack slot = mutableSlot(ref, chest, furnace);
+        if (slot == null || slot.isEmpty()) {
+            return false;
+        }
+
+        if (ref.group == InventorySlotGroup.CHEST_CONTAINER
+            || ref.group == InventorySlotGroup.FURNACE_INPUT
+            || ref.group == InventorySlotGroup.FURNACE_FUEL
+            || ref.group == InventorySlotGroup.FURNACE_OUTPUT) {
+            boolean moved = moveStackToArray(slot, hotbar);
+            moved = moveStackToArray(slot, storage) || moved;
+            onSlotChanged(ref);
+            return moved;
+        }
+
+        if (ref.group == InventorySlotGroup.HOTBAR || ref.group == InventorySlotGroup.STORAGE) {
+            if (chest != null) {
+                boolean movedToChest = moveStackToArray(slot, chest.slots);
+                onSlotChanged(ref);
+                return movedToChest;
+            }
+            if (furnace != null) {
+                boolean movedToFurnace = moveStackToFurnace(slot, furnace);
+                onSlotChanged(ref);
+                return movedToFurnace;
+            }
+            if (InventoryItems.isArmor(slot.itemId)) {
+                int armorIndex = InventoryItems.armorSlotIndex(slot.itemId);
+                if (armorIndex >= 0 && armor[armorIndex].isEmpty()) {
+                    armor[armorIndex].copyFrom(slot);
+                    slot.clear();
+                    onSlotChanged(ref);
+                    return true;
+                }
+            }
+            if (InventoryItems.isOffhandPreferred(slot.itemId) && offhand.isEmpty()) {
+                offhand.copyFrom(slot);
+                slot.clear();
+                onSlotChanged(ref);
+                return true;
+            }
+
+            ItemStack[] primaryTarget = ref.group == InventorySlotGroup.HOTBAR ? storage : hotbar;
+            boolean moved = moveStackToArray(slot, primaryTarget);
+            if (!slot.isEmpty()) {
+                moved = moveStackToArray(slot, ref.group == InventorySlotGroup.HOTBAR ? hotbar : storage) || moved;
+            }
+            onSlotChanged(ref);
+            return moved;
+        }
+
+        if (ref.group == InventorySlotGroup.ARMOR || ref.group == InventorySlotGroup.OFFHAND || ref.group == InventorySlotGroup.CRAFT || ref.group == InventorySlotGroup.CRAFT_3X3) {
+            boolean moved = moveStackToArray(slot, hotbar);
+            moved = moveStackToArray(slot, storage) || moved;
+            onSlotChanged(ref);
+            return moved;
+        }
+
+        return false;
+    }
+
+    private boolean moveStackToFurnace(ItemStack source, FurnaceBlockEntity furnace) {
+        if (source.isEmpty()) {
+            return false;
+        }
+        int originalCount = source.count;
+        if (FurnaceRecipes.find(source.itemId) != null) {
+            mergeIntoSingleSlot(source, furnace.input);
+        }
+        if (!source.isEmpty() && FurnaceRecipes.fuelSeconds(source.itemId) > 0.0) {
+            mergeIntoSingleSlot(source, furnace.fuel);
+        }
+        return source.count != originalCount;
+    }
+
+    private void mergeIntoSingleSlot(ItemStack source, ItemStack target) {
+        if (source.isEmpty()) {
+            return;
+        }
+        int maxStack = InventoryItems.maxStackSize(source.itemId);
+        if (target.isEmpty()) {
+            int transfer = Math.min(maxStack, source.count);
+            target.set(source.itemId, transfer);
+            source.count -= transfer;
+        } else if (target.itemId == source.itemId && target.count < maxStack) {
+            int transfer = Math.min(maxStack - target.count, source.count);
+            target.count += transfer;
+            source.count -= transfer;
+        }
+        if (source.count <= 0) {
+            source.clear();
+        }
+    }
+
+    private boolean moveStackToArray(ItemStack source, ItemStack[] targetSlots) {
+        if (source.isEmpty()) {
+            return false;
+        }
+        int originalCount = source.count;
+        source.count = mergeIntoExisting(targetSlots, source.itemId, source.count, source);
+        source.count = mergeIntoEmpty(targetSlots, source.itemId, source.count, source);
+        if (source.count <= 0) {
+            source.clear();
+        }
+        return source.count != originalCount;
+    }
+
+    private void refreshCraftResult() {
+        if (!craftDirty) {
+            return;
+        }
+        craftDirty = false;
+        CraftingRecipe recipe = CraftingRecipes.findMatch(craftGrid);
+        if (recipe == null) {
+            craftResult.clear();
+        } else {
+            craftResult.set(recipe.resultItem, recipe.resultCount);
+        }
+    }
+
+    private void refreshWorkbenchCraftResult() {
+        if (!workbenchCraftDirty) {
+            return;
+        }
+        workbenchCraftDirty = false;
+        CraftingRecipe recipe = CraftingRecipes.findMatch(workbenchGrid, 3, 3);
+        if (recipe == null) {
+            workbenchResult.clear();
+        } else {
+            workbenchResult.set(recipe.resultItem, recipe.resultCount);
+        }
+    }
+
+    private void consumeCraftIngredients() {
+        for (ItemStack stack : craftGrid) {
+            if (stack.isEmpty()) {
+                continue;
+            }
+            stack.count--;
+            if (stack.count <= 0) {
+                stack.clear();
+            }
+        }
+        markCraftDirty();
+    }
+
+    private void consumeWorkbenchCraftIngredients() {
+        for (ItemStack stack : workbenchGrid) {
+            if (stack.isEmpty()) {
+                continue;
+            }
+            stack.count--;
+            if (stack.count <= 0) {
+                stack.clear();
+            }
+        }
+        markWorkbenchCraftDirty();
+    }
+
+    private ItemStack mutableSlot(InventorySlotRef ref, ContainerInventory chest, FurnaceBlockEntity furnace) {
+        switch (ref.group) {
+            case STORAGE:
+                return storage[ref.index];
+            case HOTBAR:
+                return hotbar[ref.index];
+            case ARMOR:
+                return armor[ref.index];
+            case OFFHAND:
+                return offhand;
+            case CRAFT:
+                return craftGrid[ref.index];
+            case CRAFT_3X3:
+                return workbenchGrid[ref.index];
+            case CHEST_CONTAINER:
+                return chest == null ? null : chest.getStack(ref.index);
+            case FURNACE_INPUT:
+                return furnace == null ? null : furnace.input;
+            case FURNACE_FUEL:
+                return furnace == null ? null : furnace.fuel;
+            case FURNACE_OUTPUT:
+                return furnace == null ? null : furnace.output;
+            default:
+                return null;
+        }
+    }
+
+    private void onSlotChanged(InventorySlotRef ref) {
+        if (ref.group == InventorySlotGroup.CRAFT) {
+            markCraftDirty();
+        } else if (ref.group == InventorySlotGroup.CRAFT_3X3) {
+            markWorkbenchCraftDirty();
+        }
+    }
+
+    private void returnSlotsToInventory(ItemStack[] slots) {
+        for (ItemStack stack : slots) {
+            if (stack.isEmpty()) {
+                continue;
+            }
+            moveStackToArray(stack, hotbar);
+            moveStackToArray(stack, storage);
+        }
+    }
+
+    private int mergeIntoExisting(ItemStack[] slots, byte itemId, int remaining, ItemStack excluded) {
+        int maxStack = InventoryItems.maxStackSize(itemId);
+        for (ItemStack slot : slots) {
+            if (remaining <= 0) {
+                return 0;
+            }
+            if (slot == excluded || slot.isEmpty() || slot.itemId != itemId || slot.count >= maxStack) {
+                continue;
+            }
+            int transfer = Math.min(maxStack - slot.count, remaining);
+            slot.count += transfer;
+            remaining -= transfer;
+        }
+        return remaining;
+    }
+
+    private int mergeIntoEmpty(ItemStack[] slots, byte itemId, int remaining, ItemStack excluded) {
+        int maxStack = InventoryItems.maxStackSize(itemId);
+        for (ItemStack slot : slots) {
+            if (remaining <= 0) {
+                return 0;
+            }
+            if (slot == excluded || !slot.isEmpty()) {
+                continue;
+            }
+            int transfer = Math.min(maxStack, remaining);
+            slot.set(itemId, transfer);
+            remaining -= transfer;
+        }
+        return remaining;
+    }
+
+    private ItemStack[] createSlots(int size) {
+        ItemStack[] slots = new ItemStack[size];
+        Arrays.setAll(slots, index -> new ItemStack());
+        return slots;
+    }
+
+    private void clearSlots(ItemStack[] slots) {
+        for (ItemStack slot : slots) {
+            slot.clear();
+        }
+    }
+}

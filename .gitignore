@@ -1,0 +1,24 @@
+# Java build output
+out/
+*.class
+
+# Local game data
+saves/
+options.txt
+
+# Generated runtime assets
+terrain.png
+
+# IDE/editor files
+.idea/
+.vscode/
+*.iml
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Logs/temp
+*.log
+tmp/
+temp/
