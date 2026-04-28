@@ -2,7 +2,24 @@
 
 Tiny Minecraft OpenGL - маленький Java/LWJGL прототип в стиле Minecraft. Это не полноценный клон Minecraft, а экспериментальная voxel-песочница для изучения генерации чанков, OpenGL-рендеринга, выживания, инвентаря, крафта, контейнеров, пещер, деревень, мобов и сохранения мира.
 
-Проект специально сделан простым: большая часть игры находится в обычных Java-файлах в корне репозитория.
+![Деревня, фермы и мобы в TinyMinecraft](docs/screenshots/village-mobs.png)
+
+## Быстрый старт
+
+1. Откройте [страницу релизов](https://github.com/vakisnn-gd/TinyMinecraft/releases).
+2. Скачайте `TinyMinecraft-v0.1-windows.zip`.
+3. Распакуйте архив.
+4. Запустите `run-game.bat`.
+
+Нужна Java 17 или новее.
+
+## Документация
+
+- [FAQ](FAQ.md) - частые вопросы по скачиванию и запуску.
+- [CHANGELOG](CHANGELOG.md) - история версий.
+- [KNOWN_ISSUES](KNOWN_ISSUES.md) - известные проблемы.
+- [ROADMAP](ROADMAP.md) - план разработки.
+- [Wiki](https://github.com/vakisnn-gd/TinyMinecraft/wiki) - русская wiki-страница проекта.
 
 ## Текущее состояние
 
