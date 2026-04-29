@@ -13,6 +13,8 @@ terrain.png
 # IDE/editor files
 .idea/
 .vscode/
+!.vscode/
+!.vscode/settings.json
 *.iml
 
 # OS files

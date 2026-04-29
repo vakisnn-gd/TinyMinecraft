@@ -18,10 +18,10 @@ final class UiRenderer {
         if (creativeMode) {
             screenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
         }
-        float maxScaleByWidth = (framebufferWidth - 32.0f) / (creativeMode ? 430.0f : 420.0f);
-        float maxScaleByHeight = (framebufferHeight - 32.0f) / (creativeMode ? 388.0f : 340.0f);
+        float maxScaleByWidth = (framebufferWidth - 32.0f) / (creativeMode ? 430.0f : 470.0f);
+        float maxScaleByHeight = (framebufferHeight - 32.0f) / (creativeMode ? 388.0f : 380.0f);
         uiScale = Math.max(0.85f, Math.min(uiScale, Math.min(maxScaleByWidth, maxScaleByHeight)));
-        float slotSize = 18.0f * uiScale;
+        float slotSize = 21.0f * uiScale;
         float slotGap = 3.0f * uiScale;
         float gridWidth = slotSize * 9.0f + slotGap * 8.0f;
         float gridHeight = slotSize * 4.0f + slotGap * 3.0f;
@@ -32,10 +32,10 @@ final class UiRenderer {
         float tabGap = 4.0f * uiScale;
         float tabsWidth = tabWidth * GameConfig.CREATIVE_TABS.length + tabGap * (GameConfig.CREATIVE_TABS.length - 1);
 
-        float panelWidth = creativeMode ? Math.max(gridWidth + padding * 2.0f, tabsWidth + padding * 2.0f) : Math.max(gridWidth + padding * 2.0f, 360.0f * uiScale);
+        float panelWidth = creativeMode ? Math.max(gridWidth + padding * 2.0f, tabsWidth + padding * 2.0f) : Math.max(gridWidth + padding * 2.0f, 440.0f * uiScale);
         float panelHeight = creativeMode
             ? titleHeight + 4.0f * (slotSize + slotGap) + 18.0f * uiScale + gridHeight + hotbarGap + slotSize + padding * 2.0f
-            : (screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? 304.0f * uiScale : 340.0f * uiScale);
+            : (screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? 348.0f * uiScale : 370.0f * uiScale);
         float panelX = clamp(framebufferWidth * 0.5f - panelWidth * 0.5f, 8.0f, Math.max(8.0f, framebufferWidth - panelWidth - 8.0f));
         float panelY = clamp(framebufferHeight * 0.5f - panelHeight * 0.5f, 8.0f, Math.max(8.0f, framebufferHeight - panelHeight - 8.0f));
 
@@ -78,7 +78,7 @@ final class UiRenderer {
             offhandX = armorX;
             offhandAbsoluteY = armorAbsoluteY + 4.0f * (slotSize + slotGap) + 10.0f * uiScale;
             storageX = panelX + (panelWidth - gridWidth) * 0.5f;
-            storageAbsoluteY = screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? panelY + 142.0f * uiScale : panelY + 174.0f * uiScale;
+            storageAbsoluteY = screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? panelY + 168.0f * uiScale : panelY + 190.0f * uiScale;
             hotbarX = storageX;
             hotbarAbsoluteY = storageAbsoluteY + gridHeight + hotbarGap;
         }

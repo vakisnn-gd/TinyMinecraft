@@ -146,6 +146,7 @@ public class TinyMinecraft {
     private int activeMenuTextField = -1;
     private int createWorldGameMode;
     private int createWorldDifficulty = 2;
+    private int currentWorldDifficulty = 2;
     private int renderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
     private int fovDegrees = (int) GameConfig.FOV_DEGREES;
     private boolean optionsOpenedFromPause;
@@ -1591,12 +1592,12 @@ public class TinyMinecraft {
             player.fireDamageTimer = 0.0;
         }
 
-        if (isPlayerTouchingBlock(GameConfig.LAVA)) {
+        if (world.intersectsFluid(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.LAVA)) {
             player.fireTimer = Math.max(player.fireTimer, 5.0);
             player.lavaDamageTimer += deltaTime;
             while (player.lavaDamageTimer >= GameConfig.LAVA_DAMAGE_INTERVAL && player.health > 0) {
                 player.lavaDamageTimer -= GameConfig.LAVA_DAMAGE_INTERVAL;
-                applyPlayerDamage(GameConfig.LAVA_DAMAGE);
+                applyPlayerDamage(lavaDamageAmount());
             }
         } else {
             player.lavaDamageTimer = 0.0;
@@ -1618,6 +1619,10 @@ public class TinyMinecraft {
         int armor = Math.max(0, Math.min(20, player.armorProtection));
         int protectedDamage = (int) Math.ceil(amount * (1.0 - armor * 0.04));
         player.health = Math.max(0, player.health - Math.max(1, protectedDamage));
+    }
+
+    private int lavaDamageAmount() {
+        return currentWorldDifficulty >= 3 ? 2 : GameConfig.LAVA_DAMAGE;
     }
 
     private boolean useHeldFood(byte heldItem) {
@@ -1685,8 +1690,9 @@ public class TinyMinecraft {
         int blockZ = hoveredBlock.z;
         if (world.breakBlock(hoveredBlock)) {
             player.handSwingTimer = 0.18;
-            if (InventoryItems.isCollectible(targetBlock)) {
-                world.spawnDroppedItem(targetBlock, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+            byte droppedItem = droppedItemForBrokenBlock(targetBlock);
+            if (droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock)) {
+                world.spawnDroppedItem(droppedItem, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
             }
             audio.playBreak(targetBlock, blockX + 0.5, blockY + 0.5, blockZ + 0.5);
             renderer.rebuildChunkSectionAroundBlock(blockX, blockY, blockZ);
@@ -1867,6 +1873,56 @@ public class TinyMinecraft {
         return true;
     }
 
+    private byte droppedItemForBrokenBlock(byte block) {
+        if (!InventoryItems.isCollectible(block)
+            || block == GameConfig.OAK_LEAVES
+            || block == GameConfig.PINE_LEAVES
+            || GameConfig.isLiquidBlock(block)) {
+            return GameConfig.AIR;
+        }
+        return block;
+    }
+
+    private boolean canHarvestBlock(byte block) {
+        if (block == GameConfig.OBSIDIAN) {
+            return pickaxeTier(inventory.getSelectedItemId(selectedSlot)) >= 4;
+        }
+        if (block == GameConfig.DIAMOND_ORE || block == GameConfig.DEEPSLATE_DIAMOND_ORE) {
+            return pickaxeTier(inventory.getSelectedItemId(selectedSlot)) >= 3;
+        }
+        if (block == GameConfig.IRON_ORE || block == GameConfig.DEEPSLATE_IRON_ORE) {
+            return pickaxeTier(inventory.getSelectedItemId(selectedSlot)) >= 2;
+        }
+        if (isStoneHarvestBlock(block)) {
+            return pickaxeTier(inventory.getSelectedItemId(selectedSlot)) >= 1;
+        }
+        return true;
+    }
+
+    private boolean isStoneHarvestBlock(byte block) {
+        return block == GameConfig.COBBLESTONE
+            || block == GameConfig.STONE
+            || block == GameConfig.DEEPSLATE
+            || block == GameConfig.COAL_ORE
+            || block == GameConfig.DEEPSLATE_COAL_ORE;
+    }
+
+    private int pickaxeTier(byte item) {
+        switch (item) {
+            case InventoryItems.NETHERITE_PICKAXE:
+            case InventoryItems.DIAMOND_PICKAXE:
+                return 4;
+            case InventoryItems.IRON_PICKAXE:
+                return 3;
+            case InventoryItems.STONE_PICKAXE:
+                return 2;
+            case InventoryItems.WOODEN_PICKAXE:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+
     private boolean isBreakingSameBlock(RayHit hit) {
         return hit != null
             && hit.x == breakingBlockX
@@ -1971,6 +2027,9 @@ public class TinyMinecraft {
         }
         if ((heldItem == InventoryItems.IRON_HOE || heldItem == InventoryItems.STONE_HOE || heldItem == InventoryItems.WOODEN_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES)) {
             return heldItem == InventoryItems.IRON_HOE ? 3.4 : (heldItem == InventoryItems.STONE_HOE ? 2.6 : 1.6);
+        }
+        if (stoneLike) {
+            return 0.22;
         }
         return 1.0;
     }
@@ -2235,6 +2294,8 @@ public class TinyMinecraft {
             fovDegrees = clamp(fovDegrees + direction * 2, 55, 100);
         } else if (mainMenuSelection == 2) {
             Settings.inventoryUiSize = clamp(Settings.inventoryUiSize + direction, 1, 4);
+        } else if (mainMenuSelection == 3) {
+            Settings.toggleLanguage();
         }
         Settings.save(renderDistanceChunks, fovDegrees);
     }
@@ -2491,15 +2552,18 @@ public class TinyMinecraft {
 
         if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
             if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
-                mainMenuSelection = (mainMenuSelection + 3) % 4;
+                mainMenuSelection = (mainMenuSelection + 4) % 5;
             } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
-                mainMenuSelection = (mainMenuSelection + 1) % 4;
+                mainMenuSelection = (mainMenuSelection + 1) % 5;
             } else if (key == GLFW_KEY_A || key == GLFW_KEY_LEFT) {
                 nudgeOptionsSelection(-1);
             } else if (key == GLFW_KEY_D || key == GLFW_KEY_RIGHT) {
                 nudgeOptionsSelection(1);
             } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
                 if (mainMenuSelection == 3) {
+                    Settings.toggleLanguage();
+                    Settings.save(renderDistanceChunks, fovDegrees);
+                } else if (mainMenuSelection == 4) {
                     closeOptionsMenu();
                 }
             }
@@ -2655,6 +2719,11 @@ public class TinyMinecraft {
 
         if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
             if (mainMenuSelection == 3) {
+                Settings.toggleLanguage();
+                Settings.save(renderDistanceChunks, fovDegrees);
+                return;
+            }
+            if (mainMenuSelection == 4) {
                 closeOptionsMenu();
             }
             return;
@@ -2685,6 +2754,7 @@ public class TinyMinecraft {
         if (worldInfo == null) {
             return;
         }
+        currentWorldDifficulty = worldInfo.difficulty;
 
         if (worldLoaded && worldInfo.name.equals(loadedWorldName)) {
             return;
@@ -2983,6 +3053,7 @@ public class TinyMinecraft {
         Path worldDirectory = Path.of(GameConfig.SAVE_ROOT_DIRECTORY, worldName);
         try {
             writeWorldMetadata(worldDirectory, seed, gameMode, difficulty);
+            currentWorldDifficulty = difficulty;
         } catch (IOException ignored) {
             return;
         }

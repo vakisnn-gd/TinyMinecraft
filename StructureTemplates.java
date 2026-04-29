@@ -105,8 +105,8 @@ final class StructureTemplates {
         set(target, ox, oy, oz, 1, 1, depth - 2, rot, GameConfig.CRAFTING_TABLE);
         set(target, ox, oy, oz, 1, 2, depth - 2, rot, GameConfig.TORCH);
         int bedFacing = (1 + rot) & 3;
-        int bedX = Math.max(1, width - 4);
-        int bedZ = depth > 6 ? 2 : 1;
+        int bedX = 1;
+        int bedZ = Math.max(1, depth - 4);
         set(target, ox, oy, oz, bedX, 1, bedZ, rot, Blocks.bedState(false, bedFacing));
         set(target, ox, oy, oz, bedX + 1, 1, bedZ, rot, Blocks.bedState(true, bedFacing));
         for (int x = -1; x <= width; x++) {

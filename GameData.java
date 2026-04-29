@@ -117,12 +117,12 @@ final class GameConfig {
     static final double MAX_COLLISION_STEP = 0.45;
     static final double FOV_DEGREES = 70.0;
     static final double SPRINT_FOV_BOOST = 4.0;
-    static final double DAY_LENGTH_SECONDS = 240.0;
+    static final double DAY_LENGTH_SECONDS = 360.0;
     static final int RENDER_CHUNK_UNLOAD_PADDING = 2;
     static final int STAR_COUNT = 160;
     static final double STAR_RADIUS = MAX_RENDER_DISTANCE + 120.0;
     static final double STAR_BASE_SIZE = 0.55;
-    static final double CLOUD_LAYER_BASE_HEIGHT = WORLD_MAX_Y + 30.0;
+    static final double CLOUD_LAYER_BASE_HEIGHT = 250.0;
     static final double CLOUD_CELL_SIZE = 34.0;
     static final int CLOUD_RENDER_RADIUS = 6;
     static final double CLOUD_DRIFT_SPEED = 0.26;
@@ -145,7 +145,7 @@ final class GameConfig {
     static final double ZOMBIE_AGGRO_Y_LIMIT = 6.0;
     static final double ZOMBIE_RENDER_DISTANCE = 56.0;
     static final double ZOMBIE_SEPARATION_DISTANCE = 0.82;
-    static final int ZOMBIE_ATTACK_DAMAGE = 2;
+    static final int ZOMBIE_ATTACK_DAMAGE = 1;
     static final int ZOMBIE_NEAR_AI_TICKS = 1;
     static final int ZOMBIE_MID_AI_TICKS = 5;
     static final int ZOMBIE_FAR_AI_TICKS = 20;
@@ -155,9 +155,9 @@ final class GameConfig {
     static final double AIR_UNIT_INTERVAL = 0.5;
     static final double AIR_RECOVERY_INTERVAL = 0.2;
     static final double DROWNING_DAMAGE_INTERVAL = 1.0;
-    static final int DROWNING_DAMAGE = 2;
+    static final int DROWNING_DAMAGE = 1;
     static final double LAVA_DAMAGE_INTERVAL = 0.55;
-    static final int LAVA_DAMAGE = 4;
+    static final int LAVA_DAMAGE = 1;
     static final double FIRE_DAMAGE_INTERVAL = 1.0;
     static final int FIRE_DAMAGE = 1;
     // Вода может растекаться по горизонтали до 7 блоков от источника.
@@ -202,15 +202,15 @@ final class GameConfig {
     static final int INVENTORY_SCREEN_CHEST = 2;
     static final int INVENTORY_SCREEN_FURNACE = 3;
 
-    static final String[] PAUSE_OPTIONS = {"Back to Game", "Options...", "Save and Quit to Title"};
-    static final String[] DEATH_OPTIONS = {"Respawn", "Exit to Menu"};
-    static final String[] WORLD_MENU_ACTIONS = {"Singleplayer", "Options", "Quit"};
-    static final String[] SINGLEPLAYER_ACTIONS = {"Play", "Create New", "Edit", "Delete", "Back"};
-    static final String[] CREATE_WORLD_ACTIONS = {"Create New World", "Cancel"};
-    static final String[] RENAME_WORLD_ACTIONS = {"Rename", "Cancel"};
-    static final String[] CREATIVE_TABS = {"Blocks", "Nature", "Tools", "Fluids"};
-    static final String[] GAME_MODE_OPTIONS = {"Survival", "Creative", "Spectator"};
-    static final String[] DIFFICULTY_OPTIONS = {"Peaceful", "Easy", "Normal", "Hard"};
+    static final String[] PAUSE_OPTIONS = {"Вернуться в игру", "Настройки...", "Сохранить и выйти в меню"};
+    static final String[] DEATH_OPTIONS = {"Возродиться", "Выйти в меню"};
+    static final String[] WORLD_MENU_ACTIONS = {"Одиночная игра", "Настройки", "Выйти"};
+    static final String[] SINGLEPLAYER_ACTIONS = {"Играть", "Создать", "Переимен.", "Удалить", "Назад"};
+    static final String[] CREATE_WORLD_ACTIONS = {"Создать мир", "Отмена"};
+    static final String[] RENAME_WORLD_ACTIONS = {"Переименовать", "Отмена"};
+    static final String[] CREATIVE_TABS = {"Блоки", "Природа", "Инструменты", "Жидкости"};
+    static final String[] GAME_MODE_OPTIONS = {"Выживание", "Творческий", "Наблюдатель"};
+    static final String[] DIFFICULTY_OPTIONS = {"Мирная", "Легкая", "Обычная", "Сложная"};
     public static final double REACH_DISTANCE = MAX_REACH;
 
     private GameConfig() {
@@ -352,6 +352,7 @@ final class Settings {
     static int inventoryUiSize = 2;
     static int savedRenderDistance = GameConfig.CHUNK_RENDER_DISTANCE;
     static int savedFovDegrees = (int) GameConfig.FOV_DEGREES;
+    static String language = "ru";
 
     private Settings() {
     }
@@ -374,6 +375,9 @@ final class Settings {
                     savedRenderDistance = clamp(Integer.parseInt(trimmed.substring(15)), GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
                 } else if (trimmed.startsWith("fov=")) {
                     savedFovDegrees = clamp(Integer.parseInt(trimmed.substring(4)), 55, 100);
+                } else if (trimmed.startsWith("language=")) {
+                    String value = trimmed.substring(9).trim().toLowerCase(java.util.Locale.ROOT);
+                    language = "en".equals(value) ? "en" : "ru";
                 }
             }
         } catch (RuntimeException | java.io.IOException ignored) {
@@ -389,7 +393,8 @@ final class Settings {
         inventoryUiSize = clampInventoryUiSize(inventoryUiSize);
         String text = "renderDistance=" + savedRenderDistance + System.lineSeparator()
             + "fov=" + savedFovDegrees + System.lineSeparator()
-            + "inventoryUiSize=" + inventoryUiSize + System.lineSeparator();
+            + "inventoryUiSize=" + inventoryUiSize + System.lineSeparator()
+            + "language=" + language + System.lineSeparator();
         try {
             java.nio.file.Files.writeString(java.nio.file.Path.of("options.txt"), text, java.nio.charset.StandardCharsets.UTF_8);
         } catch (java.io.IOException ignored) {
@@ -398,6 +403,14 @@ final class Settings {
 
     private static int clampInventoryUiSize(int value) {
         return clamp(value, 1, 4);
+    }
+
+    static boolean isRussian() {
+        return !"en".equals(language);
+    }
+
+    static void toggleLanguage() {
+        language = isRussian() ? "en" : "ru";
     }
 
     private static int clamp(int value, int min, int max) {

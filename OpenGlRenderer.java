@@ -102,10 +102,10 @@ import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 final class OpenGlRenderer {
     private static final int FLOATS_PER_VERTEX = 7;
     private static final int BYTES_PER_VERTEX = FLOATS_PER_VERTEX * Float.BYTES;
-    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 1;
-    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 6;
-    private static final long MIN_MESH_BUILD_BUDGET_NS = 2_000_000L;
-    private static final long MAX_MESH_BUILD_BUDGET_NS = 8_000_000L;
+    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 2;
+    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 10;
+    private static final long MIN_MESH_BUILD_BUDGET_NS = 3_000_000L;
+    private static final long MAX_MESH_BUILD_BUDGET_NS = 12_000_000L;
     private static final double LIQUID_SURFACE_Z_OFFSET = 0.01;
     private static final double CAMERA_NEAR_PLANE = 0.08;
     private static final double CAMERA_FAR_PADDING = 64.0;
@@ -263,8 +263,12 @@ final class OpenGlRenderer {
         return framebufferHeight * 0.5f + 90.0f * uiScale;
     }
 
+    private float optionsLanguageButtonY(float uiScale) {
+        return framebufferHeight * 0.5f + 150.0f * uiScale;
+    }
+
     private float optionsBackButtonY(float uiScale) {
-        return framebufferHeight * 0.5f + 168.0f * uiScale;
+        return framebufferHeight * 0.5f + 214.0f * uiScale;
     }
 
     int getDeathOptionAt(double cursorX, double cursorY) {
@@ -277,8 +281,12 @@ final class OpenGlRenderer {
             float actionWidth = 280.0f * uiScale;
             float actionHeight = 46.0f * uiScale;
             float x = framebufferWidth * 0.5f - actionWidth * 0.5f;
+            float languageY = optionsLanguageButtonY(uiScale);
+            if (cursorX >= x && cursorX <= x + actionWidth && cursorY >= languageY && cursorY <= languageY + actionHeight) {
+                return 3;
+            }
             float y = optionsBackButtonY(uiScale);
-            return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 3 : -1;
+            return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 4 : -1;
         }
         String[] actions = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? GameConfig.SINGLEPLAYER_ACTIONS
             : (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD ? GameConfig.CREATE_WORLD_ACTIONS
@@ -822,13 +830,7 @@ final class OpenGlRenderer {
             return false;
         }
 
-        double startX = chunkX * GameConfig.CHUNK_SIZE;
-        double startY = GameConfig.sectionYForIndex(chunkY);
-        double startZ = chunkZ * GameConfig.CHUNK_SIZE;
-        double endX = startX + GameConfig.CHUNK_SIZE;
-        double endY = startY + GameConfig.CHUNK_SIZE;
-        double endZ = startZ + GameConfig.CHUNK_SIZE;
-        return isAabbInsideCameraFrustum(startX, startY, startZ, endX, endY, endZ);
+        return true;
     }
 
     private boolean isAabbInsideCameraFrustum(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
@@ -1555,13 +1557,13 @@ final class OpenGlRenderer {
             return MAX_CHUNK_UPLOADS_PER_FRAME;
         }
         if (debugFps >= 48.0) {
-            return 5;
+            return 8;
         }
         if (debugFps >= 36.0) {
-            return 3;
+            return 5;
         }
         if (debugFps >= 26.0) {
-            return 2;
+            return 3;
         }
         return MIN_CHUNK_UPLOADS_PER_FRAME;
     }
@@ -1571,10 +1573,10 @@ final class OpenGlRenderer {
             return MAX_MESH_BUILD_BUDGET_NS;
         }
         if (debugFps >= 42.0) {
-            return 6_000_000L;
+            return 9_000_000L;
         }
         if (debugFps >= 30.0) {
-            return 4_000_000L;
+            return 6_000_000L;
         }
         return MIN_MESH_BUILD_BUDGET_NS;
     }
@@ -2742,24 +2744,30 @@ final class OpenGlRenderer {
 
     private void renderOptionsMenu(int mainMenuSelection, int renderDistanceChunks, int fovDegrees) {
         float uiScale = Math.max(1.0f, getUiScale());
-        drawCenteredShadowText(Math.max(72.0f * uiScale, framebufferHeight * 0.22f), uiScale * 1.2f, "Options", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(Math.max(72.0f * uiScale, framebufferHeight * 0.22f), uiScale * 1.2f, Settings.isRussian() ? "Настройки" : "Options", 0.96f, 0.96f, 0.96f);
 
-        drawSettingsSlider(optionsRenderDistanceSliderY(uiScale), uiScale, "Render Distance", renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, mainMenuSelection == 0);
-        drawSettingsSlider(optionsFovSliderY(uiScale), uiScale, "FOV", fovDegrees, 55, 100, mainMenuSelection == 1);
-        drawSettingsSlider(optionsInventoryUiSliderY(uiScale), uiScale, "Inventory UI Size", Settings.inventoryUiSize, 1, 4, mainMenuSelection == 2);
+        drawSettingsSlider(optionsRenderDistanceSliderY(uiScale), uiScale, Settings.isRussian() ? "Дальность прорисовки" : "Render Distance", renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, mainMenuSelection == 0);
+        drawSettingsSlider(optionsFovSliderY(uiScale), uiScale, Settings.isRussian() ? "Поле зрения" : "FOV", fovDegrees, 55, 100, mainMenuSelection == 1);
+        drawSettingsSlider(optionsInventoryUiSliderY(uiScale), uiScale, Settings.isRussian() ? "Размер инвентаря" : "Inventory UI Size", Settings.inventoryUiSize, 1, 4, mainMenuSelection == 2);
 
         float actionWidth = 280.0f * uiScale;
         float actionHeight = 46.0f * uiScale;
         float actionsX = framebufferWidth * 0.5f - actionWidth * 0.5f;
+        float languageY = optionsLanguageButtonY(uiScale);
+        drawMenuButton(actionsX, languageY, actionWidth, actionHeight,
+            (Settings.isRussian() ? "Язык: Русский" : "Language: English"),
+            mainMenuSelection == 3, true, uiScale * 0.80f);
+
         float boxY = optionsBackButtonY(uiScale);
-        boolean selected = mainMenuSelection == 3;
+        boolean selected = mainMenuSelection == 4;
         drawRect(actionsX, boxY, actionWidth, actionHeight,
             selected ? 0.86f : 0.58f,
             selected ? 0.82f : 0.58f,
             selected ? 0.58f : 0.58f,
             0.98f);
         drawOutline(actionsX, boxY, actionWidth, actionHeight, uiScale, 0.0f, 0.0f, 0.0f, 1.0f);
-        drawText(actionsX + actionWidth * 0.5f - measureTextWidth("Back", uiScale * 0.9f) * 0.5f, boxY + 29.0f * uiScale, uiScale * 0.9f, "Back", 0.10f, 0.10f, 0.12f);
+        String backLabel = Settings.isRussian() ? "Назад" : "Back";
+        drawText(actionsX + actionWidth * 0.5f - measureTextWidth(backLabel, uiScale * 0.9f) * 0.5f, boxY + 29.0f * uiScale, uiScale * 0.9f, backLabel, 0.10f, 0.10f, 0.12f);
     }
 
     private void renderCreateWorldMenu(int mainMenuSelection, String worldName, String seedText, int gameMode, int difficulty, int activeTextField) {
@@ -2928,9 +2936,9 @@ final class OpenGlRenderer {
             renderInventoryPlayerPreview(
                 player,
                 inventory,
-                layout.panelX + 74.0f * uiScale,
-                layout.panelY + 74.0f * uiScale,
-                layout.slotSize * 4.7f
+                layout.armorX + layout.slotSize + 34.0f * uiScale,
+                layout.armorY,
+                layout.slotSize * 4.25f
             );
         } else if (creativeMode) {
             renderCreativeTabs(layout, creativeTab, mouseX, mouseY);
@@ -3882,7 +3890,7 @@ final class OpenGlRenderer {
 
     private float getInventoryUiScale() {
         float desired = Math.max(1.0f, framebufferHeight / 720.0f * 1.18f * Settings.inventoryUiScale());
-        float maxByWidth = Math.max(0.85f, (framebufferWidth - 32.0f) / 430.0f);
+        float maxByWidth = Math.max(0.85f, (framebufferWidth - 32.0f) / 470.0f);
         float maxByHeight = Math.max(0.85f, (framebufferHeight - 32.0f) / 388.0f);
         return Math.max(0.85f, Math.min(desired, Math.min(maxByWidth, maxByHeight)));
     }

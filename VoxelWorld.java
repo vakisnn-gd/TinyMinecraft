@@ -475,7 +475,7 @@ final class VoxelWorld implements StructureTemplates.Target {
                 return false;
             }
             player.x = savedX;
-            player.y = Math.max(GameConfig.WORLD_MIN_Y + 1.0, Math.min(GameConfig.WORLD_MAX_Y - 1.0, savedY));
+            player.y = savedY;
             player.z = savedZ;
             player.yaw = savedYaw;
             player.pitch = savedPitch;
@@ -864,12 +864,55 @@ final class VoxelWorld implements StructureTemplates.Target {
             }
             setBlockState(hit.x, hit.y, hit.z, GameConfig.AIR, -1);
         }
+        if (targetBlock == GameConfig.OAK_LOG || targetBlock == GameConfig.PINE_LOG) {
+            decayUnsupportedLeavesAround(hit.x, hit.y, hit.z);
+        }
         updatePlantSupportAt(hit.x, hit.y + 1, hit.z);
         updateDoorSupportAt(hit.x, hit.y + 1, hit.z);
         refreshDynamicCellsAround(hit.x, hit.y, hit.z);
         markDirtyColumn(hit.x, hit.z);
         refreshSurfaceHeight(hit.x, hit.z);
         return true;
+    }
+
+    private void decayUnsupportedLeavesAround(int x, int y, int z) {
+        int radius = 6;
+        for (int leafY = y - radius; leafY <= y + radius; leafY++) {
+            for (int leafZ = z - radius; leafZ <= z + radius; leafZ++) {
+                for (int leafX = x - radius; leafX <= x + radius; leafX++) {
+                    byte block = getBlock(leafX, leafY, leafZ);
+                    if (!isLeafBlock(block) || hasNearbyLog(leafX, leafY, leafZ, 4)) {
+                        continue;
+                    }
+                    setBlockState(leafX, leafY, leafZ, GameConfig.AIR, -1);
+                    updatePlantSupportAt(leafX, leafY + 1, leafZ);
+                    refreshDynamicCellsAround(leafX, leafY, leafZ);
+                    markDirtyColumn(leafX, leafZ);
+                    refreshSurfaceHeight(leafX, leafZ);
+                }
+            }
+        }
+    }
+
+    private boolean hasNearbyLog(int x, int y, int z, int radius) {
+        for (int logY = y - radius; logY <= y + radius; logY++) {
+            for (int logZ = z - radius; logZ <= z + radius; logZ++) {
+                for (int logX = x - radius; logX <= x + radius; logX++) {
+                    if (isLogBlock(getBlock(logX, logY, logZ))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isLeafBlock(byte block) {
+        return block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES;
+    }
+
+    private boolean isLogBlock(byte block) {
+        return block == GameConfig.OAK_LOG || block == GameConfig.PINE_LOG;
     }
 
     boolean interactBlock(RayHit hit, PlayerState player, boolean shiftDown) {
@@ -2173,6 +2216,7 @@ final class VoxelWorld implements StructureTemplates.Target {
                 fallingBlock.verticalVelocity - GameConfig.GRAVITY * deltaTime,
                 -GameConfig.TERMINAL_VELOCITY
             );
+            double previousY = fallingBlock.y;
             fallingBlock.y += fallingBlock.verticalVelocity * deltaTime;
 
             int blockX = (int) Math.floor(fallingBlock.x);
@@ -2181,12 +2225,23 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
 
-            int landingY = findFallingBlockLandingY(blockX, (int) Math.floor(fallingBlock.y), blockZ);
+            int landingY = findFallingBlockLandingY(blockX, (int) Math.floor(previousY), (int) Math.floor(fallingBlock.y), blockZ);
             if (fallingBlock.y <= landingY + COLLISION_EPSILON || landingY >= GameConfig.WORLD_MAX_Y) {
                 bakeFallingBlock(fallingBlock, blockX, landingY, blockZ);
                 fallingBlocks.remove(i);
             }
         }
+    }
+
+    private int findFallingBlockLandingY(int x, int previousY, int currentY, int z) {
+        int startY = clamp(Math.max(previousY, currentY), GameConfig.WORLD_MIN_Y + 1, GameConfig.WORLD_MAX_Y);
+        int endY = clamp(Math.min(previousY, currentY), GameConfig.WORLD_MIN_Y, GameConfig.WORLD_MAX_Y - 1);
+        for (int y = startY - 1; y >= endY; y--) {
+            if (!isReplaceableForFallingBlock(getBlock(x, y, z))) {
+                return Math.min(y + 1, GameConfig.WORLD_MAX_Y);
+            }
+        }
+        return findFallingBlockLandingY(x, currentY, z);
     }
 
     private int findFallingBlockLandingY(int x, int currentY, int z) {
@@ -3556,8 +3611,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         int renderRadius = player != null && player.spectatorMode
             ? Math.max(renderDistanceChunks, GameConfig.SPECTATOR_CHUNK_RENDER_DISTANCE)
             : renderDistanceChunks;
-        int warmRadius = Math.min(renderRadius, 2 + streamingWarmupFrames / 36);
-        return Math.max(warmRadius + GameConfig.RENDER_CHUNK_UNLOAD_PADDING, GameConfig.ACTIVE_SIMULATION_CHUNK_DISTANCE + 2);
+        return Math.max(renderRadius + GameConfig.RENDER_CHUNK_UNLOAD_PADDING, GameConfig.ACTIVE_SIMULATION_CHUNK_DISTANCE + 2);
     }
 
     private void markDirtyColumn(int x, int z) {
