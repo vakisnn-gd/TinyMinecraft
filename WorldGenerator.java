@@ -285,6 +285,7 @@ final class WorldGenerator {
 
     private void placeVillagePlan(GeneratedChunkColumn column, VillagePlan plan) {
         levelVillageArea(column, plan.centerX - 5, plan.centerZ - 5, 11, 11, plan.baseY, 6);
+        levelVillageArea(column, plan.centerX - 34, plan.centerZ - 28, 70, 60, plan.baseY, 7);
         clearVillageCanopy(column, plan.centerX, plan.centerZ, plan.baseY, 42);
         StructureTemplates.place(column, "village_plaza", plan.centerX - 3, plan.baseY, plan.centerZ - 3, 0);
         placeVillagePath(column, plan.centerX - 30, plan.centerZ, plan.centerX + 30, plan.centerZ, plan.baseY);

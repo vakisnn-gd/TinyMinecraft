@@ -32,7 +32,8 @@ final class UiRenderer {
         float tabGap = 4.0f * uiScale;
         float tabsWidth = tabWidth * GameConfig.CREATIVE_TABS.length + tabGap * (GameConfig.CREATIVE_TABS.length - 1);
 
-        float panelWidth = creativeMode ? Math.max(gridWidth + padding * 2.0f, tabsWidth + padding * 2.0f) : Math.max(gridWidth + padding * 2.0f, 440.0f * uiScale);
+        float creativeTrashWidth = creativeMode ? slotSize + slotGap + 10.0f * uiScale : 0.0f;
+        float panelWidth = creativeMode ? Math.max(gridWidth + padding * 2.0f + creativeTrashWidth, tabsWidth + padding * 2.0f) : Math.max(gridWidth + padding * 2.0f, 440.0f * uiScale);
         float panelHeight = creativeMode
             ? titleHeight + 4.0f * (slotSize + slotGap) + 18.0f * uiScale + gridHeight + hotbarGap + slotSize + padding * 2.0f
             : (screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? 348.0f * uiScale : 370.0f * uiScale);
@@ -55,8 +56,8 @@ final class UiRenderer {
         float creativeAbsoluteY = panelY + titleHeight + slotSize + 12.0f * uiScale;
 
         if (creativeMode) {
-            creativeX = panelX + (panelWidth - gridWidth) * 0.5f;
-            storageX = panelX + (panelWidth - gridWidth) * 0.5f;
+            creativeX = panelX + padding + creativeTrashWidth;
+            storageX = creativeX;
             storageAbsoluteY = creativeAbsoluteY + 4.0f * (slotSize + slotGap) + 20.0f * uiScale;
             hotbarX = storageX;
             hotbarAbsoluteY = storageAbsoluteY + gridHeight + hotbarGap;
@@ -85,6 +86,10 @@ final class UiRenderer {
 
         ArrayList<SlotBox> slots = new ArrayList<>();
         if (creativeMode) {
+            addSlotBox(slots, InventorySlotGroup.TRASH, 0,
+                panelX + padding,
+                creativeAbsoluteY,
+                slotSize);
             int[] tabIndices = InventoryItems.CREATIVE_TAB_INDICES[Math.max(0, Math.min(activeCreativeTab, InventoryItems.CREATIVE_TAB_INDICES.length - 1))];
             for (int row = 0; row < 4; row++) {
                 for (int column = 0; column < 9; column++) {

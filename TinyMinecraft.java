@@ -40,6 +40,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_Q;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_S;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
@@ -48,6 +49,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_T;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_UP;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_W;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_MIDDLE;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_ANY_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_PROFILE;
@@ -672,6 +674,11 @@ public class TinyMinecraft {
                         selectHotbarSlot(8);
                     }
                     break;
+                case GLFW_KEY_Q:
+                    if (action == GLFW_PRESS && !inventoryOpen && !spectatorMode) {
+                        dropSelectedHotbarItem();
+                    }
+                    break;
                 default:
                     break;
             }
@@ -1002,6 +1009,7 @@ public class TinyMinecraft {
         double moveX = 0.0;
         double moveZ = 0.0;
         boolean flightMode = spectatorMode || (creativeMode && creativeFlightEnabled);
+        boolean wasGrounded = player.isGrounded;
         player.sneaking = sneak && !spectatorMode;
         boolean inWater = !flightMode && world.intersectsFluid(player.x, player.y, player.z, player.radius(), player.height(), GameConfig.WATER);
         player.headInWater = !flightMode && isPlayerHeadInWater();
@@ -1069,6 +1077,7 @@ public class TinyMinecraft {
             player.y += moveY;
             updateViewBobbing(0.0, deltaTime);
             player.stepTimer = 0.0;
+            player.fallDistance = 0.0;
             player.headInWater = false;
             resetPlayerAirSupply();
             player.wasInLiquid = false;
@@ -1092,6 +1101,7 @@ public class TinyMinecraft {
             }
 
             player.isGrounded = isStandingOnGround();
+            player.fallDistance = 0.0;
             updateViewBobbing(0.0, deltaTime);
             updateMovementAudio(movingHorizontally, deltaTime);
             player.headInWater = false;
@@ -1116,8 +1126,10 @@ public class TinyMinecraft {
         if (!inWater) {
             player.verticalVelocity = Math.max(player.verticalVelocity - GameConfig.GRAVITY * deltaTime, -GameConfig.TERMINAL_VELOCITY);
         }
+        double verticalVelocityBeforeMove = player.verticalVelocity;
         moveVertical(player.verticalVelocity * deltaTime);
         player.isGrounded = isStandingOnGround();
+        updatePlayerFallDamage(wasGrounded, inWater, verticalVelocityBeforeMove, deltaTime);
         player.headInWater = isPlayerHeadInWater();
         updateViewBobbing(horizontalSpeed, deltaTime);
         updateMovementAudio(movingHorizontally, deltaTime);
@@ -1125,6 +1137,25 @@ public class TinyMinecraft {
         updateSuffocationDamage(deltaTime);
         updateLavaAndFireDamage(deltaTime);
         updatePlayerHunger(deltaTime, movingHorizontally && canSprint && player.isGrounded);
+    }
+
+    private void updatePlayerFallDamage(boolean wasGrounded, boolean inWater, double verticalVelocityBeforeMove, double deltaTime) {
+        if (creativeMode || spectatorMode || inWater || player.health <= 0) {
+            player.fallDistance = 0.0;
+            return;
+        }
+        if (verticalVelocityBeforeMove < 0.0 && !player.isGrounded) {
+            player.fallDistance += -verticalVelocityBeforeMove * deltaTime;
+        }
+        if (!wasGrounded && player.isGrounded) {
+            int damage = (int) Math.floor(player.fallDistance - 3.0);
+            if (damage > 0) {
+                applyPlayerDamage(damage);
+            }
+            player.fallDistance = 0.0;
+        } else if (player.isGrounded) {
+            player.fallDistance = 0.0;
+        }
     }
 
     private void updatePlayerHunger(double deltaTime, boolean sprintingHorizontally) {
@@ -2346,7 +2377,8 @@ public class TinyMinecraft {
     }
 
     private void handleInventoryMouseClick(int button, int action, int mods) {
-        if (action != GLFW_PRESS || (button != GLFW_MOUSE_BUTTON_LEFT && button != GLFW_MOUSE_BUTTON_RIGHT)) {
+        if (action != GLFW_PRESS
+            || (button != GLFW_MOUSE_BUTTON_LEFT && button != GLFW_MOUSE_BUTTON_RIGHT && button != GLFW_MOUSE_BUTTON_MIDDLE)) {
             return;
         }
 
@@ -2369,14 +2401,38 @@ public class TinyMinecraft {
 
         if (slot != null) {
             boolean rightClick = button == GLFW_MOUSE_BUTTON_RIGHT;
+            boolean middleClick = button == GLFW_MOUSE_BUTTON_MIDDLE;
             boolean shiftDown = (mods & GLFW_MOD_SHIFT) != 0;
-            inventory.handleClick(slot, creativeInventory, rightClick, shiftDown, activeChestContainer, activeFurnace);
+            inventory.handleClick(slot, creativeInventory, rightClick, shiftDown, middleClick, activeChestContainer, activeFurnace);
             syncSelectedHotbarItem();
         }
     }
 
     private void syncSelectedHotbarItem() {
         selectedBlock = inventory.getSelectedItemId(selectedSlot);
+    }
+
+    private void dropSelectedHotbarItem() {
+        ItemStack stack = inventory.getHotbarStack(selectedSlot);
+        if (stack == null || stack.isEmpty()) {
+            return;
+        }
+        double yaw = player.yaw;
+        double pitch = player.pitch;
+        double forwardX = Math.cos(yaw) * Math.cos(pitch);
+        double forwardY = -Math.sin(pitch);
+        double forwardZ = Math.sin(yaw) * Math.cos(pitch);
+        double spawnX = player.x + forwardX * 0.72;
+        double spawnY = player.y + player.eyeHeight() * 0.78;
+        double spawnZ = player.z + forwardZ * 0.72;
+        world.spawnThrownItem(stack.itemId, 1, spawnX, spawnY, spawnZ, forwardX * 4.2, forwardY * 4.2 + 1.0, forwardZ * 4.2);
+        if (!creativeMode) {
+            stack.count--;
+            if (stack.count <= 0) {
+                stack.clear();
+            }
+            syncSelectedHotbarItem();
+        }
     }
 
     private void syncPlayerModeState() {

@@ -1,6 +1,10 @@
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -80,6 +84,7 @@ import static org.lwjgl.opengl.GL11.glScalef;
 import static org.lwjgl.opengl.GL11.glShadeModel;
 import static org.lwjgl.opengl.GL11.glTexImage2D;
 import static org.lwjgl.opengl.GL11.glTexParameteri;
+import static org.lwjgl.opengl.GL11.glTexCoord2f;
 import static org.lwjgl.opengl.GL11.glTranslated;
 import static org.lwjgl.opengl.GL11.glVertex3d;
 import static org.lwjgl.opengl.GL11.glVertexPointer;
@@ -109,6 +114,7 @@ final class OpenGlRenderer {
     private static final double LIQUID_SURFACE_Z_OFFSET = 0.01;
     private static final double CAMERA_NEAR_PLANE = 0.08;
     private static final double CAMERA_FAR_PADDING = 64.0;
+    private static final int RENDER_EDGE_PADDING_CHUNKS = 2;
     private static final int ATLAS_TILE_SIZE = 16;
     private static final int ATLAS_COLUMNS = 4;
     private static final int ATLAS_ROWS = 4;
@@ -125,6 +131,7 @@ final class OpenGlRenderer {
     private final ArrayList<Chunk> loadedChunkSnapshot = new ArrayList<>();
     private final PriorityQueue<MeshBuildCandidate> meshBuildQueue = new PriorityQueue<>();
     private final ByteBuffer textBuffer = BufferUtils.createByteBuffer(64 * 1024);
+    private final HashMap<String, TextTexture> unicodeTextTextures = new HashMap<>();
 
     private int framebufferWidth = GameConfig.WINDOW_WIDTH;
     private int framebufferHeight = GameConfig.WINDOW_HEIGHT;
@@ -252,23 +259,23 @@ final class OpenGlRenderer {
     }
 
     private float optionsRenderDistanceSliderY(float uiScale) {
-        return framebufferHeight * 0.5f - 54.0f * uiScale;
+        return framebufferHeight * 0.5f - 132.0f * uiScale;
     }
 
     private float optionsFovSliderY(float uiScale) {
-        return framebufferHeight * 0.5f + 18.0f * uiScale;
+        return framebufferHeight * 0.5f - 60.0f * uiScale;
     }
 
     private float optionsInventoryUiSliderY(float uiScale) {
-        return framebufferHeight * 0.5f + 90.0f * uiScale;
+        return framebufferHeight * 0.5f + 12.0f * uiScale;
     }
 
     private float optionsLanguageButtonY(float uiScale) {
-        return framebufferHeight * 0.5f + 150.0f * uiScale;
+        return framebufferHeight * 0.5f + 72.0f * uiScale;
     }
 
     private float optionsBackButtonY(float uiScale) {
-        return framebufferHeight * 0.5f + 214.0f * uiScale;
+        return framebufferHeight * 0.5f + 136.0f * uiScale;
     }
 
     int getDeathOptionAt(double cursorX, double cursorY) {
@@ -568,6 +575,10 @@ final class OpenGlRenderer {
             glDeleteTextures(terrainTextureId);
             terrainTextureId = 0;
         }
+        for (TextTexture texture : unicodeTextTextures.values()) {
+            glDeleteTextures(texture.textureId);
+        }
+        unicodeTextTextures.clear();
         if (uploadProbeVboId != 0) {
             glDeleteBuffers(uploadProbeVboId);
             uploadProbeVboId = 0;
@@ -835,7 +846,7 @@ final class OpenGlRenderer {
     }
 
     private double cameraFarPlane() {
-        double horizontalDistance = currentRenderDistanceChunks * GameConfig.CHUNK_SIZE;
+        double horizontalDistance = (currentRenderDistanceChunks + RENDER_EDGE_PADDING_CHUNKS) * GameConfig.CHUNK_SIZE;
         return Math.max(Math.hypot(horizontalDistance, GameConfig.WORLD_HEIGHT * 0.5) + CAMERA_FAR_PADDING, GameConfig.WORLD_HEIGHT * 1.45);
     }
 
@@ -852,8 +863,8 @@ final class OpenGlRenderer {
         glEnable(GL_FOG);
         glFogi(GL_FOG_MODE, GL_LINEAR);
         glFogfv(GL_FOG_COLOR, fogColor);
-        glFogf(GL_FOG_START, visibleBlocks * 0.72f);
-        glFogf(GL_FOG_END, visibleBlocks * 1.12f);
+        glFogf(GL_FOG_START, visibleBlocks * 0.52f);
+        glFogf(GL_FOG_END, visibleBlocks * 0.94f);
     }
 
     private boolean shouldRenderZombie(PlayerState player, Zombie zombie) {
@@ -1519,7 +1530,7 @@ final class OpenGlRenderer {
         int radius = player.spectatorMode
             ? Math.max(currentRenderDistanceChunks, GameConfig.SPECTATOR_CHUNK_RENDER_DISTANCE)
             : currentRenderDistanceChunks;
-        return clamp(radius, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
+        return clamp(radius + RENDER_EDGE_PADDING_CHUNKS, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
     }
 
     private int dynamicChunkUploadBudget() {
@@ -2919,13 +2930,19 @@ final class OpenGlRenderer {
         }
 
         if (creativeMode) {
+            for (UiRenderer.SlotBox slot : layout.slots) {
+                if (slot.ref.group == InventorySlotGroup.TRASH) {
+                    drawItemSlot(slot.x, slot.y, slot.size, null, false, hovered == slot, "X");
+                    break;
+                }
+            }
             int[] tabIndices = InventoryItems.CREATIVE_TAB_INDICES[layout.activeCreativeTab];
             for (int row = 0; row < layout.creativeRows; row++) {
                 for (int column = 0; column < layout.creativeColumns; column++) {
                     int visibleIndex = row * layout.creativeColumns + column;
                     int globalIndex = visibleIndex < tabIndices.length ? tabIndices[visibleIndex] : -1;
                     ItemStack stack = globalIndex >= 0
-                        ? new ItemStack(InventoryItems.CREATIVE_ITEMS[globalIndex], InventoryItems.maxStackSize(InventoryItems.CREATIVE_ITEMS[globalIndex]))
+                        ? new ItemStack(InventoryItems.CREATIVE_ITEMS[globalIndex], 1)
                         : null;
                     drawItemSlot(
                         layout.creativeX + column * (layout.slotSize + layout.slotGap),
@@ -3072,9 +3089,13 @@ final class OpenGlRenderer {
         }
 
         if (hovered != null) {
-            ItemStack tooltipStack = inventory.peekSlot(hovered.ref, creativeMode, chestContainer, furnace);
-            if (tooltipStack != null && !tooltipStack.isEmpty()) {
+            if (hovered.ref.group == InventorySlotGroup.TRASH) {
+                drawTooltip((float) mouseX + 14.0f, (float) mouseY + 18.0f, Settings.isRussian() ? "Удалить" : "Delete");
+            } else {
+                ItemStack tooltipStack = inventory.peekSlot(hovered.ref, creativeMode, chestContainer, furnace);
+                if (tooltipStack != null && !tooltipStack.isEmpty()) {
                 drawTooltip((float) mouseX + 14.0f, (float) mouseY + 18.0f, InventoryItems.name(tooltipStack.itemId));
+                }
             }
         }
     }
@@ -3338,6 +3359,10 @@ final class OpenGlRenderer {
     }
 
     private void drawText(float x, float y, float scale, String text, float red, float green, float blue) {
+        if (containsUnicodeText(text)) {
+            drawUnicodeText(x, y, scale, text, red, green, blue);
+            return;
+        }
         textBuffer.clear();
         int quads = stb_easy_font_print(0, 0, text, null, textBuffer);
         glColor3f(red, green, blue);
@@ -3352,7 +3377,98 @@ final class OpenGlRenderer {
     }
 
     private float measureTextWidth(String text, float scale) {
-        return text == null ? 0.0f : stb_easy_font_width(text) * scale;
+        if (text == null) {
+            return 0.0f;
+        }
+        if (containsUnicodeText(text)) {
+            return getUnicodeTextTexture(text, scale).width;
+        }
+        return stb_easy_font_width(text) * scale;
+    }
+
+    private boolean containsUnicodeText(String text) {
+        if (text == null) {
+            return false;
+        }
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) > 0x7F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void drawUnicodeText(float x, float y, float scale, String text, float red, float green, float blue) {
+        TextTexture texture = getUnicodeTextTexture(text, scale);
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, texture.textureId);
+        glColor4f(red, green, blue, 1.0f);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex3d(x, y, 0.0);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex3d(x + texture.width, y, 0.0);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex3d(x + texture.width, y + texture.height, 0.0);
+        glTexCoord2f(0.0f, 0.0f);
+        glVertex3d(x, y + texture.height, 0.0);
+        glEnd();
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDisable(GL_TEXTURE_2D);
+    }
+
+    private TextTexture getUnicodeTextTexture(String text, float scale) {
+        int fontSize = Math.max(9, Math.round(9.0f * Math.max(0.75f, scale)));
+        String key = fontSize + "\u0000" + text;
+        TextTexture existing = unicodeTextTextures.get(key);
+        if (existing != null) {
+            return existing;
+        }
+
+        Font font = new Font("DialogInput", Font.BOLD, fontSize);
+        BufferedImage measureImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D measureGraphics = measureImage.createGraphics();
+        measureGraphics.setFont(font);
+        FontMetrics metrics = measureGraphics.getFontMetrics();
+        int width = Math.max(1, metrics.stringWidth(text) + 2);
+        int height = Math.max(1, metrics.getAscent() + metrics.getDescent() + 2);
+        int baseline = metrics.getAscent() + 1;
+        measureGraphics.dispose();
+
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        graphics.setFont(font);
+        graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        graphics.setColor(java.awt.Color.WHITE);
+        graphics.drawString(text, 1, baseline);
+        graphics.dispose();
+
+        int[] pixels = new int[width * height];
+        image.getRGB(0, 0, width, height, pixels, 0, width);
+        ByteBuffer buffer = BufferUtils.createByteBuffer(width * height * 4);
+        for (int row = 0; row < height; row++) {
+            for (int column = 0; column < width; column++) {
+                int argb = pixels[row * width + column];
+                int alpha = (argb >>> 24) & 0xFF;
+                buffer.put((byte) 255);
+                buffer.put((byte) 255);
+                buffer.put((byte) 255);
+                buffer.put((byte) alpha);
+            }
+        }
+        buffer.flip();
+
+        int textureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, textureId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        TextTexture texture = new TextTexture(textureId, width, height);
+        unicodeTextTextures.put(key, texture);
+        return texture;
     }
 
     private void drawCenteredShadowText(float y, float scale, String text, float red, float green, float blue) {
@@ -3998,6 +4114,18 @@ final class OpenGlRenderer {
             uploadBuffer.put(values, 0, size);
             uploadBuffer.flip();
             return uploadBuffer;
+        }
+    }
+
+    private static final class TextTexture {
+        final int textureId;
+        final int width;
+        final int height;
+
+        TextTexture(int textureId, int width, int height) {
+            this.textureId = textureId;
+            this.width = width;
+            this.height = height;
         }
     }
 }

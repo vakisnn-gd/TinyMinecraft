@@ -300,6 +300,12 @@ final class InventoryItems {
     }
 
     static String name(byte itemId) {
+        if (Settings.isRussian()) {
+            String translated = russianName(itemId);
+            if (translated != null) {
+                return translated;
+            }
+        }
         if (Blocks.isKnownLegacyId(itemId)) {
             return Blocks.typeFromLegacyId(itemId).displayName;
         }
@@ -501,6 +507,108 @@ final class InventoryItems {
         }
     }
 
+    private static String russianName(byte itemId) {
+        switch (itemId) {
+            case GameConfig.GRASS: return "Блок травы";
+            case GameConfig.DIRT: return "Земля";
+            case GameConfig.COBBLESTONE: return "Булыжник";
+            case GameConfig.BEDROCK: return "Бедрок";
+            case GameConfig.IRON_ORE: return "Железная руда";
+            case GameConfig.DIAMOND_ORE: return "Алмазная руда";
+            case GameConfig.COAL_ORE: return "Угольная руда";
+            case GameConfig.ZOMBIE_SKIN: return "Кожа зомби";
+            case GameConfig.ZOMBIE_SHIRT: return "Рубашка зомби";
+            case GameConfig.ZOMBIE_PANTS: return "Штаны зомби";
+            case GameConfig.ZOMBIE_EYE: return "Глаз зомби";
+            case GameConfig.WATER: return "Вода";
+            case GameConfig.LAVA: return "Лава";
+            case GameConfig.SAND: return "Песок";
+            case GameConfig.GRAVEL: return "Гравий";
+            case GameConfig.CLAY: return "Глина";
+            case GameConfig.OAK_LOG: return "Дубовое бревно";
+            case GameConfig.OAK_LEAVES: return "Дубовая листва";
+            case GameConfig.PINE_LOG: return "Сосновое бревно";
+            case GameConfig.PINE_LEAVES: return "Сосновая листва";
+            case GameConfig.CACTUS: return "Кактус";
+            case GameConfig.SNOW_LAYER: return "Слой снега";
+            case GameConfig.SEAGRASS: return "Водоросли";
+            case GameConfig.TALL_GRASS: return "Высокая трава";
+            case GameConfig.RED_FLOWER: return "Красный цветок";
+            case GameConfig.YELLOW_FLOWER: return "Желтый цветок";
+            case GameConfig.STONE: return "Камень";
+            case GameConfig.DEEPSLATE: return "Глубинный сланец";
+            case GameConfig.OBSIDIAN: return "Обсидиан";
+            case OAK_PLANKS: return "Дубовые доски";
+            case GameConfig.OAK_FENCE: return "Дубовый забор";
+            case GameConfig.CHEST: return "Сундук";
+            case GameConfig.CRAFTING_TABLE: return "Верстак";
+            case GameConfig.FURNACE: return "Печь";
+            case GameConfig.GLASS: return "Стекло";
+            case GameConfig.WHEAT_CROP: return "Пшеница";
+            case GameConfig.RAIL: return "Рельсы";
+            case GameConfig.OAK_DOOR: return "Дубовая дверь";
+            case GameConfig.FARMLAND: return "Грядка";
+            case GameConfig.TORCH: return "Факел";
+            case GameConfig.STRUCTURE_BLOCK: return "Структурный блок";
+            case GameConfig.RED_BED: return "Красная кровать";
+            case STICK: return "Палка";
+            case BREAD: return "Хлеб";
+            case POTATO: return "Картофель";
+            case CARROT: return "Морковь";
+            case WHEAT_SEEDS: return "Семена";
+            case IRON_HELMET: return "Железный шлем";
+            case IRON_CHESTPLATE: return "Железный нагрудник";
+            case IRON_LEGGINGS: return "Железные поножи";
+            case IRON_BOOTS: return "Железные ботинки";
+            case SHIELD: return "Щит";
+            case TOTEM: return "Тотем";
+            case IRON_INGOT: return "Железный слиток";
+            case WOODEN_PICKAXE: return "Деревянная кирка";
+            case WOODEN_SWORD: return "Деревянный меч";
+            case WOODEN_AXE: return "Деревянный топор";
+            case WOODEN_SHOVEL: return "Деревянная лопата";
+            case WOODEN_HOE: return "Деревянная мотыга";
+            case STONE_PICKAXE: return "Каменная кирка";
+            case STONE_SWORD: return "Каменный меч";
+            case STONE_AXE: return "Каменный топор";
+            case STONE_SHOVEL: return "Каменная лопата";
+            case STONE_HOE: return "Каменная мотыга";
+            case IRON_PICKAXE: return "Железная кирка";
+            case IRON_SWORD: return "Железный меч";
+            case IRON_AXE: return "Железный топор";
+            case IRON_SHOVEL: return "Железная лопата";
+            case IRON_HOE: return "Железная мотыга";
+            case DIAMOND_PICKAXE: return "Алмазная кирка";
+            case NETHERITE_PICKAXE: return "Незеритовая кирка";
+            case DIAMOND_SWORD: return "Алмазный меч";
+            case DIAMOND_AXE: return "Алмазный топор";
+            case DIAMOND_SHOVEL: return "Алмазная лопата";
+            case DIAMOND_HOE: return "Алмазная мотыга";
+            case NETHERITE_SWORD: return "Незеритовый меч";
+            case NETHERITE_AXE: return "Незеритовый топор";
+            case NETHERITE_SHOVEL: return "Незеритовая лопата";
+            case NETHERITE_HOE: return "Незеритовая мотыга";
+            case ZOMBIE_SPAWN_EGG: return "Яйцо призыва зомби";
+            case SKELETON_SPAWN_EGG: return "Яйцо призыва скелета";
+            case PIG_SPAWN_EGG: return "Яйцо призыва свиньи";
+            case SHEEP_SPAWN_EGG: return "Яйцо призыва овцы";
+            case COW_SPAWN_EGG: return "Яйцо призыва коровы";
+            case VILLAGER_SPAWN_EGG: return "Яйцо призыва жителя";
+            case RAW_PORK: return "Сырая свинина";
+            case RAW_BEEF: return "Сырая говядина";
+            case RAW_MUTTON: return "Сырая баранина";
+            case COOKED_PORK: return "Жареная свинина";
+            case COOKED_BEEF: return "Стейк";
+            case COOKED_MUTTON: return "Жареная баранина";
+            case BAKED_POTATO: return "Печеный картофель";
+            case LEATHER: return "Кожа";
+            case WOOL: return "Шерсть";
+            case ROTTEN_FLESH: return "Гнилая плоть";
+            case BONE: return "Кость";
+            default: return null;
+        }
+    }
+
     static boolean isPlaceable(byte itemId) {
         return Blocks.isKnownLegacyId(itemId) && !Blocks.typeFromLegacyId(itemId).isAir();
     }
@@ -681,7 +789,8 @@ enum InventorySlotGroup {
     FURNACE_INPUT,
     FURNACE_FUEL,
     FURNACE_OUTPUT,
-    CREATIVE
+    CREATIVE,
+    TRASH
 }
 
 final class InventorySlotRef {
@@ -1243,7 +1352,9 @@ final class PlayerInventory {
                     return null;
                 }
                 byte creativeItem = InventoryItems.CREATIVE_ITEMS[ref.index];
-                return new ItemStack(creativeItem, InventoryItems.maxStackSize(creativeItem));
+                return new ItemStack(creativeItem, 1);
+            case TRASH:
+                return null;
             default:
                 return null;
         }
@@ -1273,11 +1384,16 @@ final class PlayerInventory {
     }
 
     boolean handleClick(InventorySlotRef ref, boolean creativeMode, boolean rightClick, boolean shiftDown) {
-        return handleClick(ref, creativeMode, rightClick, shiftDown, null, null);
+        return handleClick(ref, creativeMode, rightClick, shiftDown, false, null, null);
     }
 
     boolean handleClick(InventorySlotRef ref, boolean creativeMode, boolean rightClick, boolean shiftDown,
                         ContainerInventory chest, FurnaceBlockEntity furnace) {
+        return handleClick(ref, creativeMode, rightClick, shiftDown, false, chest, furnace);
+    }
+
+    boolean handleClick(InventorySlotRef ref, boolean creativeMode, boolean rightClick, boolean shiftDown,
+                        boolean creativeStackClick, ContainerInventory chest, FurnaceBlockEntity furnace) {
         refreshCraftResult();
         refreshWorkbenchCraftResult();
         if (shiftDown && !rightClick) {
@@ -1287,8 +1403,12 @@ final class PlayerInventory {
             cursor.clear();
             return true;
         }
+        if (ref.group == InventorySlotGroup.TRASH) {
+            cursor.clear();
+            return true;
+        }
         if (ref.group == InventorySlotGroup.CREATIVE) {
-            return takeFromCreative(ref, creativeMode);
+            return takeFromCreative(ref, creativeMode, creativeStackClick);
         }
         if (ref.group == InventorySlotGroup.CRAFT_RESULT) {
             return takeCraftResult(rightClick);
@@ -1331,12 +1451,12 @@ final class PlayerInventory {
         markWorkbenchCraftDirty();
     }
 
-    private boolean takeFromCreative(InventorySlotRef ref, boolean creativeMode) {
+    private boolean takeFromCreative(InventorySlotRef ref, boolean creativeMode, boolean stackClick) {
         if (!creativeMode || ref.index < 0 || ref.index >= InventoryItems.CREATIVE_ITEMS.length) {
             return false;
         }
         byte itemId = InventoryItems.CREATIVE_ITEMS[ref.index];
-        int count = InventoryItems.maxStackSize(itemId);
+        int count = stackClick ? InventoryItems.maxStackSize(itemId) : 1;
         cursor.set(itemId, count);
         return true;
     }
@@ -1491,7 +1611,7 @@ final class PlayerInventory {
                 return false;
             }
             byte itemId = InventoryItems.CREATIVE_ITEMS[ref.index];
-            return addItem(itemId, InventoryItems.maxStackSize(itemId));
+            return addItem(itemId, 1);
         }
         if (ref.group == InventorySlotGroup.CRAFT_RESULT) {
             boolean changed = false;

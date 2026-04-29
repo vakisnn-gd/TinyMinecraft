@@ -5,6 +5,7 @@ abstract class Entity {
     double velocityX;
     double velocityZ;
     double verticalVelocity;
+    double fallDistance;
     boolean isGrounded;
     double stepTimer;
     int health;

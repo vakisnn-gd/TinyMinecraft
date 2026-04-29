@@ -117,6 +117,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final HashSet<Long> activeWaterCells = new HashSet<>();
     private final HashSet<Long> activeLavaCells = new HashSet<>();
     private final HashSet<Long> activeSandCells = new HashSet<>();
+    private final HashMap<Long, Double> leafDecayTimers = new HashMap<>();
     private final HashSet<Long> fallingBlockSources = new HashSet<>();
     private final HashSet<Long> dirtyBlockColumns = new HashSet<>();
     private final ColumnUpdateList simulationDirtyColumns = new ColumnUpdateList(64);
@@ -155,6 +156,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             activeWaterCells.clear();
             activeLavaCells.clear();
             activeSandCells.clear();
+            leafDecayTimers.clear();
             fallingBlockSources.clear();
             zombies.clear();
             droppedItems.clear();
@@ -174,6 +176,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         this.lastStreamingChunkX = Integer.MIN_VALUE;
         this.lastStreamingChunkZ = Integer.MIN_VALUE;
         waterFlowCache.clear();
+        leafDecayTimers.clear();
         loadContainers();
     }
 
@@ -266,6 +269,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         activeWaterCells.clear();
         activeLavaCells.clear();
         activeSandCells.clear();
+        leafDecayTimers.clear();
         fallingBlockSources.clear();
         dirtyBlockColumns.clear();
         simulationDirtyColumns.clear();
@@ -289,6 +293,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         activeWaterCells.clear();
         activeLavaCells.clear();
         activeSandCells.clear();
+        leafDecayTimers.clear();
         fallingBlockSources.clear();
         waterFlowCache.clear();
         dirtyBlockColumns.clear();
@@ -341,6 +346,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         drainGeneratedColumns();
 
         updateFallingBlocks(deltaTime);
+        tickLeafDecay(deltaTime);
         updateFurnaces(deltaTime);
 
         simulationAccumulator += deltaTime;
@@ -689,12 +695,23 @@ final class VoxelWorld implements StructureTemplates.Target {
                 zombie.x, zombie.y, zombie.z,
                 GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.WATER
             );
+            boolean inLava = intersectsFluid(
+                zombie.x, zombie.y, zombie.z,
+                GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.LAVA
+            );
             if (inWater != zombie.wasInWater) {
                 zombie.splashQueued = true;
             }
             zombie.wasInWater = inWater;
 
-            if (isSunBurningMob(zombie, inWater)) {
+            if (inLava) {
+                zombie.fireTimer = Math.max(zombie.fireTimer, 3.0);
+                zombie.fireDamageTimer -= deltaTime;
+                if (zombie.fireDamageTimer <= 0.0) {
+                    zombie.health -= GameConfig.LAVA_DAMAGE;
+                    zombie.fireDamageTimer = GameConfig.LAVA_DAMAGE_INTERVAL;
+                }
+            } else if (isSunBurningMob(zombie, inWater)) {
                 zombie.fireTimer = Math.max(zombie.fireTimer, 1.2);
                 zombie.fireDamageTimer -= deltaTime;
                 if (zombie.fireDamageTimer <= 0.0) {
@@ -865,7 +882,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             setBlockState(hit.x, hit.y, hit.z, GameConfig.AIR, -1);
         }
         if (targetBlock == GameConfig.OAK_LOG || targetBlock == GameConfig.PINE_LOG) {
-            decayUnsupportedLeavesAround(hit.x, hit.y, hit.z);
+            scheduleUnsupportedLeavesAround(hit.x, hit.y, hit.z);
         }
         updatePlantSupportAt(hit.x, hit.y + 1, hit.z);
         updateDoorSupportAt(hit.x, hit.y + 1, hit.z);
@@ -875,7 +892,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         return true;
     }
 
-    private void decayUnsupportedLeavesAround(int x, int y, int z) {
+    private void scheduleUnsupportedLeavesAround(int x, int y, int z) {
         int radius = 6;
         for (int leafY = y - radius; leafY <= y + radius; leafY++) {
             for (int leafZ = z - radius; leafZ <= z + radius; leafZ++) {
@@ -884,14 +901,44 @@ final class VoxelWorld implements StructureTemplates.Target {
                     if (!isLeafBlock(block) || hasNearbyLog(leafX, leafY, leafZ, 4)) {
                         continue;
                     }
-                    setBlockState(leafX, leafY, leafZ, GameConfig.AIR, -1);
-                    updatePlantSupportAt(leafX, leafY + 1, leafZ);
-                    refreshDynamicCellsAround(leafX, leafY, leafZ);
-                    markDirtyColumn(leafX, leafZ);
-                    refreshSurfaceHeight(leafX, leafZ);
+                    double distance = Math.sqrt(square(leafX - x) + square(leafY - y) + square(leafZ - z));
+                    leafDecayTimers.put(packBlock(leafX, leafY, leafZ), 4.0 + distance * 0.9 + worldRandom.nextDouble() * 8.0);
                 }
             }
         }
+    }
+
+    private void tickLeafDecay(double deltaTime) {
+        if (leafDecayTimers.isEmpty()) {
+            return;
+        }
+        Iterator<Map.Entry<Long, Double>> iterator = leafDecayTimers.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<Long, Double> entry = iterator.next();
+            long blockKey = entry.getKey();
+            int x = unpackBlockX(blockKey);
+            int y = unpackBlockY(blockKey);
+            int z = unpackBlockZ(blockKey);
+            if (!isLeafBlock(getBlock(x, y, z)) || hasNearbyLog(x, y, z, 4)) {
+                iterator.remove();
+                continue;
+            }
+            double remaining = entry.getValue() - deltaTime;
+            if (remaining > 0.0) {
+                entry.setValue(remaining);
+                continue;
+            }
+            setBlockState(x, y, z, GameConfig.AIR, -1);
+            updatePlantSupportAt(x, y + 1, z);
+            refreshDynamicCellsAround(x, y, z);
+            markDirtyColumn(x, z);
+            refreshSurfaceHeight(x, z);
+            iterator.remove();
+        }
+    }
+
+    private int square(int value) {
+        return value * value;
     }
 
     private boolean hasNearbyLog(int x, int y, int z, int radius) {
@@ -1045,6 +1092,18 @@ final class VoxelWorld implements StructureTemplates.Target {
         droppedItem.velocityX = (worldRandom.nextDouble() - 0.5) * 1.2;
         droppedItem.velocityZ = (worldRandom.nextDouble() - 0.5) * 1.2;
         droppedItem.verticalVelocity = 1.8 + worldRandom.nextDouble() * 1.0;
+        droppedItem.spinDegrees = worldRandom.nextDouble() * 360.0;
+        droppedItems.add(droppedItem);
+    }
+
+    void spawnThrownItem(byte itemId, int count, double x, double y, double z, double velocityX, double velocityY, double velocityZ) {
+        if (!InventoryItems.isCollectible(itemId) || count <= 0 || droppedItems.size() >= 256) {
+            return;
+        }
+        DroppedItem droppedItem = new DroppedItem(itemId, count, x, y, z);
+        droppedItem.velocityX = velocityX;
+        droppedItem.velocityZ = velocityZ;
+        droppedItem.verticalVelocity = velocityY;
         droppedItem.spinDegrees = worldRandom.nextDouble() * 360.0;
         droppedItems.add(droppedItem);
     }
@@ -3611,7 +3670,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         int renderRadius = player != null && player.spectatorMode
             ? Math.max(renderDistanceChunks, GameConfig.SPECTATOR_CHUNK_RENDER_DISTANCE)
             : renderDistanceChunks;
-        return Math.max(renderRadius + GameConfig.RENDER_CHUNK_UNLOAD_PADDING, GameConfig.ACTIVE_SIMULATION_CHUNK_DISTANCE + 2);
+        return Math.max(renderRadius + GameConfig.RENDER_CHUNK_UNLOAD_PADDING + 2, GameConfig.ACTIVE_SIMULATION_CHUNK_DISTANCE + 2);
     }
 
     private void markDirtyColumn(int x, int z) {
