@@ -211,6 +211,15 @@ final class GameConfig {
     static final String[] CREATIVE_TABS = {"Блоки", "Природа", "Инструменты", "Жидкости"};
     static final String[] GAME_MODE_OPTIONS = {"Выживание", "Творческий", "Наблюдатель"};
     static final String[] DIFFICULTY_OPTIONS = {"Мирная", "Легкая", "Обычная", "Сложная"};
+    static final String[] PAUSE_OPTIONS_EN = {"Back to Game", "Options...", "Save and Quit to Title"};
+    static final String[] DEATH_OPTIONS_EN = {"Respawn", "Exit to Menu"};
+    static final String[] WORLD_MENU_ACTIONS_EN = {"Singleplayer", "Options", "Quit"};
+    static final String[] SINGLEPLAYER_ACTIONS_EN = {"Play", "Create New", "Rename", "Delete", "Back"};
+    static final String[] CREATE_WORLD_ACTIONS_EN = {"Create New World", "Cancel"};
+    static final String[] RENAME_WORLD_ACTIONS_EN = {"Rename", "Cancel"};
+    static final String[] CREATIVE_TABS_EN = {"Blocks", "Nature", "Tools", "Fluids"};
+    static final String[] GAME_MODE_OPTIONS_EN = {"Survival", "Creative", "Spectator"};
+    static final String[] DIFFICULTY_OPTIONS_EN = {"Peaceful", "Easy", "Normal", "Hard"};
     public static final double REACH_DISTANCE = MAX_REACH;
 
     private GameConfig() {
@@ -308,6 +317,42 @@ final class GameConfig {
 
     static int fluidSpreadDistance(byte blockOrItem) {
         return (blockOrItem == WATER || isWaterBlock(blockOrItem)) ? WATER_SPREAD_DISTANCE : LAVA_SPREAD_DISTANCE;
+    }
+
+    static String[] pauseOptions() {
+        return Settings.isRussian() ? PAUSE_OPTIONS : PAUSE_OPTIONS_EN;
+    }
+
+    static String[] deathOptions() {
+        return Settings.isRussian() ? DEATH_OPTIONS : DEATH_OPTIONS_EN;
+    }
+
+    static String[] worldMenuActions() {
+        return Settings.isRussian() ? WORLD_MENU_ACTIONS : WORLD_MENU_ACTIONS_EN;
+    }
+
+    static String[] singleplayerActions() {
+        return Settings.isRussian() ? SINGLEPLAYER_ACTIONS : SINGLEPLAYER_ACTIONS_EN;
+    }
+
+    static String[] createWorldActions() {
+        return Settings.isRussian() ? CREATE_WORLD_ACTIONS : CREATE_WORLD_ACTIONS_EN;
+    }
+
+    static String[] renameWorldActions() {
+        return Settings.isRussian() ? RENAME_WORLD_ACTIONS : RENAME_WORLD_ACTIONS_EN;
+    }
+
+    static String[] creativeTabs() {
+        return Settings.isRussian() ? CREATIVE_TABS : CREATIVE_TABS_EN;
+    }
+
+    static String[] gameModeOptions() {
+        return Settings.isRussian() ? GAME_MODE_OPTIONS : GAME_MODE_OPTIONS_EN;
+    }
+
+    static String[] difficultyOptions() {
+        return Settings.isRussian() ? DIFFICULTY_OPTIONS : DIFFICULTY_OPTIONS_EN;
     }
 
 }

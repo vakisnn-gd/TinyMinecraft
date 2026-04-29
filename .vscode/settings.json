@@ -1,9 +1,11 @@
 {
   "java.project.sourcePaths": [
+    "",
     "."
   ],
   "java.project.outputPath": "out",
   "java.project.referencedLibraries": [
+    "lib/*.jar",
     "lib/**/*.jar"
   ],
   "java.compile.nullAnalysis.mode": "disabled"

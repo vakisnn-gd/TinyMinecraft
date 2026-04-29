@@ -208,7 +208,7 @@ final class OpenGlRenderer {
         float buttonHeight = 38.0f * uiScale;
         float centerX = framebufferWidth * 0.5f;
         float y = 142.0f * uiScale;
-        for (int i = 0; i < GameConfig.PAUSE_OPTIONS.length; i++) {
+        for (int i = 0; i < GameConfig.pauseOptions().length; i++) {
             float buttonY = y + i * 52.0f * uiScale;
             if (cursorX >= centerX - wideWidth * 0.5f && cursorX <= centerX + wideWidth * 0.5f
                 && cursorY >= buttonY && cursorY <= buttonY + buttonHeight) {
@@ -288,10 +288,10 @@ final class OpenGlRenderer {
             float y = optionsBackButtonY(uiScale);
             return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 4 : -1;
         }
-        String[] actions = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? GameConfig.SINGLEPLAYER_ACTIONS
-            : (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD ? GameConfig.CREATE_WORLD_ACTIONS
-            : (menuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD ? GameConfig.RENAME_WORLD_ACTIONS
-            : GameConfig.WORLD_MENU_ACTIONS));
+        String[] actions = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? GameConfig.singleplayerActions()
+            : (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD ? GameConfig.createWorldActions()
+            : (menuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD ? GameConfig.renameWorldActions()
+            : GameConfig.worldMenuActions()));
         float actionWidth = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? 118.0f * uiScale
             : (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD || menuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD ? 240.0f * uiScale : 280.0f * uiScale);
         float actionHeight = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? 38.0f * uiScale : 46.0f * uiScale;
@@ -353,13 +353,14 @@ final class OpenGlRenderer {
         UiRenderer.InventoryUiLayout layout = buildInventoryLayout(true, creativeTab);
         float uiScale = getInventoryUiScale();
         float gap = 4.0f * uiScale;
+        String[] tabLabels = GameConfig.creativeTabs();
         float tabWidth = Math.min(68.0f * uiScale,
-            (layout.panelWidth - 32.0f * uiScale - gap * (GameConfig.CREATIVE_TABS.length - 1)) / GameConfig.CREATIVE_TABS.length);
+            (layout.panelWidth - 32.0f * uiScale - gap * (tabLabels.length - 1)) / tabLabels.length);
         float tabHeight = 22.0f * uiScale;
-        float totalWidth = tabWidth * GameConfig.CREATIVE_TABS.length + gap * (GameConfig.CREATIVE_TABS.length - 1);
+        float totalWidth = tabWidth * tabLabels.length + gap * (tabLabels.length - 1);
         float startX = layout.panelX + layout.panelWidth * 0.5f - totalWidth * 0.5f;
         float y = layout.panelY + 10.0f * uiScale;
-        for (int i = 0; i < GameConfig.CREATIVE_TABS.length; i++) {
+        for (int i = 0; i < tabLabels.length; i++) {
             float x = startX + i * (tabWidth + gap);
             if (mouseX >= x && mouseX <= x + tabWidth && mouseY >= y && mouseY <= y + tabHeight) {
                 return i;
@@ -831,37 +832,6 @@ final class OpenGlRenderer {
         }
 
         return true;
-    }
-
-    private boolean isAabbInsideCameraFrustum(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
-        double centerX = (minX + maxX) * 0.5;
-        double centerY = (minY + maxY) * 0.5;
-        double centerZ = (minZ + maxZ) * 0.5;
-        double radius = Math.sqrt(
-            square((maxX - minX) * 0.5)
-                + square((maxY - minY) * 0.5)
-                + square((maxZ - minZ) * 0.5)
-        );
-
-        double dx = centerX - renderCameraX;
-        double dy = centerY - renderCameraY;
-        double dz = centerZ - renderCameraZ;
-        double depth = dx * frustumForwardX + dy * frustumForwardY + dz * frustumForwardZ;
-        double farPlane = cameraFarPlane();
-        if (depth < -radius || depth > farPlane + radius) {
-            return false;
-        }
-
-        double aspect = framebufferHeight <= 0 ? 1.0 : (double) framebufferWidth / framebufferHeight;
-        double verticalLimit = Math.tan(Math.toRadians(currentFovDegrees) * 0.5) * Math.max(0.0, depth) + radius;
-        double horizontalLimit = verticalLimit * aspect + radius;
-        double horizontal = dx * frustumRightX + dz * frustumRightZ;
-        double vertical = dx * frustumUpX + dy * frustumUpY + dz * frustumUpZ;
-        return Math.abs(horizontal) <= horizontalLimit && Math.abs(vertical) <= verticalLimit;
-    }
-
-    private double square(double value) {
-        return value * value;
     }
 
     private double cameraFarPlane() {
@@ -2610,15 +2580,16 @@ final class OpenGlRenderer {
     private void renderPauseMenu(int pauseSelection) {
         float uiScale = Math.max(1.0f, getUiScale());
         drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.0f, 0.0f, 0.0f, 0.56f);
-        drawCenteredShadowText(74.0f * uiScale, uiScale * 1.2f, "Game menu", 1.0f, 1.0f, 1.0f);
+        drawCenteredShadowText(74.0f * uiScale, uiScale * 1.2f, Settings.isRussian() ? "Меню игры" : "Game menu", 1.0f, 1.0f, 1.0f);
 
         float wideWidth = 398.0f * uiScale;
         float buttonHeight = 38.0f * uiScale;
         float centerX = framebufferWidth * 0.5f;
         float y = 142.0f * uiScale;
-        for (int i = 0; i < GameConfig.PAUSE_OPTIONS.length; i++) {
+        String[] pauseOptions = GameConfig.pauseOptions();
+        for (int i = 0; i < pauseOptions.length; i++) {
             drawMenuButton(centerX - wideWidth * 0.5f, y + i * 52.0f * uiScale,
-                wideWidth, buttonHeight, GameConfig.PAUSE_OPTIONS[i], pauseSelection == i, true, uiScale * 0.82f);
+                wideWidth, buttonHeight, pauseOptions[i], pauseSelection == i, true, uiScale * 0.82f);
         }
     }
 
@@ -2639,9 +2610,9 @@ final class OpenGlRenderer {
     private void renderDeathScreen(int deathSelection) {
         float uiScale = Math.max(1.0f, getUiScale());
         drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.09f, 0.0f, 0.0f, 0.72f);
-        drawCenteredShadowText(118.0f * uiScale, uiScale * 2.0f, "You Died!", 0.96f, 0.22f, 0.22f);
-        drawCenteredShadowText(176.0f * uiScale, uiScale, "Survival run ended. Choose what to do next.", 0.95f, 0.95f, 0.95f);
-        drawCenteredMenuButtons(GameConfig.DEATH_OPTIONS, deathSelection, 236.0f, 0.88f, 0.88f, 0.88f);
+        drawCenteredShadowText(118.0f * uiScale, uiScale * 2.0f, Settings.isRussian() ? "Вы погибли!" : "You Died!", 0.96f, 0.22f, 0.22f);
+        drawCenteredShadowText(176.0f * uiScale, uiScale, Settings.isRussian() ? "Выберите, что делать дальше." : "Survival run ended. Choose what to do next.", 0.95f, 0.95f, 0.95f);
+        drawCenteredMenuButtons(GameConfig.deathOptions(), deathSelection, 236.0f, 0.88f, 0.88f, 0.88f);
     }
 
     private void renderMainMenu(int menuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int scrollOffset, String loadedWorldName, int renderDistanceChunks, int fovDegrees) {
@@ -2672,7 +2643,8 @@ final class OpenGlRenderer {
         float actionHeight = 46.0f * uiScale;
         float actionsX = framebufferWidth * 0.5f - actionWidth * 0.5f;
         float actionsY = framebufferHeight * 0.5f - 18.0f * uiScale;
-        for (int i = 0; i < GameConfig.WORLD_MENU_ACTIONS.length; i++) {
+        String[] actions = GameConfig.worldMenuActions();
+        for (int i = 0; i < actions.length; i++) {
             float boxY = actionsY + i * 58.0f * uiScale;
             boolean selected = i == mainMenuSelection;
             drawRect(actionsX, boxY, actionWidth, actionHeight,
@@ -2681,7 +2653,7 @@ final class OpenGlRenderer {
                 selected ? 0.58f : 0.58f,
                 0.98f);
             drawOutline(actionsX, boxY, actionWidth, actionHeight, uiScale, 0.0f, 0.0f, 0.0f, 1.0f);
-            drawText(actionsX + actionWidth * 0.5f - measureTextWidth(GameConfig.WORLD_MENU_ACTIONS[i], uiScale * 0.9f) * 0.5f, boxY + 29.0f * uiScale, uiScale * 0.9f, GameConfig.WORLD_MENU_ACTIONS[i], 0.10f, 0.10f, 0.12f);
+            drawText(actionsX + actionWidth * 0.5f - measureTextWidth(actions[i], uiScale * 0.9f) * 0.5f, boxY + 29.0f * uiScale, uiScale * 0.9f, actions[i], 0.10f, 0.10f, 0.12f);
         }
 
     }
@@ -2693,7 +2665,7 @@ final class OpenGlRenderer {
         drawRect(0.0f, 0.0f, framebufferWidth, headerHeight, 0.03f, 0.035f, 0.04f, 1.0f);
         drawRect(0.0f, headerHeight, framebufferWidth, framebufferHeight - headerHeight - footerHeight, 0.0f, 0.0f, 0.0f, 0.38f);
         drawRect(0.0f, framebufferHeight - footerHeight, framebufferWidth, footerHeight, 0.03f, 0.035f, 0.04f, 1.0f);
-        drawCenteredShadowText(32.0f * uiScale, uiScale * 1.0f, "Select World", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(32.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "Выбор мира" : "Select World", 0.96f, 0.96f, 0.96f);
 
         float panelWidth = framebufferWidth - 160.0f * uiScale;
         float panelX = framebufferWidth * 0.5f - panelWidth * 0.5f;
@@ -2704,7 +2676,7 @@ final class OpenGlRenderer {
 
         int visibleRows = Math.min(GameConfig.WORLD_MENU_VISIBLE_ROWS, Math.max(0, worlds.size() - scrollOffset));
         if (worlds.isEmpty()) {
-            drawShadowText(listX, listY + 30.0f * uiScale, uiScale * 0.84f, "No worlds yet. Play will create a new one.", 0.86f, 0.88f, 0.90f);
+            drawShadowText(listX, listY + 30.0f * uiScale, uiScale * 0.84f, Settings.isRussian() ? "Миров пока нет. Нажмите Играть, чтобы создать новый." : "No worlds yet. Play will create a new one.", 0.86f, 0.88f, 0.90f);
         }
         for (int row = 0; row < visibleRows; row++) {
             int worldIndex = scrollOffset + row;
@@ -2718,15 +2690,16 @@ final class OpenGlRenderer {
                 selected ? 0.96f : 0.88f);
             drawOutline(listX, rowY, listWidth, rowHeight, uiScale, selected ? 0.92f : 0.38f, selected ? 0.88f : 0.40f, selected ? 0.68f : 0.44f, 0.92f);
             drawShadowText(listX + 12.0f * uiScale, rowY + 15.0f * uiScale, uiScale * 0.74f, info.name, 0.98f, 0.98f, 0.98f);
-            drawShadowText(listX + 12.0f * uiScale, rowY + 30.0f * uiScale, uiScale * 0.50f, "Modified: " + formatWorldDate(info.lastModifiedMillis) + "  " + gameModeName(info.gameMode), 0.72f, 0.76f, 0.80f);
+            drawShadowText(listX + 12.0f * uiScale, rowY + 30.0f * uiScale, uiScale * 0.50f, (Settings.isRussian() ? "Изменен: " : "Modified: ") + formatWorldDate(info.lastModifiedMillis) + "  " + gameModeName(info.gameMode), 0.72f, 0.76f, 0.80f);
         }
 
         float actionWidth = 118.0f * uiScale;
         float actionHeight = 38.0f * uiScale;
         float gap = 10.0f * uiScale;
-        float startX = framebufferWidth * 0.5f - (actionWidth * GameConfig.SINGLEPLAYER_ACTIONS.length + gap * (GameConfig.SINGLEPLAYER_ACTIONS.length - 1)) * 0.5f;
+        String[] singleplayerActions = GameConfig.singleplayerActions();
+        float startX = framebufferWidth * 0.5f - (actionWidth * singleplayerActions.length + gap * (singleplayerActions.length - 1)) * 0.5f;
         float actionY = framebufferHeight - 58.0f * uiScale;
-        for (int i = 0; i < GameConfig.SINGLEPLAYER_ACTIONS.length; i++) {
+        for (int i = 0; i < singleplayerActions.length; i++) {
             float x = startX + i * (actionWidth + gap);
             boolean selected = i == mainMenuSelection;
             boolean enabled = i == 1 || i == 4 || (mainMenuWorldActionsEnabled && !worlds.isEmpty());
@@ -2736,7 +2709,7 @@ final class OpenGlRenderer {
                 enabled ? (selected ? 0.58f : 0.58f) : 0.31f,
                 enabled ? 0.98f : 0.70f);
             drawOutline(x, actionY, actionWidth, actionHeight, uiScale, enabled ? 0.0f : 0.12f, enabled ? 0.0f : 0.12f, enabled ? 0.0f : 0.14f, enabled ? 1.0f : 0.72f);
-            String label = GameConfig.SINGLEPLAYER_ACTIONS[i];
+            String label = singleplayerActions[i];
             float labelScale = label.length() > 8 ? uiScale * 0.68f : uiScale * 0.78f;
             drawText(x + actionWidth * 0.5f - measureTextWidth(label, labelScale) * 0.5f, actionY + 24.0f * uiScale, labelScale, label, enabled ? 0.10f : 0.50f, enabled ? 0.10f : 0.52f, enabled ? 0.12f : 0.56f);
         }
@@ -2772,36 +2745,36 @@ final class OpenGlRenderer {
 
     private void renderCreateWorldMenu(int mainMenuSelection, String worldName, String seedText, int gameMode, int difficulty, int activeTextField) {
         float uiScale = Math.max(1.0f, getUiScale());
-        drawCenteredShadowText(46.0f * uiScale, uiScale * 1.0f, "Create New World", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(46.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "Создать новый мир" : "Create New World", 0.96f, 0.96f, 0.96f);
 
         float panelWidth = Math.min(720.0f * uiScale, framebufferWidth - 120.0f * uiScale);
         float panelX = framebufferWidth * 0.5f - panelWidth * 0.5f;
-        drawShadowText(panelX, 104.0f * uiScale, uiScale * 0.78f, "World Name", 0.82f, 0.82f, 0.82f);
+        drawShadowText(panelX, 104.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Название мира" : "World Name", 0.82f, 0.82f, 0.82f);
         drawTextField(panelX, 126.0f * uiScale, panelWidth, 36.0f * uiScale, worldName, activeTextField == 0);
 
         float buttonWidth = 340.0f * uiScale;
         float buttonHeight = 44.0f * uiScale;
         float gap = 18.0f * uiScale;
         float startX = framebufferWidth * 0.5f - (buttonWidth * 2.0f + gap) * 0.5f;
-        drawMenuButton(startX, 224.0f * uiScale, buttonWidth, buttonHeight, "Game Mode: " + gameModeName(gameMode), false, true, uiScale * 0.80f);
-        drawMenuButton(startX + buttonWidth + gap, 224.0f * uiScale, buttonWidth, buttonHeight, "Difficulty: " + GameConfig.DIFFICULTY_OPTIONS[Math.max(0, Math.min(difficulty, GameConfig.DIFFICULTY_OPTIONS.length - 1))], false, true, uiScale * 0.80f);
+        drawMenuButton(startX, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "Режим: " : "Game Mode: ") + gameModeName(gameMode), false, true, uiScale * 0.80f);
+        drawMenuButton(startX + buttonWidth + gap, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "Сложность: " : "Difficulty: ") + GameConfig.difficultyOptions()[Math.max(0, Math.min(difficulty, GameConfig.difficultyOptions().length - 1))], false, true, uiScale * 0.80f);
         drawShadowText(startX, 286.0f * uiScale, uiScale * 0.62f, gameModeHelp(gameMode), 0.70f, 0.72f, 0.76f);
 
-        drawShadowText(panelX, 308.0f * uiScale, uiScale * 0.78f, "Seed for the World Generator", 0.82f, 0.82f, 0.82f);
+        drawShadowText(panelX, 308.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Seed генератора мира" : "Seed for the World Generator", 0.82f, 0.82f, 0.82f);
         drawTextField(panelX, 330.0f * uiScale, panelWidth, 36.0f * uiScale, seedText, activeTextField == 1);
-        drawShadowText(panelX, 382.0f * uiScale, uiScale * 0.66f, "Leave blank for a random seed", 0.72f, 0.72f, 0.74f);
+        drawShadowText(panelX, 382.0f * uiScale, uiScale * 0.66f, Settings.isRussian() ? "Оставьте пустым для случайного seed" : "Leave blank for a random seed", 0.72f, 0.72f, 0.74f);
 
-        drawBottomButtons(GameConfig.CREATE_WORLD_ACTIONS, mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
+        drawBottomButtons(GameConfig.createWorldActions(), mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
     }
 
     private void renderRenameWorldMenu(int mainMenuSelection, String renameWorldName, int activeTextField) {
         float uiScale = Math.max(1.0f, getUiScale());
-        drawCenteredShadowText(76.0f * uiScale, uiScale * 1.0f, "Rename World", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(76.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "Переименовать мир" : "Rename World", 0.96f, 0.96f, 0.96f);
         float panelWidth = Math.min(720.0f * uiScale, framebufferWidth - 120.0f * uiScale);
         float panelX = framebufferWidth * 0.5f - panelWidth * 0.5f;
-        drawShadowText(panelX, 224.0f * uiScale, uiScale * 0.78f, "World Name", 0.82f, 0.82f, 0.82f);
+        drawShadowText(panelX, 224.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Название мира" : "World Name", 0.82f, 0.82f, 0.82f);
         drawTextField(panelX, 246.0f * uiScale, panelWidth, 36.0f * uiScale, renameWorldName, activeTextField == 0);
-        drawBottomButtons(GameConfig.RENAME_WORLD_ACTIONS, mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
+        drawBottomButtons(GameConfig.renameWorldActions(), mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
     }
 
     private void drawTextField(float x, float y, float width, float height, String text, boolean active) {
@@ -2835,17 +2808,17 @@ final class OpenGlRenderer {
     }
 
     private String gameModeName(int gameMode) {
-        return GameConfig.GAME_MODE_OPTIONS[Math.max(0, Math.min(gameMode, GameConfig.GAME_MODE_OPTIONS.length - 1))];
+        return GameConfig.gameModeOptions()[Math.max(0, Math.min(gameMode, GameConfig.gameModeOptions().length - 1))];
     }
 
     private String gameModeHelp(int gameMode) {
         if (gameMode == 1) {
-            return "Unlimited blocks, flying, and no survival damage.";
+            return Settings.isRussian() ? "Бесконечные блоки, полет и без урона выживания." : "Unlimited blocks, flying, and no survival damage.";
         }
         if (gameMode == 2) {
-            return "No clipping and observation only.";
+            return Settings.isRussian() ? "Полет сквозь блоки и режим наблюдения." : "No clipping and observation only.";
         }
-        return "Search for resources, craft, gain levels, health and hunger.";
+        return Settings.isRussian() ? "Ищите ресурсы, крафтите, следите за здоровьем и голодом." : "Search for resources, craft, gain levels, health and hunger.";
     }
 
     private String formatWorldDate(long millis) {
@@ -2860,13 +2833,14 @@ final class OpenGlRenderer {
         float boxY = 74.0f * uiScale;
         drawRect(boxX, boxY, boxWidth, boxHeight, 0.04f, 0.05f, 0.06f, 0.82f);
         drawOutline(boxX, boxY, boxWidth, boxHeight, 2.0f * uiScale, 0.86f, 0.88f, 0.90f, 0.92f);
-        drawCenteredShadowText(boxY + 28.0f * uiScale, uiScale, "Game Mode", 0.98f, 0.98f, 0.98f);
+        drawCenteredShadowText(boxY + 28.0f * uiScale, uiScale, Settings.isRussian() ? "Режим игры" : "Game Mode", 0.98f, 0.98f, 0.98f);
 
         float slotWidth = 104.0f * uiScale;
         float slotHeight = 42.0f * uiScale;
         float slotY = boxY + 62.0f * uiScale;
         float startX = framebufferWidth * 0.5f - (slotWidth * 3.0f + 14.0f * uiScale * 2.0f) * 0.5f;
-        for (int i = 0; i < GameConfig.GAME_MODE_OPTIONS.length; i++) {
+        String[] gameModeOptions = GameConfig.gameModeOptions();
+        for (int i = 0; i < gameModeOptions.length; i++) {
             float slotX = startX + i * (slotWidth + 14.0f * uiScale);
             boolean selected = i == gameModeSelection;
             drawRect(slotX, slotY, slotWidth, slotHeight,
@@ -2875,8 +2849,8 @@ final class OpenGlRenderer {
                 selected ? 0.62f : 0.27f,
                 selected ? 0.98f : 0.92f);
             float labelScale = uiScale * 0.86f;
-            float labelX = slotX + slotWidth * 0.5f - measureTextWidth(GameConfig.GAME_MODE_OPTIONS[i], labelScale) * 0.5f;
-            drawText(labelX, slotY + 26.0f * uiScale, labelScale, GameConfig.GAME_MODE_OPTIONS[i],
+            float labelX = slotX + slotWidth * 0.5f - measureTextWidth(gameModeOptions[i], labelScale) * 0.5f;
+            drawText(labelX, slotY + 26.0f * uiScale, labelScale, gameModeOptions[i],
                 selected ? 0.08f : 0.94f,
                 selected ? 0.08f : 0.94f,
                 selected ? 0.08f : 0.94f);
@@ -3108,14 +3082,15 @@ final class OpenGlRenderer {
     private void renderCreativeTabs(UiRenderer.InventoryUiLayout layout, int creativeTab, double mouseX, double mouseY) {
         float uiScale = getInventoryUiScale();
         float gap = 4.0f * uiScale;
+        String[] tabLabels = GameConfig.creativeTabs();
         float tabWidth = Math.min(68.0f * uiScale,
-            (layout.panelWidth - 32.0f * uiScale - gap * (GameConfig.CREATIVE_TABS.length - 1)) / GameConfig.CREATIVE_TABS.length);
+            (layout.panelWidth - 32.0f * uiScale - gap * (tabLabels.length - 1)) / tabLabels.length);
         float tabHeight = 22.0f * uiScale;
-        float totalWidth = tabWidth * GameConfig.CREATIVE_TABS.length + gap * (GameConfig.CREATIVE_TABS.length - 1);
+        float totalWidth = tabWidth * tabLabels.length + gap * (tabLabels.length - 1);
         float startX = layout.panelX + layout.panelWidth * 0.5f - totalWidth * 0.5f;
         float y = layout.panelY + 10.0f * uiScale;
-        int activeTab = Math.max(0, Math.min(creativeTab, GameConfig.CREATIVE_TABS.length - 1));
-        for (int i = 0; i < GameConfig.CREATIVE_TABS.length; i++) {
+        int activeTab = Math.max(0, Math.min(creativeTab, tabLabels.length - 1));
+        for (int i = 0; i < tabLabels.length; i++) {
             float x = startX + i * (tabWidth + gap);
             boolean active = i == activeTab;
             boolean hovered = mouseX >= x && mouseX <= x + tabWidth && mouseY >= y && mouseY <= y + tabHeight;
@@ -3125,7 +3100,7 @@ final class OpenGlRenderer {
                 active ? 0.56f : (hovered ? 0.58f : 0.38f),
                 0.96f);
             drawOutline(x, y, tabWidth, tabHeight, uiScale, active ? 0.96f : 0.18f, active ? 0.92f : 0.18f, active ? 0.72f : 0.20f, 0.92f);
-            String label = GameConfig.CREATIVE_TABS[i];
+            String label = tabLabels[i];
             float labelScale = Math.min(uiScale * 0.58f, tabWidth / Math.max(1.0f, measureTextWidth(label, 1.0f)) * 0.82f);
             drawText(x + tabWidth * 0.5f - measureTextWidth(label, labelScale) * 0.5f, y + 15.0f * uiScale, labelScale, label, active ? 0.08f : 0.94f, active ? 0.08f : 0.94f, active ? 0.08f : 0.94f);
         }
