@@ -19,8 +19,8 @@ final class UiRenderer {
             screenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
         }
         float maxScaleByWidth = (framebufferWidth - 32.0f) / (creativeMode ? 430.0f : 470.0f);
-        float maxScaleByHeight = (framebufferHeight - 32.0f) / (creativeMode ? 388.0f : 380.0f);
-        uiScale = Math.max(0.85f, Math.min(uiScale, Math.min(maxScaleByWidth, maxScaleByHeight)));
+        float maxScaleByHeight = (framebufferHeight - 40.0f) / (creativeMode ? 430.0f : 380.0f);
+        uiScale = Math.max(creativeMode ? 0.68f : 0.85f, Math.min(uiScale, Math.min(maxScaleByWidth, maxScaleByHeight)));
         float slotSize = 21.0f * uiScale;
         float slotGap = 3.0f * uiScale;
         float gridWidth = slotSize * 9.0f + slotGap * 8.0f;
@@ -32,13 +32,14 @@ final class UiRenderer {
         float tabGap = 4.0f * uiScale;
         float tabsWidth = tabWidth * GameConfig.CREATIVE_TABS.length + tabGap * (GameConfig.CREATIVE_TABS.length - 1);
 
-        float creativeTrashWidth = creativeMode ? slotSize + slotGap + 10.0f * uiScale : 0.0f;
+        float creativeTrashWidth = 0.0f;
         float panelWidth = creativeMode ? Math.max(gridWidth + padding * 2.0f + creativeTrashWidth, tabsWidth + padding * 2.0f) : Math.max(gridWidth + padding * 2.0f, 440.0f * uiScale);
         float panelHeight = creativeMode
             ? titleHeight + 4.0f * (slotSize + slotGap) + 18.0f * uiScale + gridHeight + hotbarGap + slotSize + padding * 2.0f
             : (screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? 348.0f * uiScale : 370.0f * uiScale);
         float panelX = clamp(framebufferWidth * 0.5f - panelWidth * 0.5f, 8.0f, Math.max(8.0f, framebufferWidth - panelWidth - 8.0f));
-        float panelY = clamp(framebufferHeight * 0.5f - panelHeight * 0.5f, 8.0f, Math.max(8.0f, framebufferHeight - panelHeight - 8.0f));
+        float panelY = clamp(framebufferHeight * 0.5f - panelHeight * 0.5f - (creativeMode ? 18.0f * uiScale : 0.0f),
+            8.0f, Math.max(8.0f, framebufferHeight - panelHeight - 8.0f));
 
         float storageX;
         float storageAbsoluteY;
@@ -87,8 +88,8 @@ final class UiRenderer {
         ArrayList<SlotBox> slots = new ArrayList<>();
         if (creativeMode) {
             addSlotBox(slots, InventorySlotGroup.TRASH, 0,
-                panelX + padding,
-                creativeAbsoluteY,
+                panelX + panelWidth - padding - slotSize,
+                hotbarAbsoluteY,
                 slotSize);
             int[] tabIndices = InventoryItems.CREATIVE_TAB_INDICES[Math.max(0, Math.min(activeCreativeTab, InventoryItems.CREATIVE_TAB_INDICES.length - 1))];
             for (int row = 0; row < 4; row++) {

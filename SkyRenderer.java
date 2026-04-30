@@ -28,7 +28,9 @@ final class SkyRenderer {
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
         renderStars(player, timeOfDay, daylight, renderCameraX, renderCameraY, renderCameraZ);
-        renderCloudLayer(player, daylight, renderCameraX, renderCameraY, renderCameraZ);
+        if (Settings.goodGraphics()) {
+            renderCloudLayer(player, daylight, renderCameraX, renderCameraY, renderCameraZ);
+        }
         glDepthMask(true);
         glEnable(GL_DEPTH_TEST);
     }

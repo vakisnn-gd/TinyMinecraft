@@ -8,7 +8,7 @@ abstract class Entity {
     double fallDistance;
     boolean isGrounded;
     double stepTimer;
-    int health;
+    double health;
     int airUnits;
     double airUnitTimer;
     double drowningTimer;
@@ -17,7 +17,7 @@ abstract class Entity {
     double fireDamageTimer;
     boolean wasInWater;
 
-    Entity(double x, double y, double z, int health) {
+    Entity(double x, double y, double z, double health) {
         setPosition(x, y, z);
         this.health = health;
         this.airUnits = GameConfig.MAX_AIR_UNITS;

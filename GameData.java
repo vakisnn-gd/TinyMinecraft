@@ -16,7 +16,7 @@ final class GameConfig {
     static final int WORLD_CHUNKS_X = 16;
     static final int WORLD_CHUNKS_Y = SECTION_COUNT;
     static final int WORLD_CHUNKS_Z = 16;
-    static final int CHUNK_RENDER_DISTANCE = 12;
+    static final int CHUNK_RENDER_DISTANCE = 8;
     static final int SPECTATOR_CHUNK_RENDER_DISTANCE = 12;
     static final int MIN_RENDER_DISTANCE = 2;
     static final int MAX_RENDER_DISTANCE_CHUNKS = 32;
@@ -32,7 +32,7 @@ final class GameConfig {
     static final int REGION_SIZE_CHUNKS = 32;
     static final int REGION_CHUNK_COUNT = REGION_SIZE_CHUNKS * REGION_SIZE_CHUNKS;
     static final String REGION_FILE_EXTENSION = ".mcrx";
-    static final int CHUNK_GENERATION_THREADS = Math.max(3, Math.min(8, Runtime.getRuntime().availableProcessors()));
+    static final int CHUNK_GENERATION_THREADS = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
     static final int INITIAL_CHUNK_SYNC_RADIUS = 1;
     static final int SEA_LEVEL = 63;
     static final int SURFACE_Y = SEA_LEVEL;
@@ -391,10 +391,58 @@ final class WorldInfo {
     }
 }
 
+final class RuntimePaths {
+    static final Path PROJECT_ROOT = detectProjectRoot();
+
+    private RuntimePaths() {
+    }
+
+    static Path resolve(String first, String... more) {
+        return PROJECT_ROOT.resolve(Path.of(first, more)).normalize();
+    }
+
+    private static Path detectProjectRoot() {
+        Path cwd = Path.of("").toAbsolutePath().normalize();
+        Path cwdRoot = projectRootFrom(cwd);
+        if (cwdRoot != null) {
+            return cwdRoot;
+        }
+
+        try {
+            Path classPath = Path.of(RuntimePaths.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
+            Path classRoot = projectRootFrom(classPath);
+            if (classRoot != null) {
+                return classRoot;
+            }
+        } catch (Exception ignored) {
+        }
+
+        return cwd;
+    }
+
+    private static Path projectRootFrom(Path path) {
+        if (looksLikeProjectRoot(path)) {
+            return path;
+        }
+        Path fileName = path.getFileName();
+        Path parent = path.getParent();
+        if (fileName != null && parent != null && "out".equalsIgnoreCase(fileName.toString()) && looksLikeProjectRoot(parent)) {
+            return parent;
+        }
+        return null;
+    }
+
+    private static boolean looksLikeProjectRoot(Path path) {
+        return java.nio.file.Files.isRegularFile(path.resolve("TinyMinecraft.java"))
+            && java.nio.file.Files.isDirectory(path.resolve("lib"));
+    }
+}
+
 final class Settings {
     static double mouseSensitivity = 0.00081;
     static double mouseVerticalFactor = 0.7407407407;
     static int inventoryUiSize = 2;
+    static int graphicsQuality = 0;
     static int savedRenderDistance = GameConfig.CHUNK_RENDER_DISTANCE;
     static int savedFovDegrees = (int) GameConfig.FOV_DEGREES;
     static String language = "ru";
@@ -407,7 +455,7 @@ final class Settings {
     }
 
     static void load() {
-        java.nio.file.Path path = java.nio.file.Path.of("options.txt");
+        java.nio.file.Path path = RuntimePaths.resolve("options.txt");
         if (!java.nio.file.Files.isRegularFile(path)) {
             return;
         }
@@ -416,6 +464,8 @@ final class Settings {
                 String trimmed = line.trim();
                 if (trimmed.startsWith("inventoryUiSize=")) {
                     inventoryUiSize = clampInventoryUiSize(Integer.parseInt(trimmed.substring(16)));
+                } else if (trimmed.startsWith("graphicsQuality=")) {
+                    graphicsQuality = clampGraphicsQuality(Integer.parseInt(trimmed.substring(16)));
                 } else if (trimmed.startsWith("renderDistance=")) {
                     savedRenderDistance = clamp(Integer.parseInt(trimmed.substring(15)), GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
                 } else if (trimmed.startsWith("fov=")) {
@@ -427,6 +477,7 @@ final class Settings {
             }
         } catch (RuntimeException | java.io.IOException ignored) {
             inventoryUiSize = clampInventoryUiSize(inventoryUiSize);
+            graphicsQuality = clampGraphicsQuality(graphicsQuality);
             savedRenderDistance = clamp(savedRenderDistance, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
             savedFovDegrees = clamp(savedFovDegrees, 55, 100);
         }
@@ -436,18 +487,28 @@ final class Settings {
         savedRenderDistance = clamp(renderDistance, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
         savedFovDegrees = clamp(fovDegrees, 55, 100);
         inventoryUiSize = clampInventoryUiSize(inventoryUiSize);
+        graphicsQuality = clampGraphicsQuality(graphicsQuality);
         String text = "renderDistance=" + savedRenderDistance + System.lineSeparator()
             + "fov=" + savedFovDegrees + System.lineSeparator()
             + "inventoryUiSize=" + inventoryUiSize + System.lineSeparator()
+            + "graphicsQuality=" + graphicsQuality + System.lineSeparator()
             + "language=" + language + System.lineSeparator();
         try {
-            java.nio.file.Files.writeString(java.nio.file.Path.of("options.txt"), text, java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.writeString(RuntimePaths.resolve("options.txt"), text, java.nio.charset.StandardCharsets.UTF_8);
         } catch (java.io.IOException ignored) {
         }
     }
 
     private static int clampInventoryUiSize(int value) {
         return clamp(value, 1, 4);
+    }
+
+    private static int clampGraphicsQuality(int value) {
+        return clamp(value, 0, 1);
+    }
+
+    static boolean goodGraphics() {
+        return graphicsQuality >= 1;
     }
 
     static boolean isRussian() {
@@ -524,7 +585,7 @@ final class PlayerState extends Entity {
     double hungerDrainTimer = 0.0;
     double hungerDamageTimer = 0.0;
     double hungerRegenTimer = 0.0;
-    int hunger = GameConfig.MAX_HUNGER;
+    double hunger = GameConfig.MAX_HUNGER;
     int armorProtection = 0;
     boolean headInWater;
     boolean wasInLiquid;
@@ -848,6 +909,7 @@ final class Zombie extends Entity {
 final class DroppedItem extends Entity {
     final byte itemId;
     int count;
+    int durabilityDamage;
     double ageSeconds;
     double pickupDelaySeconds = GameConfig.DROPPED_ITEM_PICKUP_DELAY_SECONDS;
     double spinDegrees;
@@ -856,6 +918,7 @@ final class DroppedItem extends Entity {
         super(x, y, z, 1);
         this.itemId = itemId;
         this.count = count;
+        this.durabilityDamage = 0;
     }
 
     @Override

@@ -93,17 +93,17 @@ final class AudioEngine {
             }
 
             enabled = true;
-            loadSoundSafely("step_grass", Path.of("sounds", "step_grass.wav"));
-            loadSoundSafely("step_stone", Path.of("sounds", "step_stone.wav"));
-            loadSoundSafely("block_break", Path.of("sounds", "block_break.wav"));
-            loadSoundSafely("water_splash", Path.of("sounds", "water_splash.wav"));
-            loadSoundSafely("water_ambient", Path.of("sounds", "water_ambient.wav"));
-            loadSoundSafely("zombie_growl", Path.of("sounds", "zombie_growl.wav"));
-            loadSoundSafely("skeleton_rattle", Path.of("sounds", "skeleton_rattle.wav"));
-            loadSoundSafely("pig_oink", Path.of("sounds", "pig_oink.wav"));
-            loadSoundSafely("sheep_baa", Path.of("sounds", "sheep_baa.wav"));
-            loadSoundSafely("cow_moo", Path.of("sounds", "cow_moo.wav"));
-            loadSoundSafely("villager_hmm", Path.of("sounds", "villager_hmm.wav"));
+            loadSoundSafely("step_grass", RuntimePaths.resolve("sounds", "step_grass.wav"));
+            loadSoundSafely("step_stone", RuntimePaths.resolve("sounds", "step_stone.wav"));
+            loadSoundSafely("block_break", RuntimePaths.resolve("sounds", "block_break.wav"));
+            loadSoundSafely("water_splash", RuntimePaths.resolve("sounds", "water_splash.wav"));
+            loadSoundSafely("water_ambient", RuntimePaths.resolve("sounds", "water_ambient.wav"));
+            loadSoundSafely("zombie_growl", RuntimePaths.resolve("sounds", "zombie_growl.wav"));
+            loadSoundSafely("skeleton_rattle", RuntimePaths.resolve("sounds", "skeleton_rattle.wav"));
+            loadSoundSafely("pig_oink", RuntimePaths.resolve("sounds", "pig_oink.wav"));
+            loadSoundSafely("sheep_baa", RuntimePaths.resolve("sounds", "sheep_baa.wav"));
+            loadSoundSafely("cow_moo", RuntimePaths.resolve("sounds", "cow_moo.wav"));
+            loadSoundSafely("villager_hmm", RuntimePaths.resolve("sounds", "villager_hmm.wav"));
         } catch (Throwable exception) {
             System.err.println("AudioEngine init failed: " + exception.getMessage());
             cleanup();
@@ -315,7 +315,7 @@ final class AudioEngine {
     }
 
     private void ensureDefaultSounds() throws IOException {
-        Path soundDirectory = Path.of("sounds");
+        Path soundDirectory = RuntimePaths.resolve("sounds");
         Files.createDirectories(soundDirectory);
 
         ensureWave(soundDirectory.resolve("step_grass.wav"), 0.12, (time, progress) -> {

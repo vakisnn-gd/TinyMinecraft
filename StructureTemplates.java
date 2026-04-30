@@ -87,7 +87,7 @@ final class StructureTemplates {
 
     private static void placeHouse(Target target, int ox, int oy, int oz, int width, int depth, int wallHeight, int rot, byte wallBlock, byte roofBlock) {
         clearBox(target, ox - 1, oy + 1, oz - 1, width + 2, wallHeight + 4, depth + 2, rot);
-        fillBox(target, ox - 1, oy - 1, oz - 1, width + 2, 1, depth + 2, rot, GameConfig.DIRT);
+        fillBox(target, ox - 1, oy - 1, oz - 1, width + 2, 1, depth + 2, rot, GameConfig.GRASS);
         for (int x = 0; x < width; x++) {
             for (int z = 0; z < depth; z++) {
                 set(target, ox, oy, oz, x, 0, z, rot, InventoryItems.OAK_PLANKS);

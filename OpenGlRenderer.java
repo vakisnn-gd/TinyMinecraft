@@ -10,12 +10,18 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.PriorityQueue;
 import javax.imageio.ImageIO;
 
@@ -49,6 +55,7 @@ import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T;
+import static org.lwjgl.opengl.GL11.GL_UNPACK_ALIGNMENT;
 import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
 import static org.lwjgl.opengl.GL11.GL_VERTEX_ARRAY;
 import static org.lwjgl.opengl.GL11.glBegin;
@@ -76,6 +83,7 @@ import static org.lwjgl.opengl.GL11.glLineWidth;
 import static org.lwjgl.opengl.GL11.glLoadIdentity;
 import static org.lwjgl.opengl.GL11.glMatrixMode;
 import static org.lwjgl.opengl.GL11.glOrtho;
+import static org.lwjgl.opengl.GL11.glPixelStorei;
 import static org.lwjgl.opengl.GL11.glPopMatrix;
 import static org.lwjgl.opengl.GL11.glPushMatrix;
 import static org.lwjgl.opengl.GL11.glRotatef;
@@ -99,8 +107,6 @@ import static org.lwjgl.opengl.GL15.glBindBuffer;
 import static org.lwjgl.opengl.GL15.glBufferData;
 import static org.lwjgl.opengl.GL15.glDeleteBuffers;
 import static org.lwjgl.opengl.GL15.glGenBuffers;
-import static org.lwjgl.stb.STBEasyFont.stb_easy_font_print;
-import static org.lwjgl.stb.STBEasyFont.stb_easy_font_width;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 
@@ -115,6 +121,8 @@ final class OpenGlRenderer {
     private static final double CAMERA_NEAR_PLANE = 0.08;
     private static final double CAMERA_FAR_PADDING = 64.0;
     private static final int RENDER_EDGE_PADDING_CHUNKS = 2;
+    private static final String UI_FONT_FAMILY = "SansSerif";
+    private static final int MAX_TEXT_TEXTURE_CACHE_SIZE = 512;
     private static final int ATLAS_TILE_SIZE = 16;
     private static final int ATLAS_COLUMNS = 4;
     private static final int ATLAS_ROWS = 4;
@@ -130,8 +138,7 @@ final class OpenGlRenderer {
     private final ArrayList<Long> staleMeshKeys = new ArrayList<>();
     private final ArrayList<Chunk> loadedChunkSnapshot = new ArrayList<>();
     private final PriorityQueue<MeshBuildCandidate> meshBuildQueue = new PriorityQueue<>();
-    private final ByteBuffer textBuffer = BufferUtils.createByteBuffer(64 * 1024);
-    private final HashMap<String, TextTexture> unicodeTextTextures = new HashMap<>();
+    private final LinkedHashMap<String, TextTexture> textTextures = new LinkedHashMap<>(128, 0.75f, true);
 
     private int framebufferWidth = GameConfig.WINDOW_WIDTH;
     private int framebufferHeight = GameConfig.WINDOW_HEIGHT;
@@ -152,6 +159,9 @@ final class OpenGlRenderer {
     private int cameraBlockX;
     private int cameraBlockY;
     private int cameraBlockZ;
+    private double cameraForwardX = 1.0;
+    private double cameraForwardY;
+    private double cameraForwardZ;
     private int lastCameraSolidBlockX = Integer.MIN_VALUE;
     private int lastCameraSolidBlockY = Integer.MIN_VALUE;
     private int lastCameraSolidBlockZ = Integer.MIN_VALUE;
@@ -159,14 +169,6 @@ final class OpenGlRenderer {
     private boolean spectatorInsideBlock;
     private boolean lastSpectatorInsideBlock;
     private long lastMeshProfileLogNanos;
-    private double frustumForwardX;
-    private double frustumForwardY;
-    private double frustumForwardZ;
-    private double frustumRightX;
-    private double frustumRightZ;
-    private double frustumUpX;
-    private double frustumUpY;
-    private double frustumUpZ;
     private double menuPanoramaYaw;
 
     OpenGlRenderer(VoxelWorld world) {
@@ -259,23 +261,27 @@ final class OpenGlRenderer {
     }
 
     private float optionsRenderDistanceSliderY(float uiScale) {
-        return framebufferHeight * 0.5f - 132.0f * uiScale;
+        return Math.max(112.0f * uiScale, framebufferHeight * 0.20f);
     }
 
     private float optionsFovSliderY(float uiScale) {
-        return framebufferHeight * 0.5f - 60.0f * uiScale;
+        return optionsRenderDistanceSliderY(uiScale) + 70.0f * uiScale;
     }
 
     private float optionsInventoryUiSliderY(float uiScale) {
-        return framebufferHeight * 0.5f + 12.0f * uiScale;
+        return optionsRenderDistanceSliderY(uiScale) + 140.0f * uiScale;
+    }
+
+    private float optionsGraphicsButtonY(float uiScale) {
+        return optionsRenderDistanceSliderY(uiScale) + 210.0f * uiScale;
     }
 
     private float optionsLanguageButtonY(float uiScale) {
-        return framebufferHeight * 0.5f + 72.0f * uiScale;
+        return optionsRenderDistanceSliderY(uiScale) + 270.0f * uiScale;
     }
 
     private float optionsBackButtonY(float uiScale) {
-        return framebufferHeight * 0.5f + 136.0f * uiScale;
+        return optionsRenderDistanceSliderY(uiScale) + 330.0f * uiScale;
     }
 
     int getDeathOptionAt(double cursorX, double cursorY) {
@@ -288,12 +294,16 @@ final class OpenGlRenderer {
             float actionWidth = 280.0f * uiScale;
             float actionHeight = 46.0f * uiScale;
             float x = framebufferWidth * 0.5f - actionWidth * 0.5f;
-            float languageY = optionsLanguageButtonY(uiScale);
-            if (cursorX >= x && cursorX <= x + actionWidth && cursorY >= languageY && cursorY <= languageY + actionHeight) {
+            float graphicsY = optionsGraphicsButtonY(uiScale);
+            if (cursorX >= x && cursorX <= x + actionWidth && cursorY >= graphicsY && cursorY <= graphicsY + actionHeight) {
                 return 3;
             }
+            float languageY = optionsLanguageButtonY(uiScale);
+            if (cursorX >= x && cursorX <= x + actionWidth && cursorY >= languageY && cursorY <= languageY + actionHeight) {
+                return 4;
+            }
             float y = optionsBackButtonY(uiScale);
-            return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 4 : -1;
+            return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 5 : -1;
         }
         String[] actions = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? GameConfig.singleplayerActions()
             : (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD ? GameConfig.createWorldActions()
@@ -432,7 +442,8 @@ final class OpenGlRenderer {
         glPushMatrix();
         glLoadIdentity();
 
-        drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.02f, 0.025f, 0.03f, 1.0f);
+        drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.20f, 0.28f, 0.38f, 1.0f);
+        drawRect(0.0f, framebufferHeight * 0.56f, framebufferWidth, framebufferHeight * 0.44f, 0.08f, 0.16f, 0.10f, 0.40f);
         float uiScale = Math.max(1.0f, getUiScale());
         drawCenteredShadowText(framebufferHeight * 0.45f, uiScale * 1.15f, message, 0.96f, 0.96f, 0.96f);
         if (detail != null && !detail.isEmpty()) {
@@ -531,8 +542,7 @@ final class OpenGlRenderer {
         glDisable(GL_CULL_FACE);
 
         updateCameraEffects(sprinting, fovDegrees, deltaTime);
-        boolean mainMenuHome = mainMenuActive && mainMenuScreen == GameConfig.MENU_SCREEN_MAIN;
-        boolean menuPanorama = mainMenuHome && loadedWorldName != null && !loadedWorldName.isBlank();
+        boolean menuPanorama = mainMenuActive && loadedWorldName != null && !loadedWorldName.isBlank();
         setupProjection();
         if (menuPanorama) {
             setupMenuPanoramaCamera(player, deltaTime);
@@ -549,9 +559,12 @@ final class OpenGlRenderer {
             renderFallingBlocks(player);
             renderZombies(player);
             renderDroppedItems(player, timeOfDay);
-            renderPlayerModel(player, inventory, selectedBlock, thirdPersonView);
+            renderPlayerModel(player, inventory, selectedBlock, thirdPersonView, frontThirdPersonView);
         }
         renderChunks(player, true);
+        if (!mainMenuActive && !thirdPersonView && !frontThirdPersonView && !hideHud && !player.spectatorMode) {
+            renderFirstPersonHand3d(player, selectedBlock);
+        }
         glDisable(GL_FOG);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -575,10 +588,10 @@ final class OpenGlRenderer {
             glDeleteTextures(terrainTextureId);
             terrainTextureId = 0;
         }
-        for (TextTexture texture : unicodeTextTextures.values()) {
+        for (TextTexture texture : textTextures.values()) {
             glDeleteTextures(texture.textureId);
         }
-        unicodeTextTextures.clear();
+        textTextures.clear();
         if (uploadProbeVboId != 0) {
             glDeleteBuffers(uploadProbeVboId);
             uploadProbeVboId = 0;
@@ -657,6 +670,9 @@ final class OpenGlRenderer {
         renderCameraX = cameraX;
         renderCameraY = cameraY;
         renderCameraZ = cameraZ;
+        cameraForwardX = Math.cos(player.yaw) * Math.cos(player.pitch);
+        cameraForwardY = Math.sin(player.pitch);
+        cameraForwardZ = Math.sin(player.yaw) * Math.cos(player.pitch);
         cameraBlockX = (int) Math.floor(renderCameraX);
         cameraBlockY = (int) Math.floor(renderCameraY);
         cameraBlockZ = (int) Math.floor(renderCameraZ);
@@ -666,7 +682,6 @@ final class OpenGlRenderer {
 
         double viewPitchDegrees = frontThirdPersonView ? -pitchDegrees : pitchDegrees;
         double viewYawDegrees = frontThirdPersonView ? yawDegrees + 180.0 : yawDegrees;
-        updateFrustumBasis(Math.toRadians(viewYawDegrees), Math.toRadians(viewPitchDegrees));
         glRotatef((float) -viewPitchDegrees, 1.0f, 0.0f, 0.0f);
         glRotatef((float) (viewYawDegrees + 90.0), 0.0f, 1.0f, 0.0f);
         glRotatef((float) -bobRoll, 0.0f, 0.0f, 1.0f);
@@ -687,6 +702,9 @@ final class OpenGlRenderer {
         renderCameraX = player.x;
         renderCameraY = player.y + player.eyeHeight() + 5.0;
         renderCameraZ = player.z;
+        cameraForwardX = Math.cos(yaw) * Math.cos(pitch);
+        cameraForwardY = Math.sin(pitch);
+        cameraForwardZ = Math.sin(yaw) * Math.cos(pitch);
         cameraBlockX = (int) Math.floor(renderCameraX);
         cameraBlockY = (int) Math.floor(renderCameraY);
         cameraBlockZ = (int) Math.floor(renderCameraZ);
@@ -694,21 +712,8 @@ final class OpenGlRenderer {
         spectatorInsideBlock = false;
         refreshCameraInsideBlockMesh();
 
-        updateFrustumBasis(yaw, pitch);
         glRotatef((float) -Math.toDegrees(pitch), 1.0f, 0.0f, 0.0f);
         glRotatef((float) (Math.toDegrees(yaw) + 90.0), 0.0f, 1.0f, 0.0f);
-    }
-
-    private void updateFrustumBasis(double yaw, double pitch) {
-        double horizontal = Math.cos(pitch);
-        frustumForwardX = Math.cos(yaw) * horizontal;
-        frustumForwardY = Math.sin(pitch);
-        frustumForwardZ = Math.sin(yaw) * horizontal;
-        frustumRightX = -Math.sin(yaw);
-        frustumRightZ = Math.cos(yaw);
-        frustumUpX = -frustumRightZ * frustumForwardY;
-        frustumUpY = frustumRightZ * frustumForwardX - frustumRightX * frustumForwardZ;
-        frustumUpZ = frustumRightX * frustumForwardY;
     }
 
     private void renderAtmosphere(PlayerState player, double timeOfDay, double deltaTime) {
@@ -841,8 +846,31 @@ final class OpenGlRenderer {
         if (Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ)) > chunkRenderRadius) {
             return false;
         }
+        if (!isChunkInCameraCone(chunkX, chunkY, chunkZ)) {
+            return false;
+        }
 
         return true;
+    }
+
+    private boolean isChunkInCameraCone(int chunkX, int chunkY, int chunkZ) {
+        double centerX = (chunkX + 0.5) * GameConfig.CHUNK_SIZE;
+        double centerY = GameConfig.sectionYForIndex(chunkY) + GameConfig.CHUNK_SIZE * 0.5;
+        double centerZ = (chunkZ + 0.5) * GameConfig.CHUNK_SIZE;
+        double dx = centerX - renderCameraX;
+        double dy = centerY - renderCameraY;
+        double dz = centerZ - renderCameraZ;
+        double distanceSquared = dx * dx + dy * dy + dz * dz;
+        double nearAlwaysVisible = GameConfig.CHUNK_SIZE * 3.0;
+        if (distanceSquared <= nearAlwaysVisible * nearAlwaysVisible) {
+            return true;
+        }
+        double distance = Math.sqrt(distanceSquared);
+        if (distance <= 0.0001) {
+            return true;
+        }
+        double dot = (dx * cameraForwardX + dy * cameraForwardY + dz * cameraForwardZ) / distance;
+        return dot > -0.18;
     }
 
     private double cameraFarPlane() {
@@ -1056,7 +1084,8 @@ final class OpenGlRenderer {
         }
         double sideMinY = world.isLiquidBlock(block) ? waterRenderer.liquidSideMinY(minY, block, face, worldX, worldY, worldZ) : minY;
 
-        float[] color = colorForFace(block, face, world.getAmbientShade(worldX, worldY, worldZ), worldX, worldY, worldZ);
+        float shade = Settings.goodGraphics() ? world.getAmbientShade(worldX, worldY, worldZ) : 1.0f;
+        float[] color = colorForFace(block, face, shade, worldX, worldY, worldZ);
         if (forcedAlpha >= 0.0f) {
             color[3] = forcedAlpha;
         }
@@ -1084,7 +1113,7 @@ final class OpenGlRenderer {
                 break;
         }
         if (isOreBlock(block) && !liquid && forcedAlpha < 0.0f) {
-            emitOreFaceOverlay(builder, minX, minY, minZ, maxX, maxY, maxZ, face, block, ambientShade(worldX, worldY, worldZ));
+            emitOreFaceOverlay(builder, minX, minY, minZ, maxX, maxY, maxZ, face, block, shade);
         }
     }
 
@@ -1534,6 +1563,15 @@ final class OpenGlRenderer {
     }
 
     private int dynamicChunkUploadBudget() {
+        if (!Settings.goodGraphics()) {
+            if (debugFps >= 55.0 || debugFps <= 0.0) {
+                return 5;
+            }
+            if (debugFps >= 35.0) {
+                return 3;
+            }
+            return MIN_CHUNK_UPLOADS_PER_FRAME;
+        }
         if (debugFps >= 58.0 || debugFps <= 0.0) {
             return MAX_CHUNK_UPLOADS_PER_FRAME;
         }
@@ -1550,6 +1588,15 @@ final class OpenGlRenderer {
     }
 
     private long dynamicMeshBuildBudgetNs() {
+        if (!Settings.goodGraphics()) {
+            if (debugFps >= 55.0 || debugFps <= 0.0) {
+                return 5_000_000L;
+            }
+            if (debugFps >= 35.0) {
+                return 3_500_000L;
+            }
+            return MIN_MESH_BUILD_BUDGET_NS;
+        }
         if (debugFps >= 58.0 || debugFps <= 0.0) {
             return MAX_MESH_BUILD_BUDGET_NS;
         }
@@ -1848,7 +1895,7 @@ final class OpenGlRenderer {
         }
     }
 
-    private void renderPlayerModel(PlayerState player, PlayerInventory inventory, byte selectedBlock, boolean thirdPersonView) {
+    private void renderPlayerModel(PlayerState player, PlayerInventory inventory, byte selectedBlock, boolean thirdPersonView, boolean frontThirdPersonView) {
         if (!thirdPersonView) {
             return;
         }
@@ -1857,9 +1904,26 @@ final class OpenGlRenderer {
         glPushMatrix();
         glTranslated(player.x - renderCameraX, player.y - renderCameraY, player.z - renderCameraZ);
         glRotated(-Math.toDegrees(player.yaw) - 90.0, 0.0, 1.0, 0.0);
-        drawPlayerModelParts(inventory, selectedBlock, swing, player.pitch, true, player.sneaking);
+        if (player.spectatorMode || frontThirdPersonView) {
+            drawPlayerHeadOnly(inventory, player.pitch, player.sneaking);
+        } else {
+            drawPlayerModelParts(inventory, selectedBlock, swing, player.pitch, true, player.sneaking);
+        }
         if (player.fireTimer > 0.0) {
             drawCuboid(-0.30, 0.02, -0.30, 0.30, 1.65, 0.30, 1.0f, 0.34f, 0.06f);
+        }
+        glPopMatrix();
+    }
+
+    private void drawPlayerHeadOnly(PlayerInventory inventory, double pitch, boolean sneakingPose) {
+        float[] helmet = inventory == null ? null : armorColor(inventory.getArmorStack(0));
+        double crouch = sneakingPose ? -0.23 : 0.0;
+        glPushMatrix();
+        glTranslated(0.0, 1.59 + crouch, sneakingPose ? -0.04 : 0.0);
+        glRotated(Math.toDegrees(pitch), 1.0, 0.0, 0.0);
+        drawCuboid(-0.23, -0.23, -0.23, 0.23, 0.23, 0.23, 0.91f, 0.78f, 0.63f);
+        if (helmet != null) {
+            drawCuboid(-0.255, -0.255, -0.255, 0.255, 0.07, 0.255, helmet[0], helmet[1], helmet[2]);
         }
         glPopMatrix();
     }
@@ -1961,6 +2025,36 @@ final class OpenGlRenderer {
         glVertex3d(minX, minY, minZ);
 
         shadeColor(red, green, blue, 0.72f);
+        glVertex3d(minX, minY, maxZ);
+        glVertex3d(minX, maxY, maxZ);
+        glVertex3d(maxX, maxY, maxZ);
+        glVertex3d(maxX, minY, maxZ);
+        glEnd();
+    }
+
+    private void drawFlatCuboid(double minX, double minY, double minZ, double maxX, double maxY, double maxZ, float red, float green, float blue) {
+        glBegin(GL_QUADS);
+        glColor3f(clampColor(red * currentSceneBrightness), clampColor(green * currentSceneBrightness), clampColor(blue * currentSceneBrightness));
+        glVertex3d(minX, minY, minZ);
+        glVertex3d(minX, maxY, minZ);
+        glVertex3d(minX, maxY, maxZ);
+        glVertex3d(minX, minY, maxZ);
+        glVertex3d(maxX, minY, maxZ);
+        glVertex3d(maxX, maxY, maxZ);
+        glVertex3d(maxX, maxY, minZ);
+        glVertex3d(maxX, minY, minZ);
+        glVertex3d(minX, maxY, maxZ);
+        glVertex3d(minX, maxY, minZ);
+        glVertex3d(maxX, maxY, minZ);
+        glVertex3d(maxX, maxY, maxZ);
+        glVertex3d(minX, minY, minZ);
+        glVertex3d(minX, minY, maxZ);
+        glVertex3d(maxX, minY, maxZ);
+        glVertex3d(maxX, minY, minZ);
+        glVertex3d(maxX, minY, minZ);
+        glVertex3d(maxX, maxY, minZ);
+        glVertex3d(minX, maxY, minZ);
+        glVertex3d(minX, minY, minZ);
         glVertex3d(minX, minY, maxZ);
         glVertex3d(minX, maxY, maxZ);
         glVertex3d(maxX, maxY, maxZ);
@@ -2167,6 +2261,10 @@ final class OpenGlRenderer {
         double maxX = baseX + bounds[3] + offset - renderCameraX;
         double maxY = baseY + bounds[4] + offset - renderCameraY;
         double maxZ = baseZ + bounds[5] + offset - renderCameraZ;
+        if (block == GameConfig.RED_BED) {
+            minY = baseY + 0.02 - renderCameraY;
+            maxY = baseY + 0.54 + offset - renderCameraY;
+        }
 
         glColor4f(1.0f, 0.95f, 0.72f, (float) (0.05 + breakingProgress * 0.22));
         glBegin(GL_QUADS);
@@ -2218,9 +2316,6 @@ final class OpenGlRenderer {
         boolean blockingOverlay = paused || inventoryOpen || deathScreenActive || mainMenuActive;
         if (!hideHud && !minimalHud && !blockingOverlay) {
             drawCrosshair();
-            if (!thirdPersonView) {
-                drawFirstPersonHand(player, selectedBlock);
-            }
             drawHotbar(inventory, selectedSlot);
             if (!player.creativeMode) {
                 drawHealthBar(player.health, inventory);
@@ -2401,7 +2496,7 @@ final class OpenGlRenderer {
         drawRect(framebufferWidth * 0.92f, 0.0f, framebufferWidth * 0.08f, framebufferHeight, 0.95f, 0.08f, 0.01f, alpha * 0.55f);
     }
 
-    private void drawHealthBar(int health, PlayerInventory inventory) {
+    private void drawHealthBar(double health, PlayerInventory inventory) {
         float uiScale = getUiScale();
         float heartScale = 1.52f * uiScale;
         float spacing = 0.9f * uiScale;
@@ -2412,8 +2507,10 @@ final class OpenGlRenderer {
         float y = framebufferHeight - 58.0f * uiScale;
 
         for (int heart = 0; heart < 10; heart++) {
-            boolean filled = health >= (heart + 1) * 2;
-            drawHeart(startX + heart * (heartScale * 8.0f + spacing), y, heartScale, filled);
+            double threshold = (heart + 1) * 2.0;
+            boolean filled = health >= threshold;
+            boolean half = !filled && health >= threshold - 1.0;
+            drawHeart(startX + heart * (heartScale * 8.0f + spacing), y, heartScale, filled, half);
         }
     }
 
@@ -2440,7 +2537,7 @@ final class OpenGlRenderer {
         }
     }
 
-    private void drawHungerBar(int hunger) {
+    private void drawHungerBar(double hunger) {
         float uiScale = getUiScale();
         float scale = 1.32f * uiScale;
         float spacing = 1.2f * uiScale;
@@ -2450,33 +2547,89 @@ final class OpenGlRenderer {
         float startX = framebufferWidth * 0.5f + hotbarWidth * 0.5f - 10.0f * (scale * 7.0f + spacing);
         float y = framebufferHeight - 58.0f * uiScale;
         for (int food = 0; food < 10; food++) {
-            boolean filled = hunger >= (food + 1) * 2;
-            drawFoodIcon(startX + food * (scale * 7.0f + spacing), y, scale, filled);
+            double threshold = (food + 1) * 2.0;
+            boolean filled = hunger >= threshold;
+            boolean half = !filled && hunger >= threshold - 1.0;
+            drawFoodIcon(startX + food * (scale * 7.0f + spacing), y, scale, filled, half);
         }
     }
 
-    private void drawFoodIcon(float x, float y, float scale, boolean filled) {
-        float r = filled ? 0.86f : 0.24f;
-        float g = filled ? 0.46f : 0.24f;
-        float b = filled ? 0.18f : 0.26f;
-        drawRect(x + 1.0f * scale, y + 1.0f * scale, 5.0f * scale, 5.0f * scale, r, g, b, 0.96f);
-        drawRect(x + 4.0f * scale, y - 1.0f * scale, 2.0f * scale, 3.0f * scale, 0.72f, 0.36f, 0.14f, 0.96f);
-        drawRect(x + 2.0f * scale, y + 6.0f * scale, 3.0f * scale, 1.0f * scale, r * 0.75f, g * 0.75f, b * 0.75f, 0.96f);
+    private void drawFoodIcon(float x, float y, float scale, boolean filled, boolean half) {
+        drawFoodIconShape(x, y, scale, 0.24f, 0.24f, 0.26f, 0.72f, 1.0f);
+        if (filled || half) {
+            drawFoodIconShape(x, y, scale, 0.86f, 0.46f, 0.18f, 0.96f, filled ? 1.0f : 0.52f);
+        }
     }
 
-    private void drawFirstPersonHand(PlayerState player, byte selectedItem) {
-        float uiScale = getUiScale();
-        double bob = Math.sin(player.cameraBobPhase * 1.7) * 5.0 * player.cameraBobAmount;
-        double swingAmount = player.handSwingTimer <= 0.0 ? 0.0 : Math.sin((1.0 - player.handSwingTimer / 0.22) * Math.PI);
-        float handWidth = 30.0f * uiScale;
-        float handHeight = 78.0f * uiScale;
-        float x = framebufferWidth - 128.0f * uiScale + (float) bob - (float) (swingAmount * 20.0 * uiScale);
-        float y = framebufferHeight - 92.0f * uiScale + (player.sneaking ? 8.0f * uiScale : 0.0f) + (float) (swingAmount * 15.0 * uiScale);
-        drawRect(x, y, handWidth, handHeight, 0.86f, 0.66f, 0.48f, 0.98f);
-        drawRect(x + handWidth * 0.14f, y + handHeight * 0.18f, handWidth * 0.72f, handHeight * 0.58f, 0.74f, 0.54f, 0.38f, 0.98f);
-        drawRect(x - handWidth * 0.08f, y + handHeight * 0.74f, handWidth * 1.16f, handHeight * 0.20f, 0.12f, 0.34f, 0.70f, 0.98f);
+    private void renderFirstPersonHand3d(PlayerState player, byte selectedItem) {
+        double bob = Math.sin(player.cameraBobPhase * 1.7) * 0.045 * player.cameraBobAmount;
+        double swing = player.handSwingTimer <= 0.0 ? 0.0 : Math.sin((1.0 - player.handSwingTimer / 0.22) * Math.PI);
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+        glDisable(GL_FOG);
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(false);
+        glTranslated(0.62 + bob - swing * 0.11, -0.58 + (player.sneaking ? -0.06 : 0.0) + swing * 0.05, -1.02 - swing * 0.08);
+        glRotated(-18.0 - swing * 32.0, 1.0, 0.0, 0.0);
+        glRotated(22.0 + swing * 18.0, 0.0, 1.0, 0.0);
+        glRotated(8.0 + swing * 10.0, 0.0, 0.0, 1.0);
+
+        drawFlatCuboid(-0.112, -0.54, -0.108, 0.112, 0.12, 0.108, 0.74f, 0.54f, 0.38f);
+        drawFlatCuboid(-0.126, -0.58, -0.122, 0.126, -0.40, 0.122, 0.12f, 0.34f, 0.70f);
+        drawFlatCuboid(-0.122, 0.08, -0.118, 0.122, 0.40, 0.118, 0.86f, 0.66f, 0.48f);
+
         if (selectedItem != GameConfig.AIR) {
-            drawItemIcon(selectedItem, x - 11.0f * uiScale, y - 20.0f * uiScale, 26.0f * uiScale);
+            float[] heldColor = getHeldBlockColor(selectedItem);
+            glPushMatrix();
+            glTranslated(-0.08, 0.20, -0.18);
+            glRotated(-18.0, 1.0, 0.0, 0.0);
+            glRotated(-24.0, 0.0, 0.0, 1.0);
+            if (isHeldToolItem(selectedItem)) {
+                drawCuboid(-0.025, -0.18, -0.025, 0.025, 0.26, 0.025, 0.52f, 0.34f, 0.18f);
+                drawCuboid(-0.105, 0.19, -0.030, 0.105, 0.29, 0.030, heldColor[0], heldColor[1], heldColor[2]);
+            } else {
+                drawCuboid(-0.09, -0.02, -0.09, 0.09, 0.16, 0.09, heldColor[0], heldColor[1], heldColor[2]);
+            }
+            glPopMatrix();
+        }
+
+        glDepthMask(true);
+        glEnable(GL_DEPTH_TEST);
+        glPopMatrix();
+    }
+
+    private boolean isHeldToolItem(byte item) {
+        switch (item) {
+            case InventoryItems.WOODEN_PICKAXE:
+            case InventoryItems.STONE_PICKAXE:
+            case InventoryItems.IRON_PICKAXE:
+            case InventoryItems.DIAMOND_PICKAXE:
+            case InventoryItems.NETHERITE_PICKAXE:
+            case InventoryItems.WOODEN_SWORD:
+            case InventoryItems.STONE_SWORD:
+            case InventoryItems.IRON_SWORD:
+            case InventoryItems.DIAMOND_SWORD:
+            case InventoryItems.NETHERITE_SWORD:
+            case InventoryItems.WOODEN_AXE:
+            case InventoryItems.STONE_AXE:
+            case InventoryItems.IRON_AXE:
+            case InventoryItems.DIAMOND_AXE:
+            case InventoryItems.NETHERITE_AXE:
+            case InventoryItems.WOODEN_SHOVEL:
+            case InventoryItems.STONE_SHOVEL:
+            case InventoryItems.IRON_SHOVEL:
+            case InventoryItems.DIAMOND_SHOVEL:
+            case InventoryItems.NETHERITE_SHOVEL:
+            case InventoryItems.WOODEN_HOE:
+            case InventoryItems.STONE_HOE:
+            case InventoryItems.IRON_HOE:
+            case InventoryItems.DIAMOND_HOE:
+            case InventoryItems.NETHERITE_HOE:
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -2515,7 +2668,7 @@ final class OpenGlRenderer {
         }
     }
 
-    private void drawHeart(float x, float y, float scale, boolean filled) {
+    private void drawHeart(float x, float y, float scale, boolean filled, boolean half) {
         String[] pattern = {
             "0110110",
             "1111111",
@@ -2524,18 +2677,28 @@ final class OpenGlRenderer {
             "0011100",
             "0001000"
         };
-        float[] color = filled
-            ? new float[]{0.92f, 0.18f, 0.22f}
-            : new float[]{0.28f, 0.10f, 0.12f};
-
         for (int row = 0; row < pattern.length; row++) {
             for (int column = 0; column < pattern[row].length(); column++) {
                 if (pattern[row].charAt(column) != '1') {
                     continue;
                 }
+                boolean redHalf = half && column <= 3;
+                float[] color = (filled || redHalf)
+                    ? new float[]{0.92f, 0.18f, 0.22f}
+                    : new float[]{0.28f, 0.10f, 0.12f};
                 drawRect(x + column * scale, y + row * scale, scale, scale, color[0], color[1], color[2], 0.98f);
             }
         }
+    }
+
+    private void drawFoodIconShape(float x, float y, float scale, float r, float g, float b, float alpha, float widthFactor) {
+        float width = 5.0f * scale * Math.max(0.0f, Math.min(1.0f, widthFactor));
+        if (width <= 0.0f) {
+            return;
+        }
+        drawRect(x + 1.0f * scale, y + 1.0f * scale, width, 5.0f * scale, r, g, b, alpha);
+        drawRect(x + 4.0f * scale, y - 1.0f * scale, Math.min(2.0f * scale, width), 3.0f * scale, 0.72f, 0.36f, 0.14f, alpha);
+        drawRect(x + 2.0f * scale, y + 6.0f * scale, Math.min(3.0f * scale, width), 1.0f * scale, r * 0.75f, g * 0.75f, b * 0.75f, alpha);
     }
 
     private void renderDebugOverlay(PlayerState player, byte selectedBlock, boolean creativeMode, double timeOfDay) {
@@ -2591,7 +2754,7 @@ final class OpenGlRenderer {
     private void renderPauseMenu(int pauseSelection) {
         float uiScale = Math.max(1.0f, getUiScale());
         drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.0f, 0.0f, 0.0f, 0.56f);
-        drawCenteredShadowText(74.0f * uiScale, uiScale * 1.2f, Settings.isRussian() ? "Меню игры" : "Game menu", 1.0f, 1.0f, 1.0f);
+        drawCenteredShadowText(74.0f * uiScale, uiScale * 1.2f, Settings.isRussian() ? "\u041c\u0435\u043d\u044e \u0438\u0433\u0440\u044b" : "Game menu", 1.0f, 1.0f, 1.0f);
 
         float wideWidth = 398.0f * uiScale;
         float buttonHeight = 38.0f * uiScale;
@@ -2621,15 +2784,16 @@ final class OpenGlRenderer {
     private void renderDeathScreen(int deathSelection) {
         float uiScale = Math.max(1.0f, getUiScale());
         drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.09f, 0.0f, 0.0f, 0.72f);
-        drawCenteredShadowText(118.0f * uiScale, uiScale * 2.0f, Settings.isRussian() ? "Вы погибли!" : "You Died!", 0.96f, 0.22f, 0.22f);
-        drawCenteredShadowText(176.0f * uiScale, uiScale, Settings.isRussian() ? "Выберите, что делать дальше." : "Survival run ended. Choose what to do next.", 0.95f, 0.95f, 0.95f);
+        drawCenteredShadowText(118.0f * uiScale, uiScale * 2.0f, Settings.isRussian() ? "\u0412\u044b \u043f\u043e\u0433\u0438\u0431\u043b\u0438!" : "You Died!", 0.96f, 0.22f, 0.22f);
+        drawCenteredShadowText(176.0f * uiScale, uiScale, Settings.isRussian() ? "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435, \u0447\u0442\u043e \u0434\u0435\u043b\u0430\u0442\u044c \u0434\u0430\u043b\u044c\u0448\u0435." : "Survival run ended. Choose what to do next.", 0.95f, 0.95f, 0.95f);
         drawCenteredMenuButtons(GameConfig.deathOptions(), deathSelection, 236.0f, 0.88f, 0.88f, 0.88f);
     }
 
     private void renderMainMenu(int menuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int scrollOffset, String loadedWorldName, int renderDistanceChunks, int fovDegrees) {
         float uiScale = Math.max(1.0f, getUiScale());
-        if (menuScreen == GameConfig.MENU_SCREEN_MAIN && loadedWorldName != null && !loadedWorldName.isBlank()) {
-            drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.02f, 0.025f, 0.03f, 0.36f);
+        if (loadedWorldName != null && !loadedWorldName.isBlank()) {
+            drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.02f, 0.025f, 0.03f,
+                menuScreen == GameConfig.MENU_SCREEN_MAIN ? 0.36f : 0.58f);
         } else {
             drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.02f, 0.025f, 0.03f, 1.0f);
         }
@@ -2676,7 +2840,7 @@ final class OpenGlRenderer {
         drawRect(0.0f, 0.0f, framebufferWidth, headerHeight, 0.03f, 0.035f, 0.04f, 1.0f);
         drawRect(0.0f, headerHeight, framebufferWidth, framebufferHeight - headerHeight - footerHeight, 0.0f, 0.0f, 0.0f, 0.38f);
         drawRect(0.0f, framebufferHeight - footerHeight, framebufferWidth, footerHeight, 0.03f, 0.035f, 0.04f, 1.0f);
-        drawCenteredShadowText(32.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "Выбор мира" : "Select World", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(32.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "\u0412\u044b\u0431\u043e\u0440 \u043c\u0438\u0440\u0430" : "Select World", 0.96f, 0.96f, 0.96f);
 
         float panelWidth = framebufferWidth - 160.0f * uiScale;
         float panelX = framebufferWidth * 0.5f - panelWidth * 0.5f;
@@ -2687,7 +2851,7 @@ final class OpenGlRenderer {
 
         int visibleRows = Math.min(GameConfig.WORLD_MENU_VISIBLE_ROWS, Math.max(0, worlds.size() - scrollOffset));
         if (worlds.isEmpty()) {
-            drawShadowText(listX, listY + 30.0f * uiScale, uiScale * 0.84f, Settings.isRussian() ? "Миров пока нет. Нажмите Играть, чтобы создать новый." : "No worlds yet. Play will create a new one.", 0.86f, 0.88f, 0.90f);
+            drawShadowText(listX, listY + 30.0f * uiScale, uiScale * 0.84f, Settings.isRussian() ? "\u041c\u0438\u0440\u043e\u0432 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u0418\u0433\u0440\u0430\u0442\u044c, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0437\u0434\u0430\u0442\u044c \u043d\u043e\u0432\u044b\u0439." : "No worlds yet. Play will create a new one.", 0.86f, 0.88f, 0.90f);
         }
         for (int row = 0; row < visibleRows; row++) {
             int worldIndex = scrollOffset + row;
@@ -2701,7 +2865,7 @@ final class OpenGlRenderer {
                 selected ? 0.96f : 0.88f);
             drawOutline(listX, rowY, listWidth, rowHeight, uiScale, selected ? 0.92f : 0.38f, selected ? 0.88f : 0.40f, selected ? 0.68f : 0.44f, 0.92f);
             drawShadowText(listX + 12.0f * uiScale, rowY + 15.0f * uiScale, uiScale * 0.74f, info.name, 0.98f, 0.98f, 0.98f);
-            drawShadowText(listX + 12.0f * uiScale, rowY + 30.0f * uiScale, uiScale * 0.50f, (Settings.isRussian() ? "Изменен: " : "Modified: ") + formatWorldDate(info.lastModifiedMillis) + "  " + gameModeName(info.gameMode), 0.72f, 0.76f, 0.80f);
+            drawShadowText(listX + 12.0f * uiScale, rowY + 30.0f * uiScale, uiScale * 0.50f, (Settings.isRussian() ? "\u0418\u0437\u043c\u0435\u043d\u0435\u043d: " : "Modified: ") + formatWorldDate(info.lastModifiedMillis) + "  " + gameModeName(info.gameMode), 0.72f, 0.76f, 0.80f);
         }
 
         float actionWidth = 118.0f * uiScale;
@@ -2728,62 +2892,63 @@ final class OpenGlRenderer {
 
     private void renderOptionsMenu(int mainMenuSelection, int renderDistanceChunks, int fovDegrees) {
         float uiScale = Math.max(1.0f, getUiScale());
-        drawCenteredShadowText(Math.max(72.0f * uiScale, framebufferHeight * 0.22f), uiScale * 1.2f, Settings.isRussian() ? "Настройки" : "Options", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(Math.max(42.0f * uiScale, optionsRenderDistanceSliderY(uiScale) - 82.0f * uiScale), uiScale * 1.05f, Settings.isRussian() ? "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438" : "Options", 0.96f, 0.96f, 0.96f);
 
-        drawSettingsSlider(optionsRenderDistanceSliderY(uiScale), uiScale, Settings.isRussian() ? "Дальность прорисовки" : "Render Distance", renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, mainMenuSelection == 0);
-        drawSettingsSlider(optionsFovSliderY(uiScale), uiScale, Settings.isRussian() ? "Поле зрения" : "FOV", fovDegrees, 55, 100, mainMenuSelection == 1);
-        drawSettingsSlider(optionsInventoryUiSliderY(uiScale), uiScale, Settings.isRussian() ? "Размер инвентаря" : "Inventory UI Size", Settings.inventoryUiSize, 1, 4, mainMenuSelection == 2);
+        drawSettingsSlider(optionsRenderDistanceSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0414\u0430\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u043f\u0440\u043e\u0440\u0438\u0441\u043e\u0432\u043a\u0438" : "Render Distance", renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, mainMenuSelection == 0);
+        drawSettingsSlider(optionsFovSliderY(uiScale), uiScale, Settings.isRussian() ? "\u041f\u043e\u043b\u0435 \u0437\u0440\u0435\u043d\u0438\u044f" : "FOV", fovDegrees, 55, 100, mainMenuSelection == 1);
+        drawSettingsSlider(optionsInventoryUiSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0420\u0430\u0437\u043c\u0435\u0440 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u044f" : "Inventory UI Size", Settings.inventoryUiSize, 1, 4, mainMenuSelection == 2);
 
         float actionWidth = 280.0f * uiScale;
         float actionHeight = 46.0f * uiScale;
         float actionsX = framebufferWidth * 0.5f - actionWidth * 0.5f;
-        float languageY = optionsLanguageButtonY(uiScale);
-        drawMenuButton(actionsX, languageY, actionWidth, actionHeight,
-            (Settings.isRussian() ? "Язык: Русский" : "Language: English"),
+        drawMenuButton(actionsX, optionsGraphicsButtonY(uiScale), actionWidth, actionHeight,
+            (Settings.isRussian() ? "\u0413\u0440\u0430\u0444\u0438\u043a\u0430: " : "Graphics: ") + (Settings.goodGraphics() ? (Settings.isRussian() ? "\u0425\u043e\u0440\u043e\u0448\u043e" : "Fancy") : (Settings.isRussian() ? "\u0411\u044b\u0441\u0442\u0440\u043e" : "Fast")),
             mainMenuSelection == 3, true, uiScale * 0.80f);
+        drawMenuButton(actionsX, optionsLanguageButtonY(uiScale), actionWidth, actionHeight,
+            (Settings.isRussian() ? "\u042f\u0437\u044b\u043a: \u0420\u0443\u0441\u0441\u043a\u0438\u0439" : "Language: English"),
+            mainMenuSelection == 4, true, uiScale * 0.80f);
 
         float boxY = optionsBackButtonY(uiScale);
-        boolean selected = mainMenuSelection == 4;
+        boolean selected = mainMenuSelection == 5;
         drawRect(actionsX, boxY, actionWidth, actionHeight,
             selected ? 0.86f : 0.58f,
             selected ? 0.82f : 0.58f,
             selected ? 0.58f : 0.58f,
             0.98f);
         drawOutline(actionsX, boxY, actionWidth, actionHeight, uiScale, 0.0f, 0.0f, 0.0f, 1.0f);
-        String backLabel = Settings.isRussian() ? "Назад" : "Back";
+        String backLabel = Settings.isRussian() ? "\u041d\u0430\u0437\u0430\u0434" : "Back";
         drawText(actionsX + actionWidth * 0.5f - measureTextWidth(backLabel, uiScale * 0.9f) * 0.5f, boxY + 29.0f * uiScale, uiScale * 0.9f, backLabel, 0.10f, 0.10f, 0.12f);
     }
-
     private void renderCreateWorldMenu(int mainMenuSelection, String worldName, String seedText, int gameMode, int difficulty, int activeTextField) {
         float uiScale = Math.max(1.0f, getUiScale());
-        drawCenteredShadowText(46.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "Создать новый мир" : "Create New World", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(46.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043d\u043e\u0432\u044b\u0439 \u043c\u0438\u0440" : "Create New World", 0.96f, 0.96f, 0.96f);
 
         float panelWidth = Math.min(720.0f * uiScale, framebufferWidth - 120.0f * uiScale);
         float panelX = framebufferWidth * 0.5f - panelWidth * 0.5f;
-        drawShadowText(panelX, 104.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Название мира" : "World Name", 0.82f, 0.82f, 0.82f);
+        drawShadowText(panelX, 104.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043c\u0438\u0440\u0430" : "World Name", 0.82f, 0.82f, 0.82f);
         drawTextField(panelX, 126.0f * uiScale, panelWidth, 36.0f * uiScale, worldName, activeTextField == 0);
 
         float buttonWidth = 340.0f * uiScale;
         float buttonHeight = 44.0f * uiScale;
         float gap = 18.0f * uiScale;
         float startX = framebufferWidth * 0.5f - (buttonWidth * 2.0f + gap) * 0.5f;
-        drawMenuButton(startX, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "Режим: " : "Game Mode: ") + gameModeName(gameMode), false, true, uiScale * 0.80f);
-        drawMenuButton(startX + buttonWidth + gap, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "Сложность: " : "Difficulty: ") + GameConfig.difficultyOptions()[Math.max(0, Math.min(difficulty, GameConfig.difficultyOptions().length - 1))], false, true, uiScale * 0.80f);
+        drawMenuButton(startX, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "\u0420\u0435\u0436\u0438\u043c: " : "Game Mode: ") + gameModeName(gameMode), false, true, uiScale * 0.80f);
+        drawMenuButton(startX + buttonWidth + gap, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "\u0421\u043b\u043e\u0436\u043d\u043e\u0441\u0442\u044c: " : "Difficulty: ") + GameConfig.difficultyOptions()[Math.max(0, Math.min(difficulty, GameConfig.difficultyOptions().length - 1))], false, true, uiScale * 0.80f);
         drawShadowText(startX, 286.0f * uiScale, uiScale * 0.62f, gameModeHelp(gameMode), 0.70f, 0.72f, 0.76f);
 
-        drawShadowText(panelX, 308.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Seed генератора мира" : "Seed for the World Generator", 0.82f, 0.82f, 0.82f);
+        drawShadowText(panelX, 308.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Seed \u0433\u0435\u043d\u0435\u0440\u0430\u0442\u043e\u0440\u0430 \u043c\u0438\u0440\u0430" : "Seed for the World Generator", 0.82f, 0.82f, 0.82f);
         drawTextField(panelX, 330.0f * uiScale, panelWidth, 36.0f * uiScale, seedText, activeTextField == 1);
-        drawShadowText(panelX, 382.0f * uiScale, uiScale * 0.66f, Settings.isRussian() ? "Оставьте пустым для случайного seed" : "Leave blank for a random seed", 0.72f, 0.72f, 0.74f);
+        drawShadowText(panelX, 382.0f * uiScale, uiScale * 0.66f, Settings.isRussian() ? "\u041e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u043f\u0443\u0441\u0442\u044b\u043c \u0434\u043b\u044f \u0441\u043b\u0443\u0447\u0430\u0439\u043d\u043e\u0433\u043e seed" : "Leave blank for a random seed", 0.72f, 0.72f, 0.74f);
 
         drawBottomButtons(GameConfig.createWorldActions(), mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
     }
 
     private void renderRenameWorldMenu(int mainMenuSelection, String renameWorldName, int activeTextField) {
         float uiScale = Math.max(1.0f, getUiScale());
-        drawCenteredShadowText(76.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "Переименовать мир" : "Rename World", 0.96f, 0.96f, 0.96f);
+        drawCenteredShadowText(76.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "\u041f\u0435\u0440\u0435\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u0442\u044c \u043c\u0438\u0440" : "Rename World", 0.96f, 0.96f, 0.96f);
         float panelWidth = Math.min(720.0f * uiScale, framebufferWidth - 120.0f * uiScale);
         float panelX = framebufferWidth * 0.5f - panelWidth * 0.5f;
-        drawShadowText(panelX, 224.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Название мира" : "World Name", 0.82f, 0.82f, 0.82f);
+        drawShadowText(panelX, 224.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043c\u0438\u0440\u0430" : "World Name", 0.82f, 0.82f, 0.82f);
         drawTextField(panelX, 246.0f * uiScale, panelWidth, 36.0f * uiScale, renameWorldName, activeTextField == 0);
         drawBottomButtons(GameConfig.renameWorldActions(), mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
     }
@@ -2824,12 +2989,12 @@ final class OpenGlRenderer {
 
     private String gameModeHelp(int gameMode) {
         if (gameMode == 1) {
-            return Settings.isRussian() ? "Бесконечные блоки, полет и без урона выживания." : "Unlimited blocks, flying, and no survival damage.";
+            return Settings.isRussian() ? "\u0411\u0435\u0441\u043a\u043e\u043d\u0435\u0447\u043d\u044b\u0435 \u0431\u043b\u043e\u043a\u0438, \u043f\u043e\u043b\u0435\u0442 \u0438 \u0431\u0435\u0437 \u0443\u0440\u043e\u043d\u0430 \u0432\u044b\u0436\u0438\u0432\u0430\u043d\u0438\u044f." : "Unlimited blocks, flying, and no survival damage.";
         }
         if (gameMode == 2) {
-            return Settings.isRussian() ? "Полет сквозь блоки и режим наблюдения." : "No clipping and observation only.";
+            return Settings.isRussian() ? "\u041f\u043e\u043b\u0435\u0442 \u0441\u043a\u0432\u043e\u0437\u044c \u0431\u043b\u043e\u043a\u0438 \u0438 \u0440\u0435\u0436\u0438\u043c \u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u044f." : "No clipping and observation only.";
         }
-        return Settings.isRussian() ? "Ищите ресурсы, крафтите, следите за здоровьем и голодом." : "Search for resources, craft, gain levels, health and hunger.";
+        return Settings.isRussian() ? "\u0418\u0449\u0438\u0442\u0435 \u0440\u0435\u0441\u0443\u0440\u0441\u044b, \u043a\u0440\u0430\u0444\u0442\u0438\u0442\u0435, \u0441\u043b\u0435\u0434\u0438\u0442\u0435 \u0437\u0430 \u0437\u0434\u043e\u0440\u043e\u0432\u044c\u0435\u043c \u0438 \u0433\u043e\u043b\u043e\u0434\u043e\u043c." : "Search for resources, craft, gain levels, health and hunger.";
     }
 
     private String formatWorldDate(long millis) {
@@ -2844,7 +3009,7 @@ final class OpenGlRenderer {
         float boxY = 74.0f * uiScale;
         drawRect(boxX, boxY, boxWidth, boxHeight, 0.04f, 0.05f, 0.06f, 0.82f);
         drawOutline(boxX, boxY, boxWidth, boxHeight, 2.0f * uiScale, 0.86f, 0.88f, 0.90f, 0.92f);
-        drawCenteredShadowText(boxY + 28.0f * uiScale, uiScale, Settings.isRussian() ? "Режим игры" : "Game Mode", 0.98f, 0.98f, 0.98f);
+        drawCenteredShadowText(boxY + 28.0f * uiScale, uiScale, Settings.isRussian() ? "\u0420\u0435\u0436\u0438\u043c \u0438\u0433\u0440\u044b" : "Game Mode", 0.98f, 0.98f, 0.98f);
 
         float slotWidth = 104.0f * uiScale;
         float slotHeight = 42.0f * uiScale;
@@ -2985,7 +3150,6 @@ final class OpenGlRenderer {
         }
 
         if (!creativeMode && inventoryScreenMode == GameConfig.INVENTORY_SCREEN_PLAYER) {
-            String[] armorHints = {"H", "C", "L", "B"};
             for (int slot = 0; slot < 4; slot++) {
                 drawItemSlot(
                     layout.armorX,
@@ -2994,7 +3158,7 @@ final class OpenGlRenderer {
                     inventory.getArmorStack(slot),
                     false,
                     hovered != null && hovered.ref.group == InventorySlotGroup.ARMOR && hovered.ref.index == slot,
-                    armorHints[slot]
+                    null
                 );
             }
 
@@ -3005,7 +3169,7 @@ final class OpenGlRenderer {
                 inventory.getOffhandStack(),
                 false,
                 hovered != null && hovered.ref.group == InventorySlotGroup.OFFHAND,
-                "O"
+                null
             );
 
             for (int row = 0; row < 2; row++) {
@@ -3090,7 +3254,7 @@ final class OpenGlRenderer {
 
         if (hovered != null) {
             if (hovered.ref.group == InventorySlotGroup.TRASH) {
-                drawTooltip((float) mouseX + 14.0f, (float) mouseY + 18.0f, Settings.isRussian() ? "Удалить" : "Delete");
+                drawTooltip((float) mouseX + 14.0f, (float) mouseY + 18.0f, Settings.isRussian() ? "\u0423\u0434\u0430\u043b\u0438\u0442\u044c" : "Delete");
             } else {
                 ItemStack tooltipStack = inventory.peekSlot(hovered.ref, creativeMode, chestContainer, furnace);
                 if (tooltipStack != null && !tooltipStack.isEmpty()) {
@@ -3178,6 +3342,15 @@ final class OpenGlRenderer {
             if (stack.count > 1) {
                 drawShadowText(x + size * 0.46f, y + size * 0.78f, getUiScale() * 0.62f, Integer.toString(stack.count), 1.0f, 1.0f, 1.0f);
             }
+            if (InventoryItems.isDurableItem(stack.itemId) && stack.durabilityDamage > 0) {
+                float durability = stack.remainingDurability() / (float) Math.max(1, InventoryItems.maxDurability(stack.itemId));
+                float barX = x + size * 0.12f;
+                float barY = y + size * 0.86f;
+                float barWidth = size * 0.76f;
+                drawRect(barX, barY, barWidth, Math.max(1.0f, size * 0.055f), 0.04f, 0.04f, 0.04f, 0.92f);
+                drawRect(barX, barY, barWidth * durability, Math.max(1.0f, size * 0.055f),
+                    1.0f - durability, 0.32f + durability * 0.62f, 0.12f, 0.98f);
+            }
         } else if (placeholder != null) {
             drawShadowText(x + size * 0.33f, y + size * 0.62f, getUiScale() * 0.70f, placeholder, 0.66f, 0.66f, 0.70f);
         }
@@ -3194,25 +3367,41 @@ final class OpenGlRenderer {
                 drawRect(x + size * 0.10f, y + size * 0.34f, size * 0.80f, size * 0.32f, 0.78f, 0.80f, 0.84f, 0.98f);
                 drawOutline(x + size * 0.10f, y + size * 0.34f, size * 0.80f, size * 0.32f, 1.2f, 0.55f, 0.57f, 0.60f, 0.98f);
                 break;
+            case InventoryItems.COAL_ITEM:
+                drawRect(x + size * 0.22f, y + size * 0.24f, size * 0.56f, size * 0.48f, 0.08f, 0.08f, 0.09f, 0.98f);
+                drawRect(x + size * 0.34f, y + size * 0.34f, size * 0.30f, size * 0.22f, 0.18f, 0.18f, 0.19f, 0.98f);
+                break;
+            case InventoryItems.DIAMOND_ITEM:
+                drawRect(x + size * 0.24f, y + size * 0.16f, size * 0.52f, size * 0.58f, 0.38f, 0.86f, 0.92f, 0.98f);
+                drawRect(x + size * 0.36f, y + size * 0.26f, size * 0.28f, size * 0.24f, 0.70f, 0.97f, 1.00f, 0.98f);
+                break;
             case InventoryItems.IRON_HELMET:
-                drawRect(x + size * 0.12f, y + size * 0.18f, size * 0.76f, size * 0.34f, 0.74f, 0.76f, 0.80f, 0.98f);
-                drawRect(x + size * 0.22f, y + size * 0.50f, size * 0.56f, size * 0.18f, 0.62f, 0.64f, 0.68f, 0.98f);
+            case InventoryItems.DIAMOND_HELMET:
+            case InventoryItems.NETHERITE_HELMET:
+                drawRect(x + size * 0.12f, y + size * 0.18f, size * 0.76f, size * 0.34f, color[0], color[1], color[2], 0.98f);
+                drawRect(x + size * 0.22f, y + size * 0.50f, size * 0.56f, size * 0.18f, color[0] * 0.82f, color[1] * 0.82f, color[2] * 0.82f, 0.98f);
                 break;
             case InventoryItems.IRON_CHESTPLATE:
-                drawRect(x + size * 0.18f, y + size * 0.14f, size * 0.64f, size * 0.72f, 0.70f, 0.72f, 0.76f, 0.98f);
-                drawRect(x + size * 0.08f, y + size * 0.22f, size * 0.16f, size * 0.28f, 0.60f, 0.62f, 0.66f, 0.98f);
-                drawRect(x + size * 0.76f, y + size * 0.22f, size * 0.16f, size * 0.28f, 0.60f, 0.62f, 0.66f, 0.98f);
+            case InventoryItems.DIAMOND_CHESTPLATE:
+            case InventoryItems.NETHERITE_CHESTPLATE:
+                drawRect(x + size * 0.18f, y + size * 0.14f, size * 0.64f, size * 0.72f, color[0], color[1], color[2], 0.98f);
+                drawRect(x + size * 0.08f, y + size * 0.22f, size * 0.16f, size * 0.28f, color[0] * 0.82f, color[1] * 0.82f, color[2] * 0.82f, 0.98f);
+                drawRect(x + size * 0.76f, y + size * 0.22f, size * 0.16f, size * 0.28f, color[0] * 0.82f, color[1] * 0.82f, color[2] * 0.82f, 0.98f);
                 break;
             case InventoryItems.IRON_LEGGINGS:
-                drawRect(x + size * 0.22f, y + size * 0.14f, size * 0.56f, size * 0.28f, 0.70f, 0.72f, 0.76f, 0.98f);
-                drawRect(x + size * 0.24f, y + size * 0.42f, size * 0.18f, size * 0.40f, 0.62f, 0.64f, 0.68f, 0.98f);
-                drawRect(x + size * 0.58f, y + size * 0.42f, size * 0.18f, size * 0.40f, 0.62f, 0.64f, 0.68f, 0.98f);
+            case InventoryItems.DIAMOND_LEGGINGS:
+            case InventoryItems.NETHERITE_LEGGINGS:
+                drawRect(x + size * 0.22f, y + size * 0.14f, size * 0.56f, size * 0.28f, color[0], color[1], color[2], 0.98f);
+                drawRect(x + size * 0.24f, y + size * 0.42f, size * 0.18f, size * 0.40f, color[0] * 0.82f, color[1] * 0.82f, color[2] * 0.82f, 0.98f);
+                drawRect(x + size * 0.58f, y + size * 0.42f, size * 0.18f, size * 0.40f, color[0] * 0.82f, color[1] * 0.82f, color[2] * 0.82f, 0.98f);
                 break;
             case InventoryItems.IRON_BOOTS:
-                drawRect(x + size * 0.18f, y + size * 0.54f, size * 0.22f, size * 0.26f, 0.64f, 0.66f, 0.70f, 0.98f);
-                drawRect(x + size * 0.50f, y + size * 0.54f, size * 0.22f, size * 0.26f, 0.64f, 0.66f, 0.70f, 0.98f);
-                drawRect(x + size * 0.14f, y + size * 0.72f, size * 0.34f, size * 0.10f, 0.82f, 0.84f, 0.88f, 0.98f);
-                drawRect(x + size * 0.46f, y + size * 0.72f, size * 0.34f, size * 0.10f, 0.82f, 0.84f, 0.88f, 0.98f);
+            case InventoryItems.DIAMOND_BOOTS:
+            case InventoryItems.NETHERITE_BOOTS:
+                drawRect(x + size * 0.18f, y + size * 0.54f, size * 0.22f, size * 0.26f, color[0], color[1], color[2], 0.98f);
+                drawRect(x + size * 0.50f, y + size * 0.54f, size * 0.22f, size * 0.26f, color[0], color[1], color[2], 0.98f);
+                drawRect(x + size * 0.14f, y + size * 0.72f, size * 0.34f, size * 0.10f, color[0] * 1.08f, color[1] * 1.08f, color[2] * 1.08f, 0.98f);
+                drawRect(x + size * 0.46f, y + size * 0.72f, size * 0.34f, size * 0.10f, color[0] * 1.08f, color[1] * 1.08f, color[2] * 1.08f, 0.98f);
                 break;
             case InventoryItems.SHIELD:
                 drawRect(x + size * 0.24f, y + size * 0.08f, size * 0.52f, size * 0.74f, 0.60f, 0.42f, 0.22f, 0.98f);
@@ -3333,12 +3522,12 @@ final class OpenGlRenderer {
         float uiScale = getUiScale();
         float scale = uiScale * 0.86f;
         float width = Math.max(84.0f * uiScale, text.length() * 8.2f * scale);
-        float height = 22.0f * uiScale;
+        float height = 24.0f * uiScale;
         float clampedX = Math.min(x, framebufferWidth - width - 8.0f * uiScale);
         float clampedY = Math.min(y, framebufferHeight - height - 8.0f * uiScale);
         drawRect(clampedX, clampedY, width, height, 0.04f, 0.04f, 0.05f, 0.92f);
         drawOutline(clampedX, clampedY, width, height, 1.4f * uiScale, 0.94f, 0.94f, 0.98f, 0.94f);
-        drawShadowText(clampedX + 8.0f * uiScale, clampedY + 15.0f * uiScale, scale, text, 1.0f, 1.0f, 1.0f);
+        drawShadowText(clampedX + 8.0f * uiScale, clampedY + 17.0f * uiScale, scale, text, 1.0f, 1.0f, 1.0f);
     }
 
     private void drawOutline(float x, float y, float width, float height, float thickness, float red, float green, float blue, float alpha) {
@@ -3359,73 +3548,107 @@ final class OpenGlRenderer {
     }
 
     private void drawText(float x, float y, float scale, String text, float red, float green, float blue) {
-        if (containsUnicodeText(text)) {
-            drawUnicodeText(x, y, scale, text, red, green, blue);
+        text = normalizeUiText(text);
+        if (text == null || text.isEmpty()) {
             return;
         }
-        textBuffer.clear();
-        int quads = stb_easy_font_print(0, 0, text, null, textBuffer);
-        glColor3f(red, green, blue);
-        glPushMatrix();
-        glTranslated(x, y, 0.0);
-        org.lwjgl.opengl.GL11.glScalef(scale, scale, 1.0f);
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glVertexPointer(2, GL_FLOAT, 16, textBuffer);
-        glDrawArrays(GL_QUADS, 0, quads * 4);
-        glDisableClientState(GL_VERTEX_ARRAY);
-        glPopMatrix();
+        drawTextTexture(x, y, scale, text, red, green, blue);
     }
 
     private float measureTextWidth(String text, float scale) {
         if (text == null) {
             return 0.0f;
         }
-        if (containsUnicodeText(text)) {
-            return getUnicodeTextTexture(text, scale).width;
+        text = normalizeUiText(text);
+        if (text == null || text.isEmpty()) {
+            return 0.0f;
         }
-        return stb_easy_font_width(text) * scale;
+        return getTextTexture(text, scale).width;
     }
 
-    private boolean containsUnicodeText(String text) {
-        if (text == null) {
+    private String normalizeUiText(String text) {
+        if (text == null || text.isEmpty() || !looksLikeUtf8DecodedAsCp1251(text)) {
+            return text;
+        }
+        try {
+            byte[] bytes = text.getBytes(java.nio.charset.Charset.forName("windows-1251"));
+            String repaired = StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString();
+            return isBetterRussianText(text, repaired) ? repaired : text;
+        } catch (CharacterCodingException | RuntimeException ignored) {
+            return text;
+        }
+    }
+
+    private boolean looksLikeUtf8DecodedAsCp1251(String text) {
+        return mojibakeScore(text) >= 2;
+    }
+
+    private boolean isBetterRussianText(String original, String repaired) {
+        if (repaired == null || repaired.isEmpty() || repaired.indexOf('\uFFFD') >= 0) {
             return false;
         }
-        for (int i = 0; i < text.length(); i++) {
-            if (text.charAt(i) > 0x7F) {
-                return true;
-            }
-        }
-        return false;
+        return mojibakeScore(repaired) + 2 < mojibakeScore(original) && countCyrillicLetters(repaired) > 0;
     }
 
-    private void drawUnicodeText(float x, float y, float scale, String text, float red, float green, float blue) {
-        TextTexture texture = getUnicodeTextTexture(text, scale);
+    private int mojibakeScore(String text) {
+        int score = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\u00D0' || c == '\u00D1' || c == '\u0420' || c == '\u0421' || c == '\u0413') {
+                score++;
+            } else if (c == '\uFFFD') {
+                score += 3;
+            }
+        }
+        return score;
+    }
+
+
+    private int countCyrillicLetters(String text) {
+        int count = 0;
+        for (int i = 0; i < text.length(); i++) {
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(text.charAt(i));
+            if (block == Character.UnicodeBlock.CYRILLIC) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void drawTextTexture(float x, float y, float scale, String text, float red, float green, float blue) {
+        TextTexture texture = getTextTexture(text, scale);
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, texture.textureId);
         glColor4f(red, green, blue, 1.0f);
         glBegin(GL_QUADS);
-        glTexCoord2f(0.0f, 1.0f);
-        glVertex3d(x, y, 0.0);
-        glTexCoord2f(1.0f, 1.0f);
-        glVertex3d(x + texture.width, y, 0.0);
-        glTexCoord2f(1.0f, 0.0f);
-        glVertex3d(x + texture.width, y + texture.height, 0.0);
+        float top = y - texture.baseline;
         glTexCoord2f(0.0f, 0.0f);
-        glVertex3d(x, y + texture.height, 0.0);
+        glVertex3d(x, top, 0.0);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex3d(x + texture.width, top, 0.0);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex3d(x + texture.width, top + texture.height, 0.0);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex3d(x, top + texture.height, 0.0);
         glEnd();
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
     }
 
-    private TextTexture getUnicodeTextTexture(String text, float scale) {
+    private TextTexture getTextTexture(String text, float scale) {
         int fontSize = Math.max(9, Math.round(9.0f * Math.max(0.75f, scale)));
         String key = fontSize + "\u0000" + text;
-        TextTexture existing = unicodeTextTextures.get(key);
+        TextTexture existing = textTextures.get(key);
         if (existing != null) {
             return existing;
         }
 
-        Font font = new Font("DialogInput", Font.BOLD, fontSize);
+        Font font = new Font(UI_FONT_FAMILY, Font.BOLD, fontSize);
         BufferedImage measureImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D measureGraphics = measureImage.createGraphics();
         measureGraphics.setFont(font);
@@ -3461,14 +3684,25 @@ final class OpenGlRenderer {
 
         int textureId = glGenTextures();
         glBindTexture(GL_TEXTURE_2D, textureId);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        TextTexture texture = new TextTexture(textureId, width, height);
-        unicodeTextTextures.put(key, texture);
+        TextTexture texture = new TextTexture(textureId, width, height, baseline);
+        textTextures.put(key, texture);
+        trimTextTextureCache();
         return texture;
+    }
+
+    private void trimTextTextureCache() {
+        Iterator<Map.Entry<String, TextTexture>> iterator = textTextures.entrySet().iterator();
+        while (textTextures.size() > MAX_TEXT_TEXTURE_CACHE_SIZE && iterator.hasNext()) {
+            TextTexture texture = iterator.next().getValue();
+            glDeleteTextures(texture.textureId);
+            iterator.remove();
+        }
     }
 
     private void drawCenteredShadowText(float y, float scale, String text, float red, float green, float blue) {
@@ -3533,7 +3767,7 @@ final class OpenGlRenderer {
     }
 
     private BufferedImage loadOrCreateTerrainAtlas() throws IOException {
-        File file = new File("terrain.png");
+        File file = RuntimePaths.resolve("terrain.png").toFile();
         if (file.exists()) {
             BufferedImage existing = ImageIO.read(file);
             if (existing != null) {
@@ -3730,6 +3964,10 @@ final class OpenGlRenderer {
             case InventoryItems.IRON_LEGGINGS:
             case InventoryItems.IRON_BOOTS:
                 return new float[]{0.76f, 0.78f, 0.82f};
+            case InventoryItems.COAL_ITEM:
+                return new float[]{0.08f, 0.08f, 0.09f};
+            case InventoryItems.DIAMOND_ITEM:
+                return new float[]{0.38f, 0.86f, 0.92f};
             case InventoryItems.WOODEN_PICKAXE:
             case InventoryItems.WOODEN_SWORD:
             case InventoryItems.WOODEN_AXE:
@@ -3747,12 +3985,20 @@ final class OpenGlRenderer {
             case InventoryItems.DIAMOND_AXE:
             case InventoryItems.DIAMOND_SHOVEL:
             case InventoryItems.DIAMOND_HOE:
+            case InventoryItems.DIAMOND_HELMET:
+            case InventoryItems.DIAMOND_CHESTPLATE:
+            case InventoryItems.DIAMOND_LEGGINGS:
+            case InventoryItems.DIAMOND_BOOTS:
                 return new float[]{0.38f, 0.86f, 0.92f};
             case InventoryItems.NETHERITE_PICKAXE:
             case InventoryItems.NETHERITE_SWORD:
             case InventoryItems.NETHERITE_AXE:
             case InventoryItems.NETHERITE_SHOVEL:
             case InventoryItems.NETHERITE_HOE:
+            case InventoryItems.NETHERITE_HELMET:
+            case InventoryItems.NETHERITE_CHESTPLATE:
+            case InventoryItems.NETHERITE_LEGGINGS:
+            case InventoryItems.NETHERITE_BOOTS:
                 return new float[]{0.34f, 0.33f, 0.38f};
             case InventoryItems.SHIELD:
                 return new float[]{0.58f, 0.42f, 0.22f};
@@ -4121,11 +4367,13 @@ final class OpenGlRenderer {
         final int textureId;
         final int width;
         final int height;
+        final int baseline;
 
-        TextTexture(int textureId, int width, int height) {
+        TextTexture(int textureId, int width, int height, int baseline) {
             this.textureId = textureId;
             this.width = width;
             this.height = height;
+            this.baseline = baseline;
         }
     }
 }

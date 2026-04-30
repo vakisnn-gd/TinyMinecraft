@@ -52,6 +52,16 @@ final class InventoryItems {
     static final byte COOKED_BEEF = 101;
     static final byte COOKED_MUTTON = 102;
     static final byte BAKED_POTATO = 103;
+    static final byte DIAMOND_HELMET = 104;
+    static final byte DIAMOND_CHESTPLATE = 105;
+    static final byte DIAMOND_LEGGINGS = 106;
+    static final byte DIAMOND_BOOTS = 107;
+    static final byte NETHERITE_HELMET = 108;
+    static final byte NETHERITE_CHESTPLATE = 109;
+    static final byte NETHERITE_LEGGINGS = 110;
+    static final byte NETHERITE_BOOTS = 111;
+    static final byte COAL_ITEM = 112;
+    static final byte DIAMOND_ITEM = 113;
     static final byte BREAD = 49;
     static final byte POTATO = 50;
     static final byte CARROT = 51;
@@ -109,6 +119,8 @@ final class InventoryItems {
         CARROT,
         WHEAT_SEEDS,
         IRON_INGOT,
+        COAL_ITEM,
+        DIAMOND_ITEM,
         WOODEN_PICKAXE,
         WOODEN_SWORD,
         WOODEN_AXE,
@@ -138,6 +150,14 @@ final class InventoryItems {
         IRON_CHESTPLATE,
         IRON_LEGGINGS,
         IRON_BOOTS,
+        DIAMOND_HELMET,
+        DIAMOND_CHESTPLATE,
+        DIAMOND_LEGGINGS,
+        DIAMOND_BOOTS,
+        NETHERITE_HELMET,
+        NETHERITE_CHESTPLATE,
+        NETHERITE_LEGGINGS,
+        NETHERITE_BOOTS,
         SHIELD,
         TOTEM,
         ZOMBIE_SPAWN_EGG,
@@ -233,8 +253,6 @@ final class InventoryItems {
                 InventoryItems.VILLAGER_SPAWN_EGG
             ),
             indicesFor(
-                InventoryItems.STICK,
-                InventoryItems.IRON_INGOT,
                 InventoryItems.WOODEN_PICKAXE,
                 InventoryItems.WOODEN_SWORD,
                 InventoryItems.WOODEN_AXE,
@@ -264,8 +282,20 @@ final class InventoryItems {
                 InventoryItems.IRON_CHESTPLATE,
                 InventoryItems.IRON_LEGGINGS,
                 InventoryItems.IRON_BOOTS,
+                InventoryItems.DIAMOND_HELMET,
+                InventoryItems.DIAMOND_CHESTPLATE,
+                InventoryItems.DIAMOND_LEGGINGS,
+                InventoryItems.DIAMOND_BOOTS,
+                InventoryItems.NETHERITE_HELMET,
+                InventoryItems.NETHERITE_CHESTPLATE,
+                InventoryItems.NETHERITE_LEGGINGS,
+                InventoryItems.NETHERITE_BOOTS,
+                InventoryItems.TOTEM,
                 InventoryItems.SHIELD,
-                InventoryItems.TOTEM
+                InventoryItems.STICK,
+                InventoryItems.IRON_INGOT,
+                InventoryItems.COAL_ITEM,
+                InventoryItems.DIAMOND_ITEM
             ),
             indicesFor(
                 GameConfig.WATER,
@@ -404,6 +434,10 @@ final class InventoryItems {
                 return "Carrot";
             case WHEAT_SEEDS:
                 return "Seeds";
+            case COAL_ITEM:
+                return "Coal";
+            case DIAMOND_ITEM:
+                return "Diamond";
             case IRON_HELMET:
                 return "Iron Helmet";
             case IRON_CHESTPLATE:
@@ -412,6 +446,22 @@ final class InventoryItems {
                 return "Iron Leggings";
             case IRON_BOOTS:
                 return "Iron Boots";
+            case DIAMOND_HELMET:
+                return "Diamond Helmet";
+            case DIAMOND_CHESTPLATE:
+                return "Diamond Chestplate";
+            case DIAMOND_LEGGINGS:
+                return "Diamond Leggings";
+            case DIAMOND_BOOTS:
+                return "Diamond Boots";
+            case NETHERITE_HELMET:
+                return "Netherite Helmet";
+            case NETHERITE_CHESTPLATE:
+                return "Netherite Chestplate";
+            case NETHERITE_LEGGINGS:
+                return "Netherite Leggings";
+            case NETHERITE_BOOTS:
+                return "Netherite Boots";
             case SHIELD:
                 return "Shield";
             case TOTEM:
@@ -537,6 +587,9 @@ final class InventoryItems {
             case GameConfig.YELLOW_FLOWER: return "Желтый цветок";
             case GameConfig.STONE: return "Камень";
             case GameConfig.DEEPSLATE: return "Глубинный сланец";
+            case GameConfig.DEEPSLATE_IRON_ORE: return "Железная руда в глубинном сланце";
+            case GameConfig.DEEPSLATE_DIAMOND_ORE: return "Алмазная руда в глубинном сланце";
+            case GameConfig.DEEPSLATE_COAL_ORE: return "Угольная руда в глубинном сланце";
             case GameConfig.OBSIDIAN: return "Обсидиан";
             case OAK_PLANKS: return "Дубовые доски";
             case GameConfig.OAK_FENCE: return "Дубовый забор";
@@ -605,6 +658,16 @@ final class InventoryItems {
             case WOOL: return "Шерсть";
             case ROTTEN_FLESH: return "Гнилая плоть";
             case BONE: return "Кость";
+            case COAL_ITEM: return "\u0423\u0433\u043e\u043b\u044c";
+            case DIAMOND_ITEM: return "\u0410\u043b\u043c\u0430\u0437";
+            case DIAMOND_HELMET: return "\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0439 \u0448\u043b\u0435\u043c";
+            case DIAMOND_CHESTPLATE: return "\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0439 \u043d\u0430\u0433\u0440\u0443\u0434\u043d\u0438\u043a";
+            case DIAMOND_LEGGINGS: return "\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0435 \u043f\u043e\u043d\u043e\u0436\u0438";
+            case DIAMOND_BOOTS: return "\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0435 \u0431\u043e\u0442\u0438\u043d\u043a\u0438";
+            case NETHERITE_HELMET: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0439 \u0448\u043b\u0435\u043c";
+            case NETHERITE_CHESTPLATE: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0439 \u043d\u0430\u0433\u0440\u0443\u0434\u043d\u0438\u043a";
+            case NETHERITE_LEGGINGS: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0435 \u043f\u043e\u043d\u043e\u0436\u0438";
+            case NETHERITE_BOOTS: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0435 \u0431\u043e\u0442\u0438\u043d\u043a\u0438";
             default: return null;
         }
     }
@@ -627,6 +690,14 @@ final class InventoryItems {
             case IRON_CHESTPLATE:
             case IRON_LEGGINGS:
             case IRON_BOOTS:
+            case DIAMOND_HELMET:
+            case DIAMOND_CHESTPLATE:
+            case DIAMOND_LEGGINGS:
+            case DIAMOND_BOOTS:
+            case NETHERITE_HELMET:
+            case NETHERITE_CHESTPLATE:
+            case NETHERITE_LEGGINGS:
+            case NETHERITE_BOOTS:
             case SHIELD:
             case TOTEM:
             case WOODEN_PICKAXE:
@@ -664,15 +735,90 @@ final class InventoryItems {
         return armorSlotIndex(itemId) >= 0;
     }
 
+    static boolean isDurableItem(byte itemId) {
+        return maxDurability(itemId) > 0;
+    }
+
+    static int maxDurability(byte itemId) {
+        switch (itemId) {
+            case WOODEN_PICKAXE:
+            case WOODEN_SWORD:
+            case WOODEN_AXE:
+            case WOODEN_SHOVEL:
+            case WOODEN_HOE:
+                return 59;
+            case STONE_PICKAXE:
+            case STONE_SWORD:
+            case STONE_AXE:
+            case STONE_SHOVEL:
+            case STONE_HOE:
+                return 131;
+            case IRON_PICKAXE:
+            case IRON_SWORD:
+            case IRON_AXE:
+            case IRON_SHOVEL:
+            case IRON_HOE:
+                return 250;
+            case DIAMOND_PICKAXE:
+            case DIAMOND_SWORD:
+            case DIAMOND_AXE:
+            case DIAMOND_SHOVEL:
+            case DIAMOND_HOE:
+                return 1561;
+            case NETHERITE_PICKAXE:
+            case NETHERITE_SWORD:
+            case NETHERITE_AXE:
+            case NETHERITE_SHOVEL:
+            case NETHERITE_HOE:
+                return 2031;
+            case IRON_HELMET:
+                return 165;
+            case IRON_CHESTPLATE:
+                return 240;
+            case IRON_LEGGINGS:
+                return 225;
+            case IRON_BOOTS:
+                return 195;
+            case DIAMOND_HELMET:
+                return 363;
+            case DIAMOND_CHESTPLATE:
+                return 528;
+            case DIAMOND_LEGGINGS:
+                return 495;
+            case DIAMOND_BOOTS:
+                return 429;
+            case NETHERITE_HELMET:
+                return 407;
+            case NETHERITE_CHESTPLATE:
+                return 592;
+            case NETHERITE_LEGGINGS:
+                return 555;
+            case NETHERITE_BOOTS:
+                return 481;
+            case SHIELD:
+                return 336;
+            default:
+                return 0;
+        }
+    }
+
     static int armorSlotIndex(byte itemId) {
         switch (itemId) {
             case IRON_HELMET:
+            case DIAMOND_HELMET:
+            case NETHERITE_HELMET:
                 return 0;
             case IRON_CHESTPLATE:
+            case DIAMOND_CHESTPLATE:
+            case NETHERITE_CHESTPLATE:
                 return 1;
             case IRON_LEGGINGS:
+            case DIAMOND_LEGGINGS:
+            case NETHERITE_LEGGINGS:
                 return 2;
             case IRON_BOOTS:
+            case DIAMOND_BOOTS:
+            case NETHERITE_BOOTS:
                 return 3;
             default:
                 return -1;
@@ -736,6 +882,7 @@ final class InventoryItems {
 final class ItemStack {
     byte itemId;
     int count;
+    int durabilityDamage;
 
     ItemStack() {
         clear();
@@ -756,11 +903,13 @@ final class ItemStack {
         }
         this.itemId = itemId;
         this.count = count;
+        this.durabilityDamage = 0;
     }
 
     void clear() {
         itemId = GameConfig.AIR;
         count = 0;
+        durabilityDamage = 0;
     }
 
     void copyFrom(ItemStack other) {
@@ -768,11 +917,32 @@ final class ItemStack {
             clear();
         } else {
             set(other.itemId, other.count);
+            durabilityDamage = InventoryItems.isDurableItem(itemId)
+                ? Math.max(0, Math.min(other.durabilityDamage, InventoryItems.maxDurability(itemId) - 1))
+                : 0;
         }
     }
 
     ItemStack copy() {
-        return new ItemStack(itemId, count);
+        ItemStack stack = new ItemStack(itemId, count);
+        stack.durabilityDamage = durabilityDamage;
+        return stack;
+    }
+
+    int remainingDurability() {
+        int max = InventoryItems.maxDurability(itemId);
+        return max <= 0 ? 0 : Math.max(0, max - durabilityDamage);
+    }
+
+    void damage(int amount) {
+        int max = InventoryItems.maxDurability(itemId);
+        if (max <= 0 || amount <= 0 || isEmpty()) {
+            return;
+        }
+        durabilityDamage += amount;
+        if (durabilityDamage >= max) {
+            clear();
+        }
     }
 }
 
@@ -852,8 +1022,12 @@ final class CraftingRecipes {
             GameConfig.COBBLESTONE, GameConfig.AIR, GameConfig.COBBLESTONE,
             GameConfig.COBBLESTONE, GameConfig.COBBLESTONE, GameConfig.COBBLESTONE),
         CraftingRecipe.shaped(1, 2, GameConfig.TORCH, 4,
-            GameConfig.COAL_ORE,
+            InventoryItems.COAL_ITEM,
             InventoryItems.STICK),
+        CraftingRecipe.shapeless(InventoryItems.COAL_ITEM, 1, GameConfig.COAL_ORE),
+        CraftingRecipe.shapeless(InventoryItems.COAL_ITEM, 1, GameConfig.DEEPSLATE_COAL_ORE),
+        CraftingRecipe.shapeless(InventoryItems.DIAMOND_ITEM, 1, GameConfig.DIAMOND_ORE),
+        CraftingRecipe.shapeless(InventoryItems.DIAMOND_ITEM, 1, GameConfig.DEEPSLATE_DIAMOND_ORE),
         CraftingRecipe.shaped(2, 3, GameConfig.OAK_DOOR, 3,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
@@ -930,22 +1104,22 @@ final class CraftingRecipes {
             InventoryItems.WOOL, InventoryItems.WOOL, InventoryItems.WOOL,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
         CraftingRecipe.shaped(3, 2, InventoryItems.DIAMOND_PICKAXE, 1,
-            GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM,
             GameConfig.AIR, InventoryItems.STICK, GameConfig.AIR),
         CraftingRecipe.shaped(1, 3, InventoryItems.DIAMOND_SWORD, 1,
-            GameConfig.DIAMOND_ORE,
-            GameConfig.DIAMOND_ORE,
+            InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM,
             InventoryItems.STICK),
         CraftingRecipe.shaped(2, 3, InventoryItems.DIAMOND_AXE, 1,
-            GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE,
-            GameConfig.DIAMOND_ORE, InventoryItems.STICK,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.STICK,
             GameConfig.AIR, InventoryItems.STICK),
         CraftingRecipe.shaped(1, 3, InventoryItems.DIAMOND_SHOVEL, 1,
-            GameConfig.DIAMOND_ORE,
+            InventoryItems.DIAMOND_ITEM,
             InventoryItems.STICK,
             InventoryItems.STICK),
         CraftingRecipe.shaped(2, 2, InventoryItems.DIAMOND_HOE, 1,
-            GameConfig.DIAMOND_ORE, GameConfig.DIAMOND_ORE,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM,
             GameConfig.AIR, InventoryItems.STICK),
         CraftingRecipe.shapeless(InventoryItems.NETHERITE_PICKAXE, 1, InventoryItems.DIAMOND_PICKAXE, GameConfig.OBSIDIAN),
         CraftingRecipe.shapeless(InventoryItems.NETHERITE_SWORD, 1, InventoryItems.DIAMOND_SWORD, GameConfig.OBSIDIAN),
@@ -954,7 +1128,25 @@ final class CraftingRecipes {
         CraftingRecipe.shapeless(InventoryItems.NETHERITE_HOE, 1, InventoryItems.DIAMOND_HOE, GameConfig.OBSIDIAN),
         CraftingRecipe.shaped(3, 2, InventoryItems.IRON_HELMET, 1,
             GameConfig.IRON_ORE, GameConfig.IRON_ORE, GameConfig.IRON_ORE,
-            GameConfig.IRON_ORE, GameConfig.AIR, GameConfig.IRON_ORE)
+            GameConfig.IRON_ORE, GameConfig.AIR, GameConfig.IRON_ORE),
+        CraftingRecipe.shaped(3, 2, InventoryItems.DIAMOND_HELMET, 1,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, GameConfig.AIR, InventoryItems.DIAMOND_ITEM),
+        CraftingRecipe.shaped(3, 3, InventoryItems.DIAMOND_CHESTPLATE, 1,
+            InventoryItems.DIAMOND_ITEM, GameConfig.AIR, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM),
+        CraftingRecipe.shaped(3, 3, InventoryItems.DIAMOND_LEGGINGS, 1,
+            InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, GameConfig.AIR, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, GameConfig.AIR, InventoryItems.DIAMOND_ITEM),
+        CraftingRecipe.shaped(3, 2, InventoryItems.DIAMOND_BOOTS, 1,
+            InventoryItems.DIAMOND_ITEM, GameConfig.AIR, InventoryItems.DIAMOND_ITEM,
+            InventoryItems.DIAMOND_ITEM, GameConfig.AIR, InventoryItems.DIAMOND_ITEM),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_HELMET, 1, InventoryItems.DIAMOND_HELMET, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_CHESTPLATE, 1, InventoryItems.DIAMOND_CHESTPLATE, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_LEGGINGS, 1, InventoryItems.DIAMOND_LEGGINGS, GameConfig.OBSIDIAN),
+        CraftingRecipe.shapeless(InventoryItems.NETHERITE_BOOTS, 1, InventoryItems.DIAMOND_BOOTS, GameConfig.OBSIDIAN)
     };
 
     private CraftingRecipes() {
@@ -1098,6 +1290,7 @@ final class FurnaceRecipes {
 
     static double fuelSeconds(byte item) {
         switch (item) {
+            case InventoryItems.COAL_ITEM:
             case GameConfig.COAL_ORE:
             case GameConfig.DEEPSLATE_COAL_ORE:
                 return 80.0;
@@ -1251,6 +1444,22 @@ final class PlayerInventory {
                 case InventoryItems.IRON_BOOTS:
                     protection += 2;
                     break;
+                case InventoryItems.DIAMOND_HELMET:
+                case InventoryItems.NETHERITE_HELMET:
+                    protection += 3;
+                    break;
+                case InventoryItems.DIAMOND_CHESTPLATE:
+                case InventoryItems.NETHERITE_CHESTPLATE:
+                    protection += 8;
+                    break;
+                case InventoryItems.DIAMOND_LEGGINGS:
+                case InventoryItems.NETHERITE_LEGGINGS:
+                    protection += 6;
+                    break;
+                case InventoryItems.DIAMOND_BOOTS:
+                case InventoryItems.NETHERITE_BOOTS:
+                    protection += 3;
+                    break;
                 default:
                     break;
             }
@@ -1277,6 +1486,18 @@ final class PlayerInventory {
             return GameConfig.AIR;
         }
         return hotbar[hotbarSlot].itemId;
+    }
+
+    boolean damageSelectedItem(int hotbarSlot, int amount) {
+        if (hotbarSlot < 0 || hotbarSlot >= hotbar.length) {
+            return false;
+        }
+        ItemStack stack = hotbar[hotbarSlot];
+        if (stack.isEmpty() || !InventoryItems.isDurableItem(stack.itemId)) {
+            return false;
+        }
+        stack.damage(amount);
+        return true;
     }
 
     boolean consumeSelectedItem(int hotbarSlot) {
@@ -1423,14 +1644,19 @@ final class PlayerInventory {
     }
 
     boolean addItem(byte itemId, int count) {
+        return addItem(itemId, count, 0);
+    }
+
+    boolean addItem(byte itemId, int count, int durabilityDamage) {
         if (itemId == GameConfig.AIR || count <= 0) {
             return true;
         }
 
-        int remaining = mergeIntoExisting(hotbar, itemId, count, null);
-        remaining = mergeIntoExisting(storage, itemId, remaining, null);
-        remaining = mergeIntoEmpty(hotbar, itemId, remaining, null);
-        remaining = mergeIntoEmpty(storage, itemId, remaining, null);
+        int damage = normalizedDurabilityDamage(itemId, durabilityDamage);
+        int remaining = mergeIntoExisting(hotbar, itemId, count, damage, null);
+        remaining = mergeIntoExisting(storage, itemId, remaining, damage, null);
+        remaining = mergeIntoEmpty(hotbar, itemId, remaining, damage, null);
+        remaining = mergeIntoEmpty(storage, itemId, remaining, damage, null);
         return remaining == 0;
     }
 
@@ -1529,8 +1755,11 @@ final class PlayerInventory {
             return true;
         }
 
-        if (slot.itemId == cursor.itemId && isSlotAccepting(ref, cursor)) {
-            int maxStack = InventoryItems.maxStackSize(slot.itemId);
+        int maxStack = InventoryItems.maxStackSize(slot.itemId);
+        if (slot.itemId == cursor.itemId
+            && slot.durabilityDamage == cursor.durabilityDamage
+            && slot.count < maxStack
+            && isSlotAccepting(ref, cursor)) {
             int transfer = Math.min(maxStack - slot.count, cursor.count);
             if (transfer <= 0) {
                 return false;
@@ -1567,6 +1796,7 @@ final class PlayerInventory {
             }
             int amount = (slot.count + 1) / 2;
             cursor.set(slot.itemId, amount);
+            cursor.durabilityDamage = slot.durabilityDamage;
             slot.count -= amount;
             if (slot.count <= 0) {
                 slot.clear();
@@ -1581,6 +1811,7 @@ final class PlayerInventory {
 
         if (slot.isEmpty()) {
             slot.set(cursor.itemId, 1);
+            slot.durabilityDamage = cursor.durabilityDamage;
             cursor.count--;
             if (cursor.count <= 0) {
                 cursor.clear();
@@ -1589,7 +1820,9 @@ final class PlayerInventory {
             return true;
         }
 
-        if (slot.itemId == cursor.itemId && slot.count < InventoryItems.maxStackSize(slot.itemId)) {
+        if (slot.itemId == cursor.itemId
+            && slot.durabilityDamage == cursor.durabilityDamage
+            && slot.count < InventoryItems.maxStackSize(slot.itemId)) {
             slot.count++;
             cursor.count--;
             if (cursor.count <= 0) {
@@ -1718,7 +1951,7 @@ final class PlayerInventory {
             int transfer = Math.min(maxStack, source.count);
             target.set(source.itemId, transfer);
             source.count -= transfer;
-        } else if (target.itemId == source.itemId && target.count < maxStack) {
+        } else if (target.itemId == source.itemId && target.durabilityDamage == source.durabilityDamage && target.count < maxStack) {
             int transfer = Math.min(maxStack - target.count, source.count);
             target.count += transfer;
             source.count -= transfer;
@@ -1733,8 +1966,8 @@ final class PlayerInventory {
             return false;
         }
         int originalCount = source.count;
-        source.count = mergeIntoExisting(targetSlots, source.itemId, source.count, source);
-        source.count = mergeIntoEmpty(targetSlots, source.itemId, source.count, source);
+        source.count = mergeIntoExisting(targetSlots, source.itemId, source.count, source.durabilityDamage, source);
+        source.count = mergeIntoEmpty(targetSlots, source.itemId, source.count, source.durabilityDamage, source);
         if (source.count <= 0) {
             source.clear();
         }
@@ -1838,13 +2071,14 @@ final class PlayerInventory {
         }
     }
 
-    private int mergeIntoExisting(ItemStack[] slots, byte itemId, int remaining, ItemStack excluded) {
+    private int mergeIntoExisting(ItemStack[] slots, byte itemId, int remaining, int durabilityDamage, ItemStack excluded) {
         int maxStack = InventoryItems.maxStackSize(itemId);
+        int damage = normalizedDurabilityDamage(itemId, durabilityDamage);
         for (ItemStack slot : slots) {
             if (remaining <= 0) {
                 return 0;
             }
-            if (slot == excluded || slot.isEmpty() || slot.itemId != itemId || slot.count >= maxStack) {
+            if (slot == excluded || slot.isEmpty() || slot.itemId != itemId || slot.durabilityDamage != damage || slot.count >= maxStack) {
                 continue;
             }
             int transfer = Math.min(maxStack - slot.count, remaining);
@@ -1854,8 +2088,9 @@ final class PlayerInventory {
         return remaining;
     }
 
-    private int mergeIntoEmpty(ItemStack[] slots, byte itemId, int remaining, ItemStack excluded) {
+    private int mergeIntoEmpty(ItemStack[] slots, byte itemId, int remaining, int durabilityDamage, ItemStack excluded) {
         int maxStack = InventoryItems.maxStackSize(itemId);
+        int damage = normalizedDurabilityDamage(itemId, durabilityDamage);
         for (ItemStack slot : slots) {
             if (remaining <= 0) {
                 return 0;
@@ -1865,9 +2100,17 @@ final class PlayerInventory {
             }
             int transfer = Math.min(maxStack, remaining);
             slot.set(itemId, transfer);
+            slot.durabilityDamage = damage;
             remaining -= transfer;
         }
         return remaining;
+    }
+
+    private int normalizedDurabilityDamage(byte itemId, int durabilityDamage) {
+        if (!InventoryItems.isDurableItem(itemId)) {
+            return 0;
+        }
+        return Math.max(0, Math.min(durabilityDamage, InventoryItems.maxDurability(itemId) - 1));
     }
 
     private ItemStack[] createSlots(int size) {
