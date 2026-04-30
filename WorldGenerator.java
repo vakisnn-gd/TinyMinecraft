@@ -21,7 +21,9 @@ final class WorldGenerator {
     private static final double CANYON_SCALE = 0.0068;
     private static final double OCEAN_COASTLINE = -0.16;
     private static final double COASTLINE_WIDTH = 0.120;
-    private static final double BEACH_WIDTH = 0.085;
+    private static final double BEACH_WIDTH = 0.120;
+    private static final int BEACH_MAX_HEIGHT_ABOVE_SEA = 2;
+    private static final int OCEAN_SAND_DEPTH = 4;
     private static final double RIVER_MIN_WIDTH_BLOCKS = 2.8;
     private static final double RIVER_MAX_WIDTH_BLOCKS = 4.4;
     private static final double RIVER_MIN_BANK_BLOCKS = 3.2;
@@ -670,10 +672,11 @@ final class WorldGenerator {
                 break;
             }
 
+            int fillDepth = ((terrainFlags & TERRAIN_OCEAN) != 0) ? Math.max(dirtDepth, OCEAN_SAND_DEPTH) : dirtDepth;
             if (depth == 0) {
                 column.setBlock(worldX, worldY, worldZ, topBlockForTerrain(biome, terrainFlags, surfaceHeight, worldX, worldZ));
-            } else if (depth <= dirtDepth) {
-                column.setBlock(worldX, worldY, worldZ, fillerBlockForTerrain(biome, terrainFlags));
+            } else if (depth <= fillDepth) {
+                column.setBlock(worldX, worldY, worldZ, fillerBlockForTerrain(biome, terrainFlags, surfaceHeight, worldX, worldZ));
             } else {
                 break;
             }
@@ -1711,6 +1714,12 @@ final class WorldGenerator {
             return TERRAIN_LAKE;
         }
 
+        boolean shorelineHeight = surfaceHeight >= GameConfig.SEA_LEVEL
+            && surfaceHeight <= GameConfig.SEA_LEVEL + BEACH_MAX_HEIGHT_ABOVE_SEA;
+        if (shorelineHeight && hasNearbyOcean(worldX, worldZ)) {
+            return TERRAIN_BEACH;
+        }
+
         if (continentalness >= OCEAN_COASTLINE
             && continentalness <= OCEAN_COASTLINE + BEACH_WIDTH
             && hasNearbyOcean(worldX, worldZ)
@@ -1722,7 +1731,7 @@ final class WorldGenerator {
     }
 
     private boolean hasNearbyOcean(int worldX, int worldZ) {
-        int radius = 18;
+        int radius = 24;
         return sampleContinentalness(worldX + radius, worldZ) < OCEAN_COASTLINE
             || sampleContinentalness(worldX - radius, worldZ) < OCEAN_COASTLINE
             || sampleContinentalness(worldX, worldZ + radius) < OCEAN_COASTLINE
@@ -1730,7 +1739,11 @@ final class WorldGenerator {
             || sampleContinentalness(worldX + radius, worldZ + radius) < OCEAN_COASTLINE
             || sampleContinentalness(worldX - radius, worldZ - radius) < OCEAN_COASTLINE
             || sampleContinentalness(worldX + radius, worldZ - radius) < OCEAN_COASTLINE
-            || sampleContinentalness(worldX - radius, worldZ + radius) < OCEAN_COASTLINE;
+            || sampleContinentalness(worldX - radius, worldZ + radius) < OCEAN_COASTLINE
+            || sampleContinentalness(worldX + GameConfig.CHUNK_SIZE, worldZ) < OCEAN_COASTLINE
+            || sampleContinentalness(worldX - GameConfig.CHUNK_SIZE, worldZ) < OCEAN_COASTLINE
+            || sampleContinentalness(worldX, worldZ + GameConfig.CHUNK_SIZE) < OCEAN_COASTLINE
+            || sampleContinentalness(worldX, worldZ - GameConfig.CHUNK_SIZE) < OCEAN_COASTLINE;
     }
 
     private double sampleContinentalness(int worldX, int worldZ) {
@@ -2178,9 +2191,9 @@ final class WorldGenerator {
         return biome.topBlock;
     }
 
-    private byte fillerBlockForTerrain(Biome biome, byte terrainFlags) {
+    private byte fillerBlockForTerrain(Biome biome, byte terrainFlags, int surfaceHeight, int worldX, int worldZ) {
         if ((terrainFlags & TERRAIN_OCEAN) != 0) {
-            return GameConfig.GRAVEL;
+            return oceanFloorFillerBlock(worldX, surfaceHeight, worldZ);
         }
         if ((terrainFlags & TERRAIN_BEACH) != 0) {
             return GameConfig.SAND;
@@ -2200,10 +2213,19 @@ final class WorldGenerator {
             return floorNoise > 0.30 ? GameConfig.GRAVEL : (floorNoise < -0.35 ? GameConfig.SAND : GameConfig.DIRT);
         }
         int depth = GameConfig.SEA_LEVEL - surfaceHeight;
-        if (depth <= 3) {
-            return floorNoise < 0.35 ? GameConfig.SAND : GameConfig.GRAVEL;
+        if (depth <= 12) {
+            return GameConfig.SAND;
         }
-        return floorNoise > -0.18 ? GameConfig.GRAVEL : GameConfig.SAND;
+        return floorNoise > 0.58 ? GameConfig.GRAVEL : GameConfig.SAND;
+    }
+
+    private byte oceanFloorFillerBlock(int worldX, int surfaceHeight, int worldZ) {
+        int depth = GameConfig.SEA_LEVEL - surfaceHeight;
+        if (depth <= 12) {
+            return GameConfig.SAND;
+        }
+        double patchNoise = fractalNoise((worldX - 390.0) * 0.075, (worldZ + 770.0) * 0.075, 2, 0.50);
+        return patchNoise > 0.62 ? GameConfig.GRAVEL : GameConfig.SAND;
     }
 
     private void stabilizeGeneratedSand(GeneratedChunkColumn column, int startX, int startZ) {

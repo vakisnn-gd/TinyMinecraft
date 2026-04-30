@@ -54,6 +54,9 @@ final class WaterRenderer {
             && neighborSolid) {
             return true;
         }
+        if (!liquid && neighborLiquid && hidesFaceAgainstLiquid(block)) {
+            return false;
+        }
         if (liquid) {
             if (!neighborLiquid) {
                 return !neighborSolid;
@@ -75,6 +78,13 @@ final class WaterRenderer {
                 && neighbor != GameConfig.PINE_LOG;
         }
         return world.isTransparentBlock(neighbor) || !neighborSolid;
+    }
+
+    private boolean hidesFaceAgainstLiquid(byte block) {
+        return block == GameConfig.SAND
+            || block == GameConfig.GRAVEL
+            || block == GameConfig.DIRT
+            || block == GameConfig.GRASS;
     }
 
     double liquidSideMinY(double defaultMinY, byte block, Face face, int worldX, int worldY, int worldZ) {
