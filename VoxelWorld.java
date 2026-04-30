@@ -1348,6 +1348,30 @@ final class VoxelWorld implements StructureTemplates.Target {
         return true;
     }
 
+    byte scoopLiquid(RayHit hit) {
+        if (hit == null || !isInside(hit.x, hit.y, hit.z)) {
+            return GameConfig.AIR;
+        }
+        byte block = getBlock(hit.x, hit.y, hit.z);
+        byte fluid = GameConfig.fluidItemForBlock(block);
+        if (fluid == GameConfig.WATER) {
+            removeLiquidAt(hit.x, hit.y, hit.z);
+            return InventoryItems.ITEM_WATER_BUCKET;
+        }
+        if (fluid == GameConfig.LAVA) {
+            removeLiquidAt(hit.x, hit.y, hit.z);
+            return InventoryItems.ITEM_LAVA_BUCKET;
+        }
+        return GameConfig.AIR;
+    }
+
+    private void removeLiquidAt(int x, int y, int z) {
+        setBlockState(x, y, z, GameConfig.AIR, -1);
+        refreshDynamicCellsAround(x, y, z);
+        markDirtyColumn(x, z);
+        refreshSurfaceHeight(x, z);
+    }
+
     private boolean placeDoor(int x, int y, int z, PlayerState player) {
         if (!isInside(x, y, z) || !isInside(x, y + 1, z) || y <= GameConfig.WORLD_MIN_Y) {
             return false;
@@ -2331,7 +2355,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         int maxDistance = GameConfig.fluidSpreadDistance(fluidItem);
         boolean hasFluidAbove = GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem;
 
-        if (fluidItem == GameConfig.WATER && canCreateFluidSourceNow(x, y, z)) {
+        if (fluidItem == GameConfig.WATER && countCurrentAdjacentWaterSources(x, y, z) >= 2) {
             scheduleBlockChange(pendingChanges, x, y, z, sourceBlock, 0);
         } else if (block != sourceBlock) {
             int desiredDistance = hasFluidAbove ? 0 : findDesiredFluidDistance(x, y, z, fluidItem);
@@ -2602,16 +2626,6 @@ final class VoxelWorld implements StructureTemplates.Target {
         return Math.min(currentBest, distance + 1);
     }
 
-    private boolean canCreateFluidSourceNow(int x, int y, int z) {
-        if (y <= GameConfig.WORLD_MIN_Y) {
-            return false;
-        }
-        byte currentBlock = getBlock(x, y, z);
-        return (isReplaceableForFluid(currentBlock) || GameConfig.isWaterBlock(currentBlock))
-            && hasSupportForWaterSource(x, y, z)
-            && countCurrentAdjacentWaterSources(x, y, z) >= 2;
-    }
-
     private int countCurrentAdjacentWaterSources(int x, int y, int z) {
         int neighboringSources = 0;
         if (getBlock(x + 1, y, z) == GameConfig.WATER_SOURCE) {
@@ -2668,11 +2682,6 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         int distance = getFluidDistance(x, y, z);
         return distance < 0 ? -1 : distance;
-    }
-
-    private boolean hasSupportForWaterSource(int x, int y, int z) {
-        byte below = getBlock(x, y - 1, z);
-        return !isReplaceableForFluid(below) && !GameConfig.isLavaBlock(below);
     }
 
     private void getFluidFlowVector(int x, int y, int z, MutableVec3 output) {

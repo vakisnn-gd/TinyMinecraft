@@ -62,6 +62,9 @@ final class InventoryItems {
     static final byte NETHERITE_BOOTS = 111;
     static final byte COAL_ITEM = 112;
     static final byte DIAMOND_ITEM = 113;
+    static final byte ITEM_BUCKET = 114;
+    static final byte ITEM_WATER_BUCKET = 115;
+    static final byte ITEM_LAVA_BUCKET = 116;
     static final byte BREAD = 49;
     static final byte POTATO = 50;
     static final byte CARROT = 51;
@@ -82,8 +85,6 @@ final class InventoryItems {
         GameConfig.ZOMBIE_SHIRT,
         GameConfig.ZOMBIE_PANTS,
         GameConfig.ZOMBIE_EYE,
-        GameConfig.WATER,
-        GameConfig.LAVA,
         GameConfig.SAND,
         GameConfig.GRAVEL,
         GameConfig.CLAY,
@@ -121,6 +122,9 @@ final class InventoryItems {
         IRON_INGOT,
         COAL_ITEM,
         DIAMOND_ITEM,
+        ITEM_BUCKET,
+        ITEM_WATER_BUCKET,
+        ITEM_LAVA_BUCKET,
         WOODEN_PICKAXE,
         WOODEN_SWORD,
         WOODEN_AXE,
@@ -298,8 +302,9 @@ final class InventoryItems {
                 InventoryItems.DIAMOND_ITEM
             ),
             indicesFor(
-                GameConfig.WATER,
-                GameConfig.LAVA,
+                InventoryItems.ITEM_BUCKET,
+                InventoryItems.ITEM_WATER_BUCKET,
+                InventoryItems.ITEM_LAVA_BUCKET,
                 GameConfig.ZOMBIE_SKIN,
                 GameConfig.ZOMBIE_SHIRT,
                 GameConfig.ZOMBIE_PANTS,
@@ -438,6 +443,12 @@ final class InventoryItems {
                 return "Coal";
             case DIAMOND_ITEM:
                 return "Diamond";
+            case ITEM_BUCKET:
+                return "Bucket";
+            case ITEM_WATER_BUCKET:
+                return "Water Bucket";
+            case ITEM_LAVA_BUCKET:
+                return "Lava Bucket";
             case IRON_HELMET:
                 return "Iron Helmet";
             case IRON_CHESTPLATE:
@@ -559,105 +570,105 @@ final class InventoryItems {
 
     private static String russianName(byte itemId) {
         switch (itemId) {
-            case GameConfig.GRASS: return "Блок травы";
-            case GameConfig.DIRT: return "Земля";
-            case GameConfig.COBBLESTONE: return "Булыжник";
-            case GameConfig.BEDROCK: return "Бедрок";
-            case GameConfig.IRON_ORE: return "Железная руда";
-            case GameConfig.DIAMOND_ORE: return "Алмазная руда";
-            case GameConfig.COAL_ORE: return "Угольная руда";
-            case GameConfig.ZOMBIE_SKIN: return "Кожа зомби";
-            case GameConfig.ZOMBIE_SHIRT: return "Рубашка зомби";
-            case GameConfig.ZOMBIE_PANTS: return "Штаны зомби";
-            case GameConfig.ZOMBIE_EYE: return "Глаз зомби";
-            case GameConfig.WATER: return "Вода";
-            case GameConfig.LAVA: return "Лава";
-            case GameConfig.SAND: return "Песок";
-            case GameConfig.GRAVEL: return "Гравий";
-            case GameConfig.CLAY: return "Глина";
-            case GameConfig.OAK_LOG: return "Дубовое бревно";
-            case GameConfig.OAK_LEAVES: return "Дубовая листва";
-            case GameConfig.PINE_LOG: return "Сосновое бревно";
-            case GameConfig.PINE_LEAVES: return "Сосновая листва";
-            case GameConfig.CACTUS: return "Кактус";
-            case GameConfig.SNOW_LAYER: return "Слой снега";
-            case GameConfig.SEAGRASS: return "Водоросли";
-            case GameConfig.TALL_GRASS: return "Высокая трава";
-            case GameConfig.RED_FLOWER: return "Красный цветок";
-            case GameConfig.YELLOW_FLOWER: return "Желтый цветок";
-            case GameConfig.STONE: return "Камень";
-            case GameConfig.DEEPSLATE: return "Глубинный сланец";
-            case GameConfig.DEEPSLATE_IRON_ORE: return "Железная руда в глубинном сланце";
-            case GameConfig.DEEPSLATE_DIAMOND_ORE: return "Алмазная руда в глубинном сланце";
-            case GameConfig.DEEPSLATE_COAL_ORE: return "Угольная руда в глубинном сланце";
-            case GameConfig.OBSIDIAN: return "Обсидиан";
-            case OAK_PLANKS: return "Дубовые доски";
-            case GameConfig.OAK_FENCE: return "Дубовый забор";
-            case GameConfig.CHEST: return "Сундук";
-            case GameConfig.CRAFTING_TABLE: return "Верстак";
-            case GameConfig.FURNACE: return "Печь";
-            case GameConfig.GLASS: return "Стекло";
-            case GameConfig.WHEAT_CROP: return "Пшеница";
-            case GameConfig.RAIL: return "Рельсы";
-            case GameConfig.OAK_DOOR: return "Дубовая дверь";
-            case GameConfig.FARMLAND: return "Грядка";
-            case GameConfig.TORCH: return "Факел";
-            case GameConfig.STRUCTURE_BLOCK: return "Структурный блок";
-            case GameConfig.RED_BED: return "Красная кровать";
-            case STICK: return "Палка";
-            case BREAD: return "Хлеб";
-            case POTATO: return "Картофель";
-            case CARROT: return "Морковь";
-            case WHEAT_SEEDS: return "Семена";
-            case IRON_HELMET: return "Железный шлем";
-            case IRON_CHESTPLATE: return "Железный нагрудник";
-            case IRON_LEGGINGS: return "Железные поножи";
-            case IRON_BOOTS: return "Железные ботинки";
-            case SHIELD: return "Щит";
-            case TOTEM: return "Тотем";
-            case IRON_INGOT: return "Железный слиток";
-            case WOODEN_PICKAXE: return "Деревянная кирка";
-            case WOODEN_SWORD: return "Деревянный меч";
-            case WOODEN_AXE: return "Деревянный топор";
-            case WOODEN_SHOVEL: return "Деревянная лопата";
-            case WOODEN_HOE: return "Деревянная мотыга";
-            case STONE_PICKAXE: return "Каменная кирка";
-            case STONE_SWORD: return "Каменный меч";
-            case STONE_AXE: return "Каменный топор";
-            case STONE_SHOVEL: return "Каменная лопата";
-            case STONE_HOE: return "Каменная мотыга";
-            case IRON_PICKAXE: return "Железная кирка";
-            case IRON_SWORD: return "Железный меч";
-            case IRON_AXE: return "Железный топор";
-            case IRON_SHOVEL: return "Железная лопата";
-            case IRON_HOE: return "Железная мотыга";
-            case DIAMOND_PICKAXE: return "Алмазная кирка";
-            case NETHERITE_PICKAXE: return "Незеритовая кирка";
-            case DIAMOND_SWORD: return "Алмазный меч";
-            case DIAMOND_AXE: return "Алмазный топор";
-            case DIAMOND_SHOVEL: return "Алмазная лопата";
-            case DIAMOND_HOE: return "Алмазная мотыга";
-            case NETHERITE_SWORD: return "Незеритовый меч";
-            case NETHERITE_AXE: return "Незеритовый топор";
-            case NETHERITE_SHOVEL: return "Незеритовая лопата";
-            case NETHERITE_HOE: return "Незеритовая мотыга";
-            case ZOMBIE_SPAWN_EGG: return "Яйцо призыва зомби";
-            case SKELETON_SPAWN_EGG: return "Яйцо призыва скелета";
-            case PIG_SPAWN_EGG: return "Яйцо призыва свиньи";
-            case SHEEP_SPAWN_EGG: return "Яйцо призыва овцы";
-            case COW_SPAWN_EGG: return "Яйцо призыва коровы";
-            case VILLAGER_SPAWN_EGG: return "Яйцо призыва жителя";
-            case RAW_PORK: return "Сырая свинина";
-            case RAW_BEEF: return "Сырая говядина";
-            case RAW_MUTTON: return "Сырая баранина";
-            case COOKED_PORK: return "Жареная свинина";
-            case COOKED_BEEF: return "Стейк";
-            case COOKED_MUTTON: return "Жареная баранина";
-            case BAKED_POTATO: return "Печеный картофель";
-            case LEATHER: return "Кожа";
-            case WOOL: return "Шерсть";
-            case ROTTEN_FLESH: return "Гнилая плоть";
-            case BONE: return "Кость";
+            case GameConfig.GRASS: return "Р‘Р»РѕРє С‚СЂР°РІС‹";
+            case GameConfig.DIRT: return "Р—РµРјР»СЏ";
+            case GameConfig.COBBLESTONE: return "Р‘СѓР»С‹Р¶РЅРёРє";
+            case GameConfig.BEDROCK: return "Р‘РµРґСЂРѕРє";
+            case GameConfig.IRON_ORE: return "Р–РµР»РµР·РЅР°СЏ СЂСѓРґР°";
+            case GameConfig.DIAMOND_ORE: return "РђР»РјР°Р·РЅР°СЏ СЂСѓРґР°";
+            case GameConfig.COAL_ORE: return "РЈРіРѕР»СЊРЅР°СЏ СЂСѓРґР°";
+            case GameConfig.ZOMBIE_SKIN: return "РљРѕР¶Р° Р·РѕРјР±Рё";
+            case GameConfig.ZOMBIE_SHIRT: return "Р СѓР±Р°С€РєР° Р·РѕРјР±Рё";
+            case GameConfig.ZOMBIE_PANTS: return "РЁС‚Р°РЅС‹ Р·РѕРјР±Рё";
+            case GameConfig.ZOMBIE_EYE: return "Р“Р»Р°Р· Р·РѕРјР±Рё";
+            case GameConfig.WATER: return "Р’РѕРґР°";
+            case GameConfig.LAVA: return "Р›Р°РІР°";
+            case GameConfig.SAND: return "РџРµСЃРѕРє";
+            case GameConfig.GRAVEL: return "Р“СЂР°РІРёР№";
+            case GameConfig.CLAY: return "Р“Р»РёРЅР°";
+            case GameConfig.OAK_LOG: return "Р”СѓР±РѕРІРѕРµ Р±СЂРµРІРЅРѕ";
+            case GameConfig.OAK_LEAVES: return "Р”СѓР±РѕРІР°СЏ Р»РёСЃС‚РІР°";
+            case GameConfig.PINE_LOG: return "РЎРѕСЃРЅРѕРІРѕРµ Р±СЂРµРІРЅРѕ";
+            case GameConfig.PINE_LEAVES: return "РЎРѕСЃРЅРѕРІР°СЏ Р»РёСЃС‚РІР°";
+            case GameConfig.CACTUS: return "РљР°РєС‚СѓСЃ";
+            case GameConfig.SNOW_LAYER: return "РЎР»РѕР№ СЃРЅРµРіР°";
+            case GameConfig.SEAGRASS: return "Р’РѕРґРѕСЂРѕСЃР»Рё";
+            case GameConfig.TALL_GRASS: return "Р’С‹СЃРѕРєР°СЏ С‚СЂР°РІР°";
+            case GameConfig.RED_FLOWER: return "РљСЂР°СЃРЅС‹Р№ С†РІРµС‚РѕРє";
+            case GameConfig.YELLOW_FLOWER: return "Р–РµР»С‚С‹Р№ С†РІРµС‚РѕРє";
+            case GameConfig.STONE: return "РљР°РјРµРЅСЊ";
+            case GameConfig.DEEPSLATE: return "Р“Р»СѓР±РёРЅРЅС‹Р№ СЃР»Р°РЅРµС†";
+            case GameConfig.DEEPSLATE_IRON_ORE: return "Р–РµР»РµР·РЅР°СЏ СЂСѓРґР° РІ РіР»СѓР±РёРЅРЅРѕРј СЃР»Р°РЅС†Рµ";
+            case GameConfig.DEEPSLATE_DIAMOND_ORE: return "РђР»РјР°Р·РЅР°СЏ СЂСѓРґР° РІ РіР»СѓР±РёРЅРЅРѕРј СЃР»Р°РЅС†Рµ";
+            case GameConfig.DEEPSLATE_COAL_ORE: return "РЈРіРѕР»СЊРЅР°СЏ СЂСѓРґР° РІ РіР»СѓР±РёРЅРЅРѕРј СЃР»Р°РЅС†Рµ";
+            case GameConfig.OBSIDIAN: return "РћР±СЃРёРґРёР°РЅ";
+            case OAK_PLANKS: return "Р”СѓР±РѕРІС‹Рµ РґРѕСЃРєРё";
+            case GameConfig.OAK_FENCE: return "Р”СѓР±РѕРІС‹Р№ Р·Р°Р±РѕСЂ";
+            case GameConfig.CHEST: return "РЎСѓРЅРґСѓРє";
+            case GameConfig.CRAFTING_TABLE: return "Р’РµСЂСЃС‚Р°Рє";
+            case GameConfig.FURNACE: return "РџРµС‡СЊ";
+            case GameConfig.GLASS: return "РЎС‚РµРєР»Рѕ";
+            case GameConfig.WHEAT_CROP: return "РџС€РµРЅРёС†Р°";
+            case GameConfig.RAIL: return "Р РµР»СЊСЃС‹";
+            case GameConfig.OAK_DOOR: return "Р”СѓР±РѕРІР°СЏ РґРІРµСЂСЊ";
+            case GameConfig.FARMLAND: return "Р“СЂСЏРґРєР°";
+            case GameConfig.TORCH: return "Р¤Р°РєРµР»";
+            case GameConfig.STRUCTURE_BLOCK: return "РЎС‚СЂСѓРєС‚СѓСЂРЅС‹Р№ Р±Р»РѕРє";
+            case GameConfig.RED_BED: return "РљСЂР°СЃРЅР°СЏ РєСЂРѕРІР°С‚СЊ";
+            case STICK: return "РџР°Р»РєР°";
+            case BREAD: return "РҐР»РµР±";
+            case POTATO: return "РљР°СЂС‚РѕС„РµР»СЊ";
+            case CARROT: return "РњРѕСЂРєРѕРІСЊ";
+            case WHEAT_SEEDS: return "РЎРµРјРµРЅР°";
+            case IRON_HELMET: return "Р–РµР»РµР·РЅС‹Р№ С€Р»РµРј";
+            case IRON_CHESTPLATE: return "Р–РµР»РµР·РЅС‹Р№ РЅР°РіСЂСѓРґРЅРёРє";
+            case IRON_LEGGINGS: return "Р–РµР»РµР·РЅС‹Рµ РїРѕРЅРѕР¶Рё";
+            case IRON_BOOTS: return "Р–РµР»РµР·РЅС‹Рµ Р±РѕС‚РёРЅРєРё";
+            case SHIELD: return "Р©РёС‚";
+            case TOTEM: return "РўРѕС‚РµРј";
+            case IRON_INGOT: return "Р–РµР»РµР·РЅС‹Р№ СЃР»РёС‚РѕРє";
+            case WOODEN_PICKAXE: return "Р”РµСЂРµРІСЏРЅРЅР°СЏ РєРёСЂРєР°";
+            case WOODEN_SWORD: return "Р”РµСЂРµРІСЏРЅРЅС‹Р№ РјРµС‡";
+            case WOODEN_AXE: return "Р”РµСЂРµРІСЏРЅРЅС‹Р№ С‚РѕРїРѕСЂ";
+            case WOODEN_SHOVEL: return "Р”РµСЂРµРІСЏРЅРЅР°СЏ Р»РѕРїР°С‚Р°";
+            case WOODEN_HOE: return "Р”РµСЂРµРІСЏРЅРЅР°СЏ РјРѕС‚С‹РіР°";
+            case STONE_PICKAXE: return "РљР°РјРµРЅРЅР°СЏ РєРёСЂРєР°";
+            case STONE_SWORD: return "РљР°РјРµРЅРЅС‹Р№ РјРµС‡";
+            case STONE_AXE: return "РљР°РјРµРЅРЅС‹Р№ С‚РѕРїРѕСЂ";
+            case STONE_SHOVEL: return "РљР°РјРµРЅРЅР°СЏ Р»РѕРїР°С‚Р°";
+            case STONE_HOE: return "РљР°РјРµРЅРЅР°СЏ РјРѕС‚С‹РіР°";
+            case IRON_PICKAXE: return "Р–РµР»РµР·РЅР°СЏ РєРёСЂРєР°";
+            case IRON_SWORD: return "Р–РµР»РµР·РЅС‹Р№ РјРµС‡";
+            case IRON_AXE: return "Р–РµР»РµР·РЅС‹Р№ С‚РѕРїРѕСЂ";
+            case IRON_SHOVEL: return "Р–РµР»РµР·РЅР°СЏ Р»РѕРїР°С‚Р°";
+            case IRON_HOE: return "Р–РµР»РµР·РЅР°СЏ РјРѕС‚С‹РіР°";
+            case DIAMOND_PICKAXE: return "РђР»РјР°Р·РЅР°СЏ РєРёСЂРєР°";
+            case NETHERITE_PICKAXE: return "РќРµР·РµСЂРёС‚РѕРІР°СЏ РєРёСЂРєР°";
+            case DIAMOND_SWORD: return "РђР»РјР°Р·РЅС‹Р№ РјРµС‡";
+            case DIAMOND_AXE: return "РђР»РјР°Р·РЅС‹Р№ С‚РѕРїРѕСЂ";
+            case DIAMOND_SHOVEL: return "РђР»РјР°Р·РЅР°СЏ Р»РѕРїР°С‚Р°";
+            case DIAMOND_HOE: return "РђР»РјР°Р·РЅР°СЏ РјРѕС‚С‹РіР°";
+            case NETHERITE_SWORD: return "РќРµР·РµСЂРёС‚РѕРІС‹Р№ РјРµС‡";
+            case NETHERITE_AXE: return "РќРµР·РµСЂРёС‚РѕРІС‹Р№ С‚РѕРїРѕСЂ";
+            case NETHERITE_SHOVEL: return "РќРµР·РµСЂРёС‚РѕРІР°СЏ Р»РѕРїР°С‚Р°";
+            case NETHERITE_HOE: return "РќРµР·РµСЂРёС‚РѕРІР°СЏ РјРѕС‚С‹РіР°";
+            case ZOMBIE_SPAWN_EGG: return "РЇР№С†Рѕ РїСЂРёР·С‹РІР° Р·РѕРјР±Рё";
+            case SKELETON_SPAWN_EGG: return "РЇР№С†Рѕ РїСЂРёР·С‹РІР° СЃРєРµР»РµС‚Р°";
+            case PIG_SPAWN_EGG: return "РЇР№С†Рѕ РїСЂРёР·С‹РІР° СЃРІРёРЅСЊРё";
+            case SHEEP_SPAWN_EGG: return "РЇР№С†Рѕ РїСЂРёР·С‹РІР° РѕРІС†С‹";
+            case COW_SPAWN_EGG: return "РЇР№С†Рѕ РїСЂРёР·С‹РІР° РєРѕСЂРѕРІС‹";
+            case VILLAGER_SPAWN_EGG: return "РЇР№С†Рѕ РїСЂРёР·С‹РІР° Р¶РёС‚РµР»СЏ";
+            case RAW_PORK: return "РЎС‹СЂР°СЏ СЃРІРёРЅРёРЅР°";
+            case RAW_BEEF: return "РЎС‹СЂР°СЏ РіРѕРІСЏРґРёРЅР°";
+            case RAW_MUTTON: return "РЎС‹СЂР°СЏ Р±Р°СЂР°РЅРёРЅР°";
+            case COOKED_PORK: return "Р–Р°СЂРµРЅР°СЏ СЃРІРёРЅРёРЅР°";
+            case COOKED_BEEF: return "РЎС‚РµР№Рє";
+            case COOKED_MUTTON: return "Р–Р°СЂРµРЅР°СЏ Р±Р°СЂР°РЅРёРЅР°";
+            case BAKED_POTATO: return "РџРµС‡РµРЅС‹Р№ РєР°СЂС‚РѕС„РµР»СЊ";
+            case LEATHER: return "РљРѕР¶Р°";
+            case WOOL: return "РЁРµСЂСЃС‚СЊ";
+            case ROTTEN_FLESH: return "Р“РЅРёР»Р°СЏ РїР»РѕС‚СЊ";
+            case BONE: return "РљРѕСЃС‚СЊ";
             case COAL_ITEM: return "\u0423\u0433\u043e\u043b\u044c";
             case DIAMOND_ITEM: return "\u0410\u043b\u043c\u0430\u0437";
             case DIAMOND_HELMET: return "\u0410\u043b\u043c\u0430\u0437\u043d\u044b\u0439 \u0448\u043b\u0435\u043c";
@@ -668,12 +679,17 @@ final class InventoryItems {
             case NETHERITE_CHESTPLATE: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0439 \u043d\u0430\u0433\u0440\u0443\u0434\u043d\u0438\u043a";
             case NETHERITE_LEGGINGS: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0435 \u043f\u043e\u043d\u043e\u0436\u0438";
             case NETHERITE_BOOTS: return "\u041d\u0435\u0437\u0435\u0440\u0438\u0442\u043e\u0432\u044b\u0435 \u0431\u043e\u0442\u0438\u043d\u043a\u0438";
+            case ITEM_BUCKET: return "\u0412\u0435\u0434\u0440\u043e";
+            case ITEM_WATER_BUCKET: return "\u0412\u0435\u0434\u0440\u043e \u0432\u043e\u0434\u044b";
+            case ITEM_LAVA_BUCKET: return "\u0412\u0435\u0434\u0440\u043e \u043b\u0430\u0432\u044b";
             default: return null;
         }
     }
 
     static boolean isPlaceable(byte itemId) {
-        return Blocks.isKnownLegacyId(itemId) && !Blocks.typeFromLegacyId(itemId).isAir();
+        return itemId == ITEM_WATER_BUCKET
+            || itemId == ITEM_LAVA_BUCKET
+            || (Blocks.isKnownLegacyId(itemId) && !Blocks.typeFromLegacyId(itemId).isAir());
     }
 
     static boolean isCollectible(byte itemId) {
@@ -698,6 +714,9 @@ final class InventoryItems {
             case NETHERITE_CHESTPLATE:
             case NETHERITE_LEGGINGS:
             case NETHERITE_BOOTS:
+            case ITEM_BUCKET:
+            case ITEM_WATER_BUCKET:
+            case ITEM_LAVA_BUCKET:
             case SHIELD:
             case TOTEM:
             case WOODEN_PICKAXE:
@@ -1100,6 +1119,9 @@ final class CraftingRecipes {
         CraftingRecipe.shaped(2, 2, InventoryItems.IRON_HOE, 1,
             InventoryItems.IRON_INGOT, InventoryItems.IRON_INGOT,
             GameConfig.AIR, InventoryItems.STICK),
+        CraftingRecipe.shaped(3, 2, InventoryItems.ITEM_BUCKET, 1,
+            InventoryItems.IRON_INGOT, GameConfig.AIR, InventoryItems.IRON_INGOT,
+            GameConfig.AIR, InventoryItems.IRON_INGOT, GameConfig.AIR),
         CraftingRecipe.shaped(3, 2, GameConfig.RED_BED, 1,
             InventoryItems.WOOL, InventoryItems.WOOL, InventoryItems.WOOL,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
@@ -1617,16 +1639,20 @@ final class PlayerInventory {
                         boolean creativeStackClick, ContainerInventory chest, FurnaceBlockEntity furnace) {
         refreshCraftResult();
         refreshWorkbenchCraftResult();
-        if (shiftDown && !rightClick) {
-            return quickMove(ref, creativeMode, chest, furnace);
-        }
         if (ref == null) {
             cursor.clear();
             return true;
         }
         if (ref.group == InventorySlotGroup.TRASH) {
-            cursor.clear();
+            if (shiftDown && creativeMode) {
+                clearAll();
+            } else {
+                cursor.clear();
+            }
             return true;
+        }
+        if (shiftDown && !rightClick) {
+            return quickMove(ref, creativeMode, chest, furnace);
         }
         if (ref.group == InventorySlotGroup.CREATIVE) {
             return takeFromCreative(ref, creativeMode, creativeStackClick);

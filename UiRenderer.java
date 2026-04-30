@@ -35,7 +35,7 @@ final class UiRenderer {
         float creativeTrashWidth = 0.0f;
         float panelWidth = creativeMode ? Math.max(gridWidth + padding * 2.0f + creativeTrashWidth, tabsWidth + padding * 2.0f) : Math.max(gridWidth + padding * 2.0f, 440.0f * uiScale);
         float panelHeight = creativeMode
-            ? titleHeight + 4.0f * (slotSize + slotGap) + 18.0f * uiScale + gridHeight + hotbarGap + slotSize + padding * 2.0f
+            ? titleHeight + 4.0f * (slotSize + slotGap) + 18.0f * uiScale + gridHeight + hotbarGap + slotSize * 2.0f + padding * 2.0f
             : (screenMode == GameConfig.INVENTORY_SCREEN_PLAYER ? 348.0f * uiScale : 370.0f * uiScale);
         float panelX = clamp(framebufferWidth * 0.5f - panelWidth * 0.5f, 8.0f, Math.max(8.0f, framebufferWidth - panelWidth - 8.0f));
         float panelY = clamp(framebufferHeight * 0.5f - panelHeight * 0.5f - (creativeMode ? 18.0f * uiScale : 0.0f),

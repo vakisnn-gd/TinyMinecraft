@@ -160,9 +160,9 @@ final class GameConfig {
     static final int LAVA_DAMAGE = 1;
     static final double FIRE_DAMAGE_INTERVAL = 1.0;
     static final int FIRE_DAMAGE = 1;
-    // Вода может растекаться по горизонтали до 7 блоков от источника.
+    // Р’РѕРґР° РјРѕР¶РµС‚ СЂР°СЃС‚РµРєР°С‚СЊСЃСЏ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё РґРѕ 7 Р±Р»РѕРєРѕРІ РѕС‚ РёСЃС‚РѕС‡РЅРёРєР°.
     static final int WATER_SPREAD_DISTANCE = 7;
-    // Лава растекается медленнее и ближе: только до 4 блоков.
+    // Р›Р°РІР° СЂР°СЃС‚РµРєР°РµС‚СЃСЏ РјРµРґР»РµРЅРЅРµРµ Рё Р±Р»РёР¶Рµ: С‚РѕР»СЊРєРѕ РґРѕ 4 Р±Р»РѕРєРѕРІ.
     static final int LAVA_SPREAD_DISTANCE = 4;
     static final int WATER_FLOW_TICKS = 25;
     static final int LAVA_FLOW_TICKS = 20;
@@ -202,15 +202,15 @@ final class GameConfig {
     static final int INVENTORY_SCREEN_CHEST = 2;
     static final int INVENTORY_SCREEN_FURNACE = 3;
 
-    static final String[] PAUSE_OPTIONS = {"Вернуться в игру", "Настройки...", "Сохранить и выйти в меню"};
-    static final String[] DEATH_OPTIONS = {"Возродиться", "Выйти в меню"};
-    static final String[] WORLD_MENU_ACTIONS = {"Одиночная игра", "Настройки", "Выйти"};
-    static final String[] SINGLEPLAYER_ACTIONS = {"Играть", "Создать", "Переимен.", "Удалить", "Назад"};
-    static final String[] CREATE_WORLD_ACTIONS = {"Создать мир", "Отмена"};
-    static final String[] RENAME_WORLD_ACTIONS = {"Переименовать", "Отмена"};
-    static final String[] CREATIVE_TABS = {"Блоки", "Природа", "Инструменты", "Жидкости"};
-    static final String[] GAME_MODE_OPTIONS = {"Выживание", "Творческий", "Наблюдатель"};
-    static final String[] DIFFICULTY_OPTIONS = {"Мирная", "Легкая", "Обычная", "Сложная"};
+    static final String[] PAUSE_OPTIONS = {"Р’РµСЂРЅСѓС‚СЊСЃСЏ РІ РёРіСЂСѓ", "РќР°СЃС‚СЂРѕР№РєРё...", "РЎРѕС…СЂР°РЅРёС‚СЊ Рё РІС‹Р№С‚Рё РІ РјРµРЅСЋ"};
+    static final String[] DEATH_OPTIONS = {"Р’РѕР·СЂРѕРґРёС‚СЊСЃСЏ", "Р’С‹Р№С‚Рё РІ РјРµРЅСЋ"};
+    static final String[] WORLD_MENU_ACTIONS = {"РћРґРёРЅРѕС‡РЅР°СЏ РёРіСЂР°", "РќР°СЃС‚СЂРѕР№РєРё", "Р’С‹Р№С‚Рё"};
+    static final String[] SINGLEPLAYER_ACTIONS = {"РРіСЂР°С‚СЊ", "РЎРѕР·РґР°С‚СЊ", "РџРµСЂРµРёРјРµРЅ.", "РЈРґР°Р»РёС‚СЊ", "РќР°Р·Р°Рґ"};
+    static final String[] CREATE_WORLD_ACTIONS = {"РЎРѕР·РґР°С‚СЊ РјРёСЂ", "РћС‚РјРµРЅР°"};
+    static final String[] RENAME_WORLD_ACTIONS = {"РџРµСЂРµРёРјРµРЅРѕРІР°С‚СЊ", "РћС‚РјРµРЅР°"};
+    static final String[] CREATIVE_TABS = {"Р‘Р»РѕРєРё", "РџСЂРёСЂРѕРґР°", "РРЅСЃС‚СЂСѓРјРµРЅС‚С‹", "Р–РёРґРєРѕСЃС‚Рё"};
+    static final String[] GAME_MODE_OPTIONS = {"Р’С‹Р¶РёРІР°РЅРёРµ", "РўРІРѕСЂС‡РµСЃРєРёР№", "РќР°Р±Р»СЋРґР°С‚РµР»СЊ"};
+    static final String[] DIFFICULTY_OPTIONS = {"РњРёСЂРЅР°СЏ", "Р›РµРіРєР°СЏ", "РћР±С‹С‡РЅР°СЏ", "РЎР»РѕР¶РЅР°СЏ"};
     static final String[] PAUSE_OPTIONS_EN = {"Back to Game", "Options...", "Save and Quit to Title"};
     static final String[] DEATH_OPTIONS_EN = {"Respawn", "Exit to Menu"};
     static final String[] WORLD_MENU_ACTIONS_EN = {"Singleplayer", "Options", "Quit"};
@@ -276,6 +276,12 @@ final class GameConfig {
     }
 
     static byte placedBlockForItem(byte itemId) {
+        if (itemId == InventoryItems.ITEM_WATER_BUCKET) {
+            return WATER_SOURCE;
+        }
+        if (itemId == InventoryItems.ITEM_LAVA_BUCKET) {
+            return LAVA_SOURCE;
+        }
         if (itemId == WATER) {
             return WATER_SOURCE;
         }
@@ -433,7 +439,7 @@ final class RuntimePaths {
     }
 
     private static boolean looksLikeProjectRoot(Path path) {
-        return java.nio.file.Files.isRegularFile(path.resolve("TinyMinecraft.java"))
+        return java.nio.file.Files.isRegularFile(path.resolve("TinyCraft.java"))
             && java.nio.file.Files.isDirectory(path.resolve("lib"));
     }
 }
@@ -563,8 +569,8 @@ final class HotbarConfig {
         GameConfig.CACTUS,
         GameConfig.SNOW_LAYER,
         GameConfig.SEAGRASS,
-        GameConfig.WATER,
-        GameConfig.LAVA,
+        InventoryItems.ITEM_WATER_BUCKET,
+        InventoryItems.ITEM_LAVA_BUCKET,
         GameConfig.DIAMOND_ORE
     };
 

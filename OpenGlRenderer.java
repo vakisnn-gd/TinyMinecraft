@@ -1117,10 +1117,6 @@ final class OpenGlRenderer {
         }
     }
 
-    private float ambientShade(int worldX, int worldY, int worldZ) {
-        return world.getAmbientShade(worldX, worldY, worldZ);
-    }
-
     private void emitOreFaceOverlay(FloatArrayBuilder builder, double minX, double minY, double minZ,
                                     double maxX, double maxY, double maxZ, Face face, byte block, float ambientShade) {
         float[] color = oreAccentColor(block, face.brightness * ambientShade);
@@ -1306,7 +1302,7 @@ final class OpenGlRenderer {
         }
         float alpha = 1.0f;
         if (GameConfig.isWaterBlock(block)) {
-            alpha = 0.50f;
+            alpha = 0.60f;
         } else if (GameConfig.isLavaBlock(block)) {
             alpha = 0.85f;
         }
@@ -1918,8 +1914,9 @@ final class OpenGlRenderer {
     private void drawPlayerHeadOnly(PlayerInventory inventory, double pitch, boolean sneakingPose) {
         float[] helmet = inventory == null ? null : armorColor(inventory.getArmorStack(0));
         double crouch = sneakingPose ? -0.23 : 0.0;
+        double bodyTopY = 1.36 + crouch;
         glPushMatrix();
-        glTranslated(0.0, 1.59 + crouch, sneakingPose ? -0.04 : 0.0);
+        glTranslated(0.0, bodyTopY + 0.23, sneakingPose ? -0.04 : 0.0);
         glRotated(Math.toDegrees(pitch), 1.0, 0.0, 0.0);
         drawCuboid(-0.23, -0.23, -0.23, 0.23, 0.23, 0.23, 0.91f, 0.78f, 0.63f);
         if (helmet != null) {
@@ -1937,19 +1934,21 @@ final class OpenGlRenderer {
         double legTop = sneakingPose ? 0.62 : 0.74;
         double legBottom = sneakingPose ? -0.60 : -0.74;
 
+        float bodyR = chest == null ? 0.22f : chest[0];
+        float bodyG = chest == null ? 0.47f : chest[1];
+        float bodyB = chest == null ? 0.85f : chest[2];
+        double bodyMinY = 0.73 + crouch;
+        double bodyMaxY = 1.36 + crouch;
+        drawCuboid(-0.25, bodyMinY, -0.17, 0.25, bodyMaxY, 0.17, bodyR, bodyG, bodyB);
+
         glPushMatrix();
-        glTranslated(0.0, 1.59 + crouch, sneakingPose ? -0.04 : 0.0);
+        glTranslated(0.0, bodyMaxY + 0.23, sneakingPose ? -0.04 : 0.0);
         glRotated(Math.toDegrees(pitch), 1.0, 0.0, 0.0);
         drawCuboid(-0.23, -0.23, -0.23, 0.23, 0.23, 0.23, 0.91f, 0.78f, 0.63f);
         if (helmet != null) {
             drawCuboid(-0.255, -0.255, -0.255, 0.255, 0.07, 0.255, helmet[0], helmet[1], helmet[2]);
         }
         glPopMatrix();
-
-        float bodyR = chest == null ? 0.22f : chest[0];
-        float bodyG = chest == null ? 0.47f : chest[1];
-        float bodyB = chest == null ? 0.85f : chest[2];
-        drawCuboid(-0.25, 0.73 + crouch, -0.17, 0.25, 1.36 + crouch, 0.17, bodyR, bodyG, bodyB);
 
         glPushMatrix();
         glTranslated(-0.30, 1.23 + crouch, 0.0);
@@ -2571,7 +2570,7 @@ final class OpenGlRenderer {
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
-        glTranslated(0.62 + bob - swing * 0.11, -0.58 + (player.sneaking ? -0.06 : 0.0) + swing * 0.05, -1.02 - swing * 0.08);
+        glTranslated(0.76 + bob - swing * 0.12, -0.58 + (player.sneaking ? -0.06 : 0.0) + swing * 0.05, -1.02 - swing * 0.08);
         glRotated(-18.0 - swing * 32.0, 1.0, 0.0, 0.0);
         glRotated(22.0 + swing * 18.0, 0.0, 1.0, 0.0);
         glRotated(8.0 + swing * 10.0, 0.0, 0.0, 1.0);
@@ -2722,7 +2721,7 @@ final class OpenGlRenderer {
         BlockType underType = Blocks.typeFromLegacyId(world.getBlock(blockX, underY, blockZ));
         String facing = facingName(player.yaw);
 
-        drawText(20.0f * uiScale, 28.0f * uiScale, uiScale, "TinyMinecraft OpenGL", 1.0f, 1.0f, 1.0f);
+        drawText(20.0f * uiScale, 28.0f * uiScale, uiScale, "TinyCraft OpenGL", 1.0f, 1.0f, 1.0f);
         drawText(20.0f * uiScale, 50.0f * uiScale, uiScale, "FPS: " + format(debugFps), 1.0f, 1.0f, 1.0f);
         drawText(20.0f * uiScale, 72.0f * uiScale, uiScale, "XYZ: " + format(player.x) + " / " + format(player.y) + " / " + format(player.z), 1.0f, 1.0f, 1.0f);
         drawText(20.0f * uiScale, 94.0f * uiScale, uiScale, "Chunk: " + chunkX + " / " + sectionIndex + " / " + chunkZ + " local " + localX + " / " + localY + " / " + localZ, 1.0f, 1.0f, 1.0f);
@@ -2807,7 +2806,7 @@ final class OpenGlRenderer {
         } else if (menuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
             renderOptionsMenu(mainMenuSelection, renderDistanceChunks, fovDegrees);
         } else {
-            drawCenteredShadowText(116.0f * uiScale, uiScale * 2.4f, "TinyMinecraft", 1.0f, 1.0f, 1.0f);
+            drawCenteredShadowText(116.0f * uiScale, uiScale * 2.4f, "TinyCraft", 1.0f, 1.0f, 1.0f);
             renderMainMenuHome(mainMenuSelection, worlds, selectedWorldIndex, loadedWorldName);
         }
     }
@@ -3374,6 +3373,17 @@ final class OpenGlRenderer {
             case InventoryItems.DIAMOND_ITEM:
                 drawRect(x + size * 0.24f, y + size * 0.16f, size * 0.52f, size * 0.58f, 0.38f, 0.86f, 0.92f, 0.98f);
                 drawRect(x + size * 0.36f, y + size * 0.26f, size * 0.28f, size * 0.24f, 0.70f, 0.97f, 1.00f, 0.98f);
+                break;
+            case InventoryItems.ITEM_BUCKET:
+            case InventoryItems.ITEM_WATER_BUCKET:
+            case InventoryItems.ITEM_LAVA_BUCKET:
+                drawRect(x + size * 0.22f, y + size * 0.18f, size * 0.56f, size * 0.14f, 0.72f, 0.74f, 0.76f, 0.98f);
+                drawRect(x + size * 0.28f, y + size * 0.30f, size * 0.44f, size * 0.48f, 0.48f, 0.50f, 0.54f, 0.98f);
+                if (itemId == InventoryItems.ITEM_WATER_BUCKET) {
+                    drawRect(x + size * 0.32f, y + size * 0.42f, size * 0.36f, size * 0.22f, 0.25f, 0.50f, 0.92f, 0.98f);
+                } else if (itemId == InventoryItems.ITEM_LAVA_BUCKET) {
+                    drawRect(x + size * 0.32f, y + size * 0.42f, size * 0.36f, size * 0.22f, 0.95f, 0.34f, 0.08f, 0.98f);
+                }
                 break;
             case InventoryItems.IRON_HELMET:
             case InventoryItems.DIAMOND_HELMET:
@@ -3968,6 +3978,12 @@ final class OpenGlRenderer {
                 return new float[]{0.08f, 0.08f, 0.09f};
             case InventoryItems.DIAMOND_ITEM:
                 return new float[]{0.38f, 0.86f, 0.92f};
+            case InventoryItems.ITEM_BUCKET:
+                return new float[]{0.58f, 0.60f, 0.64f};
+            case InventoryItems.ITEM_WATER_BUCKET:
+                return new float[]{0.30f, 0.52f, 0.88f};
+            case InventoryItems.ITEM_LAVA_BUCKET:
+                return new float[]{0.92f, 0.38f, 0.12f};
             case InventoryItems.WOODEN_PICKAXE:
             case InventoryItems.WOODEN_SWORD:
             case InventoryItems.WOODEN_AXE:

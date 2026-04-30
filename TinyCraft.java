@@ -87,7 +87,7 @@ import static org.lwjgl.glfw.GLFW.glfwWindowHint;
 import static org.lwjgl.glfw.GLFW.glfwWindowShouldClose;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
-public class TinyMinecraft {
+public class TinyCraft {
     private final long bootstrapSeed = System.nanoTime() ^ new Random().nextLong();
     private final PlayerState player = new PlayerState();
     private final VoxelWorld world = new VoxelWorld(bootstrapSeed);
@@ -175,7 +175,7 @@ public class TinyMinecraft {
     private int lastWorldSlotClickIndex = -1;
 
     public static void main(String[] args) {
-        new TinyMinecraft().run();
+        new TinyCraft().run();
     }
 
     private void run() {
@@ -223,7 +223,7 @@ public class TinyMinecraft {
         long initialMonitor = videoMode != null ? primaryMonitor : NULL;
         fullscreen = videoMode != null;
 
-        window = glfwCreateWindow(initialWidth, initialHeight, "Tiny Minecraft OpenGL", initialMonitor, NULL);
+        window = glfwCreateWindow(initialWidth, initialHeight, "TinyCraft", initialMonitor, NULL);
         if (window == NULL) {
             throw new IllegalStateException("Unable to create window");
         }
@@ -361,7 +361,7 @@ public class TinyMinecraft {
 
                             @Override
                             public void setGameMode(String mode) {
-                                TinyMinecraft.this.setGameMode(commandGameModeIndex(mode));
+                                TinyCraft.this.setGameMode(commandGameModeIndex(mode));
                             }
 
                             @Override
@@ -880,6 +880,9 @@ public class TinyMinecraft {
                 if (useHeldFood(heldItem)) {
                     return;
                 }
+                if (useHeldBucket(heldItem, hit)) {
+                    return;
+                }
                 if (!InventoryItems.isPlaceable(heldItem)) {
                     return;
                 }
@@ -1286,10 +1289,10 @@ public class TinyMinecraft {
         if (query.isEmpty()) {
             return "Usage: /locate structure <village|mineshaft>";
         }
-        if (query.contains("village") || query.contains("деревн")) {
+        if (query.contains("village") || query.contains("РґРµСЂРµРІРЅ")) {
             return locateVillageAndTeleport();
         }
-        if (query.contains("mineshaft") || query.contains("shaft") || query.contains("шахт")) {
+        if (query.contains("mineshaft") || query.contains("shaft") || query.contains("С€Р°С…С‚")) {
             return locateMineshaftAndTeleport();
         }
         return "Unknown structure '" + structureName + "'. Try village or mineshaft.";
@@ -1674,6 +1677,34 @@ public class TinyMinecraft {
         return true;
     }
 
+    private boolean useHeldBucket(byte heldItem, RayHit hit) {
+        if (heldItem == InventoryItems.ITEM_BUCKET) {
+            byte filledBucket = world.scoopLiquid(hit);
+            if (filledBucket == GameConfig.AIR) {
+                return false;
+            }
+            if (!creativeMode) {
+                inventory.consumeSelectedItem(selectedSlot);
+                inventory.addItem(filledBucket, 1);
+                syncSelectedHotbarItem();
+            }
+            renderer.rebuildChunkSectionAroundBlock(hit.x, hit.y, hit.z);
+            return true;
+        }
+        if (heldItem != InventoryItems.ITEM_WATER_BUCKET && heldItem != InventoryItems.ITEM_LAVA_BUCKET) {
+            return false;
+        }
+        if (world.placeBlock(hit, heldItem, player)) {
+            if (!creativeMode) {
+                inventory.consumeSelectedItem(selectedSlot);
+                inventory.addItem(InventoryItems.ITEM_BUCKET, 1);
+                syncSelectedHotbarItem();
+            }
+            renderer.rebuildChunkSectionAroundBlock(hit.previousX, hit.previousY, hit.previousZ);
+        }
+        return true;
+    }
+
     private void useSpawnEgg(MobKind kind, RayHit hit) {
         double horizontalLength = Math.cos(player.pitch);
         double dirX = Math.cos(player.yaw) * horizontalLength;
@@ -1716,6 +1747,9 @@ public class TinyMinecraft {
         }
 
         breakingTimer += deltaTime;
+        if (player.handSwingTimer <= 0.03) {
+            player.handSwingTimer = 0.16;
+        }
         if (breakingTimer < breakingDuration) {
             return;
         }
@@ -2472,7 +2506,7 @@ public class TinyMinecraft {
         InventorySlotRef slot = renderer.getInventorySlotAt(inventory, creativeInventory, creativeTab, inventoryScreenMode, mouseX, mouseY);
         boolean insideInventory = renderer.isInventoryPointInside(creativeInventory, creativeTab, inventoryScreenMode, mouseX, mouseY);
         if (slot == null && !insideInventory) {
-            inventory.clearCursor();
+            dropCursorStack();
             syncSelectedHotbarItem();
             return;
         }
@@ -2488,6 +2522,26 @@ public class TinyMinecraft {
 
     private void syncSelectedHotbarItem() {
         selectedBlock = inventory.getSelectedItemId(selectedSlot);
+    }
+
+    private void dropCursorStack() {
+        ItemStack cursor = inventory.getCursorStack();
+        if (cursor == null || cursor.isEmpty()) {
+            return;
+        }
+        double yaw = player.yaw;
+        double pitch = player.pitch;
+        double forwardX = Math.cos(yaw) * Math.cos(pitch);
+        double forwardY = -Math.sin(pitch);
+        double forwardZ = Math.sin(yaw) * Math.cos(pitch);
+        world.spawnThrownItem(cursor.itemId, cursor.count, cursor.durabilityDamage,
+            player.x + forwardX * 0.72,
+            player.y + player.eyeHeight() * 0.78,
+            player.z + forwardZ * 0.72,
+            forwardX * 3.5,
+            forwardY * 3.5 + 0.8,
+            forwardZ * 3.5);
+        inventory.clearCursor();
     }
 
     private void dropSelectedHotbarItem() {
@@ -3076,7 +3130,7 @@ public class TinyMinecraft {
             + System.lineSeparator() + "  \"minY\": " + GameConfig.WORLD_MIN_Y + ","
             + System.lineSeparator() + "  \"height\": " + GameConfig.WORLD_HEIGHT + ","
             + System.lineSeparator() + "  \"seaLevel\": " + GameConfig.SEA_LEVEL + ","
-            + System.lineSeparator() + "  \"createdWith\": \"TinyMinecraft mcrx-1\""
+            + System.lineSeparator() + "  \"createdWith\": \"TinyCraft mcrx-1\""
             + System.lineSeparator() + "}"
             + System.lineSeparator();
         Files.writeString(directory.resolve(GameConfig.SAVE_LEVEL_FILE), levelJson, StandardCharsets.UTF_8);
@@ -3203,11 +3257,11 @@ public class TinyMinecraft {
     }
 
     private String loadingTerrainText() {
-        return Settings.isRussian() ? "Генерация мира" : "Generating terrain";
+        return Settings.isRussian() ? "Р“РµРЅРµСЂР°С†РёСЏ РјРёСЂР°" : "Generating terrain";
     }
 
     private String buildingWorldText() {
-        return Settings.isRussian() ? "Подготовка чанков" : "Building world";
+        return Settings.isRussian() ? "РџРѕРґРіРѕС‚РѕРІРєР° С‡Р°РЅРєРѕРІ" : "Building world";
     }
 
     private void createNewWorld(String requestedName, String requestedSeed, int gameMode, int difficulty) {

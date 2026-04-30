@@ -1,11 +1,11 @@
-{
+﻿{
   "version": "0.2.0",
   "configurations": [
     {
       "type": "java",
-      "name": "TinyMinecraft",
+      "name": "TinyCraft",
       "request": "launch",
-      "mainClass": "TinyMinecraft",
+      "mainClass": "TinyCraft",
       "cwd": "${workspaceFolder}",
       "vmArgs": "-Dfile.encoding=UTF-8"
     }

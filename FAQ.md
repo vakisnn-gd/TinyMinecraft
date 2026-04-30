@@ -4,13 +4,13 @@
 
 Откройте страницу релизов:
 
-[https://github.com/vakisnn-gd/TinyMinecraft/releases](https://github.com/vakisnn-gd/TinyMinecraft/releases)
+[https://github.com/vakisnn-gd/TinyCraft/releases](https://github.com/vakisnn-gd/TinyCraft/releases)
 
-Для обычной игры скачивайте файл `TinyMinecraft-v0.1-windows.zip`.
+Для обычной игры скачивайте файл `TinyCraft-v0.2-windows.zip`.
 
-## Что скачивать: `TinyMinecraft-v0.1-windows.zip` или `Source code`?
+## Что скачивать: `TinyCraft-v0.2-windows.zip` или `Source code`?
 
-Скачивайте `TinyMinecraft-v0.1-windows.zip`.
+Скачивайте `TinyCraft-v0.2-windows.zip`.
 
 `Source code` - это архив исходного кода от GitHub. Он больше подходит для разработчиков, а не для обычного запуска игры.
 

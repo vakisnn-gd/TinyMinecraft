@@ -41,25 +41,40 @@ final class WaterRenderer {
                 break;
         }
         byte neighbor = world.getBlock(neighborX, neighborY, neighborZ);
-        if (world.isLiquidBlock(block) && world.isSolidBlock(neighbor)) {
-            return false;
-        }
-        if (world.isFaceVisible(block, neighborX, neighborY, neighborZ)) {
+        boolean liquid = world.isLiquidBlock(block);
+        boolean neighborLiquid = world.isLiquidBlock(neighbor);
+        boolean neighborSolid = world.isSolidBlock(neighbor);
+
+        if (neighbor == GameConfig.AIR) {
             return true;
         }
         if (neighborX == cameraBlockX
             && neighborY == cameraBlockY
             && neighborZ == cameraBlockZ
-            && world.isSolidBlock(neighbor)) {
+            && neighborSolid) {
             return true;
         }
-        if (!world.isLiquidBlock(block) || face == Face.TOP || face == Face.BOTTOM) {
-            return false;
+        if (liquid) {
+            if (!neighborLiquid) {
+                return !neighborSolid;
+            }
+            if (GameConfig.fluidItemForBlock(neighbor) != GameConfig.fluidItemForBlock(block)) {
+                return true;
+            }
+            if (face == Face.TOP || face == Face.BOTTOM) {
+                return false;
+            }
+            return liquidRenderHeight(block, neighborX, neighborY, neighborZ) + 0.01 < liquidRenderHeight(block, x, y, z);
         }
-        if (GameConfig.fluidItemForBlock(neighbor) != GameConfig.fluidItemForBlock(block)) {
-            return false;
+        if (block == GameConfig.SNOW_LAYER) {
+            return neighbor != GameConfig.SNOW_LAYER && (world.isTransparentBlock(neighbor) || !neighborSolid);
         }
-        return liquidRenderHeight(block, neighborX, neighborY, neighborZ) + 0.01 < liquidRenderHeight(block, x, y, z);
+        if (block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES) {
+            return neighbor != block
+                && neighbor != GameConfig.OAK_LOG
+                && neighbor != GameConfig.PINE_LOG;
+        }
+        return world.isTransparentBlock(neighbor) || !neighborSolid;
     }
 
     double liquidSideMinY(double defaultMinY, byte block, Face face, int worldX, int worldY, int worldZ) {
