@@ -1716,7 +1716,7 @@ final class WorldGenerator {
 
         boolean shorelineHeight = surfaceHeight >= GameConfig.SEA_LEVEL
             && surfaceHeight <= GameConfig.SEA_LEVEL + BEACH_MAX_HEIGHT_ABOVE_SEA;
-        if (shorelineHeight && hasNearbyOcean(worldX, worldZ)) {
+        if (shorelineHeight) {
             return TERRAIN_BEACH;
         }
 
