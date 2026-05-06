@@ -16,7 +16,7 @@ final class GameConfig {
     static final int WORLD_CHUNKS_X = 16;
     static final int WORLD_CHUNKS_Y = SECTION_COUNT;
     static final int WORLD_CHUNKS_Z = 16;
-    static final int CHUNK_RENDER_DISTANCE = 8;
+    static final int CHUNK_RENDER_DISTANCE = 32;
     static final int SPECTATOR_CHUNK_RENDER_DISTANCE = 12;
     static final int MIN_RENDER_DISTANCE = 2;
     static final int MAX_RENDER_DISTANCE_CHUNKS = 32;
@@ -94,7 +94,7 @@ final class GameConfig {
     static final double PLAYER_SNEAK_EYE_HEIGHT = 1.32;
     static final double SNEAK_SPEED_FACTOR = 0.34;
     static final double MAX_REACH = 4.8;
-    static final double MAX_RENDER_DISTANCE = Math.hypot(CHUNK_RENDER_DISTANCE * CHUNK_SIZE, WORLD_HEIGHT * 0.5);
+    static final double MAX_RENDER_DISTANCE = Math.hypot(MAX_RENDER_DISTANCE_CHUNKS * CHUNK_SIZE, WORLD_HEIGHT * 0.5);
 
     static final double WALK_SPEED = 6.45;
     static final double SPRINT_SPEED = 9.66;
@@ -126,8 +126,8 @@ final class GameConfig {
     static final double CLOUD_CELL_SIZE = 34.0;
     static final int CLOUD_RENDER_RADIUS = 6;
     static final double CLOUD_DRIFT_SPEED = 0.26;
-    static final boolean ENABLE_DEBUG_LOGS = false;
-    static final boolean ENABLE_FRAME_PROFILING = false;
+    static final boolean ENABLE_DEBUG_LOGS = Boolean.getBoolean("tinycraft.debug");
+    static final boolean ENABLE_FRAME_PROFILING = Boolean.getBoolean("tinycraft.profile");
     static final double FRAME_PROFILE_LOG_INTERVAL_SECONDS = 2.0;
 
     static final double ZOMBIE_RADIUS = 0.28;
@@ -160,9 +160,9 @@ final class GameConfig {
     static final int LAVA_DAMAGE = 1;
     static final double FIRE_DAMAGE_INTERVAL = 1.0;
     static final int FIRE_DAMAGE = 1;
-    // Р’РѕРґР° РјРѕР¶РµС‚ СЂР°СЃС‚РµРєР°С‚СЊСЃСЏ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё РґРѕ 7 Р±Р»РѕРєРѕРІ РѕС‚ РёСЃС‚РѕС‡РЅРёРєР°.
+    // Вода может растекаться по горизонтали до 7 блоков от источника.
     static final int WATER_SPREAD_DISTANCE = 7;
-    // Р›Р°РІР° СЂР°СЃС‚РµРєР°РµС‚СЃСЏ РјРµРґР»РµРЅРЅРµРµ Рё Р±Р»РёР¶Рµ: С‚РѕР»СЊРєРѕ РґРѕ 4 Р±Р»РѕРєРѕРІ.
+    // Лава растекается медленнее и ближе: только до 4 блоков.
     static final int LAVA_SPREAD_DISTANCE = 4;
     static final int WATER_FLOW_TICKS = 25;
     static final int LAVA_FLOW_TICKS = 20;
@@ -202,15 +202,15 @@ final class GameConfig {
     static final int INVENTORY_SCREEN_CHEST = 2;
     static final int INVENTORY_SCREEN_FURNACE = 3;
 
-    static final String[] PAUSE_OPTIONS = {"Р’РµСЂРЅСѓС‚СЊСЃСЏ РІ РёРіСЂСѓ", "РќР°СЃС‚СЂРѕР№РєРё...", "РЎРѕС…СЂР°РЅРёС‚СЊ Рё РІС‹Р№С‚Рё РІ РјРµРЅСЋ"};
-    static final String[] DEATH_OPTIONS = {"Р’РѕР·СЂРѕРґРёС‚СЊСЃСЏ", "Р’С‹Р№С‚Рё РІ РјРµРЅСЋ"};
-    static final String[] WORLD_MENU_ACTIONS = {"РћРґРёРЅРѕС‡РЅР°СЏ РёРіСЂР°", "РќР°СЃС‚СЂРѕР№РєРё", "Р’С‹Р№С‚Рё"};
-    static final String[] SINGLEPLAYER_ACTIONS = {"РРіСЂР°С‚СЊ", "РЎРѕР·РґР°С‚СЊ", "РџРµСЂРµРёРјРµРЅ.", "РЈРґР°Р»РёС‚СЊ", "РќР°Р·Р°Рґ"};
-    static final String[] CREATE_WORLD_ACTIONS = {"РЎРѕР·РґР°С‚СЊ РјРёСЂ", "РћС‚РјРµРЅР°"};
-    static final String[] RENAME_WORLD_ACTIONS = {"РџРµСЂРµРёРјРµРЅРѕРІР°С‚СЊ", "РћС‚РјРµРЅР°"};
-    static final String[] CREATIVE_TABS = {"Р‘Р»РѕРєРё", "РџСЂРёСЂРѕРґР°", "РРЅСЃС‚СЂСѓРјРµРЅС‚С‹", "Р–РёРґРєРѕСЃС‚Рё"};
-    static final String[] GAME_MODE_OPTIONS = {"Р’С‹Р¶РёРІР°РЅРёРµ", "РўРІРѕСЂС‡РµСЃРєРёР№", "РќР°Р±Р»СЋРґР°С‚РµР»СЊ"};
-    static final String[] DIFFICULTY_OPTIONS = {"РњРёСЂРЅР°СЏ", "Р›РµРіРєР°СЏ", "РћР±С‹С‡РЅР°СЏ", "РЎР»РѕР¶РЅР°СЏ"};
+    static final String[] PAUSE_OPTIONS = {"Вернуться в игру", "Настройки...", "Сохранить и выйти в меню"};
+    static final String[] DEATH_OPTIONS = {"Возродиться", "Выйти в меню"};
+    static final String[] WORLD_MENU_ACTIONS = {"Одиночная игра", "Настройки", "Выйти"};
+    static final String[] SINGLEPLAYER_ACTIONS = {"Играть", "Создать", "Переимен.", "Удалить", "Назад"};
+    static final String[] CREATE_WORLD_ACTIONS = {"Создать мир", "Отмена"};
+    static final String[] RENAME_WORLD_ACTIONS = {"Переименовать", "Отмена"};
+    static final String[] CREATIVE_TABS = {"Блоки", "Природа", "Инструменты", "Жидкости"};
+    static final String[] GAME_MODE_OPTIONS = {"Выживание", "Творческий", "Наблюдатель"};
+    static final String[] DIFFICULTY_OPTIONS = {"Мирная", "Легкая", "Обычная", "Сложная"};
     static final String[] PAUSE_OPTIONS_EN = {"Back to Game", "Options...", "Save and Quit to Title"};
     static final String[] DEATH_OPTIONS_EN = {"Respawn", "Exit to Menu"};
     static final String[] WORLD_MENU_ACTIONS_EN = {"Singleplayer", "Options", "Quit"};
@@ -919,6 +919,7 @@ final class DroppedItem extends Entity {
     double ageSeconds;
     double pickupDelaySeconds = GameConfig.DROPPED_ITEM_PICKUP_DELAY_SECONDS;
     double spinDegrees;
+    int physicsTickOffset;
 
     DroppedItem(byte itemId, int count, double x, double y, double z) {
         super(x, y, z, 1);

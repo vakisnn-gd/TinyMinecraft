@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "compile TinyCraft",
+      "type": "shell",
+      "command": "javac -encoding UTF-8 --release 21 -cp \"lib/*\" -d out *.java",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$javac"
+    },
+    {
+      "label": "run TinyCraft",
+      "type": "process",
+      "dependsOn": "compile TinyCraft",
+      "command": "java",
+      "args": [
+        "--enable-native-access=ALL-UNNAMED",
+        "-Dfile.encoding=UTF-8",
+        "-cp",
+        "out;lib/*",
+        "TinyCraft"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

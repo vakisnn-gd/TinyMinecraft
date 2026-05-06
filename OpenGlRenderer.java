@@ -113,10 +113,10 @@ import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 final class OpenGlRenderer {
     private static final int FLOATS_PER_VERTEX = 7;
     private static final int BYTES_PER_VERTEX = FLOATS_PER_VERTEX * Float.BYTES;
-    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 2;
-    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 10;
-    private static final long MIN_MESH_BUILD_BUDGET_NS = 3_000_000L;
-    private static final long MAX_MESH_BUILD_BUDGET_NS = 12_000_000L;
+    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 4;
+    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 18;
+    private static final long MIN_MESH_BUILD_BUDGET_NS = 5_000_000L;
+    private static final long MAX_MESH_BUILD_BUDGET_NS = 18_000_000L;
     private static final double LIQUID_SURFACE_Z_OFFSET = 0.01;
     private static final double CAMERA_NEAR_PLANE = 0.08;
     private static final double CAMERA_FAR_PADDING = 64.0;
@@ -138,6 +138,7 @@ final class OpenGlRenderer {
     private final ArrayList<Long> staleMeshKeys = new ArrayList<>();
     private final ArrayList<Chunk> loadedChunkSnapshot = new ArrayList<>();
     private final PriorityQueue<MeshBuildCandidate> meshBuildQueue = new PriorityQueue<>();
+    private final HashSet<Long> queuedMeshBuildKeys = new HashSet<>();
     private final LinkedHashMap<String, TextTexture> textTextures = new LinkedHashMap<>(128, 0.75f, true);
 
     private int framebufferWidth = GameConfig.WINDOW_WIDTH;
@@ -168,6 +169,7 @@ final class OpenGlRenderer {
     private boolean lastCameraInsideSolidBlock;
     private boolean spectatorInsideBlock;
     private boolean lastSpectatorInsideBlock;
+    private boolean chunkBordersEnabled;
     private long lastMeshProfileLogNanos;
     private double menuPanoramaYaw;
 
@@ -468,6 +470,7 @@ final class OpenGlRenderer {
         chunkMeshes.clear();
         dirtyChunkMeshes.clear();
         meshBuildQueue.clear();
+        queuedMeshBuildKeys.clear();
         staleMeshKeys.clear();
         transparentChunkPass.clear();
     }
@@ -520,6 +523,10 @@ final class OpenGlRenderer {
         }
     }
 
+    void setChunkBordersEnabled(boolean chunkBordersEnabled) {
+        this.chunkBordersEnabled = chunkBordersEnabled;
+    }
+
     void markAllChunksDirty() {
         dirtyChunkMeshes.clear();
         world.fillLoadedChunksSnapshot(loadedChunkSnapshot);
@@ -563,12 +570,13 @@ final class OpenGlRenderer {
         }
         renderChunks(player, true);
         if (!mainMenuActive && !thirdPersonView && !frontThirdPersonView && !hideHud && !player.spectatorMode) {
-            renderFirstPersonHand3d(player, selectedBlock);
+            renderFirstPersonHand3d(player, selectedBlock, breakingBlock != null && breakingProgress > 0.0);
         }
         glDisable(GL_FOG);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         if (!mainMenuActive) {
+            renderChunkBorders(player);
             renderHoveredOutline(hoveredBlock);
             renderBreakingOverlay(breakingBlock, breakingProgress);
             renderWorldTint(player);
@@ -583,6 +591,8 @@ final class OpenGlRenderer {
         }
         chunkMeshes.clear();
         dirtyChunkMeshes.clear();
+        meshBuildQueue.clear();
+        queuedMeshBuildKeys.clear();
         meshBuilderPool.clear();
         if (terrainTextureId != 0) {
             glDeleteTextures(terrainTextureId);
@@ -636,7 +646,9 @@ final class OpenGlRenderer {
         double bobRoll = 0.0;
 
         double targetX = player.x;
-        double targetY = player.y + player.eyeHeight() + bobOffsetY;
+        double targetY = thirdPersonView
+            ? player.y + (player.sneaking ? 1.08 : 1.28) + bobOffsetY
+            : player.y + player.eyeHeight() + bobOffsetY;
         double targetZ = player.z;
 
         double cameraX = targetX;
@@ -647,23 +659,20 @@ final class OpenGlRenderer {
             double lookX = Math.cos(player.yaw) * Math.cos(player.pitch);
             double lookY = Math.sin(player.pitch);
             double lookZ = Math.sin(player.yaw) * Math.cos(player.pitch);
-            double desiredDistance = 4.5;
-            double safeDistance = desiredDistance;
-            if (!frontThirdPersonView) {
-                for (double sample = 0.4; sample <= desiredDistance; sample += 0.2) {
-                    double testX = targetX - lookX * sample;
-                    double testY = targetY - lookY * sample + 0.35;
-                    double testZ = targetZ - lookZ * sample;
-                    if (world.collides(testX, testY - 0.2, testZ, 0.18, 0.18)) {
-                        safeDistance = sample - 0.25;
-                        break;
-                    }
-                }
-            }
-            safeDistance = Math.max(0.9, safeDistance);
+            double desiredDistance = frontThirdPersonView ? 3.8 : 4.4;
             double cameraDirection = frontThirdPersonView ? 1.0 : -1.0;
+            double safeDistance = resolveThirdPersonCameraDistance(
+                targetX,
+                targetY,
+                targetZ,
+                lookX,
+                lookY,
+                lookZ,
+                cameraDirection,
+                desiredDistance
+            );
             cameraX = targetX + lookX * safeDistance * cameraDirection;
-            cameraY = targetY + lookY * safeDistance * cameraDirection + 0.35;
+            cameraY = targetY + lookY * safeDistance * cameraDirection + 0.18;
             cameraZ = targetZ + lookZ * safeDistance * cameraDirection;
         }
 
@@ -685,6 +694,31 @@ final class OpenGlRenderer {
         glRotatef((float) -viewPitchDegrees, 1.0f, 0.0f, 0.0f);
         glRotatef((float) (viewYawDegrees + 90.0), 0.0f, 1.0f, 0.0f);
         glRotatef((float) -bobRoll, 0.0f, 0.0f, 1.0f);
+    }
+
+    private double resolveThirdPersonCameraDistance(double targetX, double targetY, double targetZ,
+                                                    double lookX, double lookY, double lookZ,
+                                                    double cameraDirection, double desiredDistance) {
+        double minDistance = 0.72;
+        for (double distance = desiredDistance; distance >= minDistance; distance -= 0.16) {
+            double cameraX = targetX + lookX * distance * cameraDirection;
+            double cameraY = targetY + lookY * distance * cameraDirection + 0.18;
+            double cameraZ = targetZ + lookZ * distance * cameraDirection;
+            if (isThirdPersonCameraClear(cameraX, cameraY, cameraZ)) {
+                return distance;
+            }
+        }
+        return minDistance;
+    }
+
+    private boolean isThirdPersonCameraClear(double cameraX, double cameraY, double cameraZ) {
+        if (world.collides(cameraX, cameraY - 0.20, cameraZ, 0.32, 0.40)) {
+            return false;
+        }
+        int blockX = (int) Math.floor(cameraX);
+        int blockY = (int) Math.floor(cameraY);
+        int blockZ = (int) Math.floor(cameraZ);
+        return !world.isSolidBlock(world.getBlock(blockX, blockY, blockZ));
     }
 
     private void setupMenuPanoramaCamera(PlayerState player, double deltaTime) {
@@ -774,10 +808,13 @@ final class OpenGlRenderer {
             int chunkX = chunk.chunkX;
             int chunkY = chunk.chunkY;
             int chunkZ = chunk.chunkZ;
+            if (chunk.isEmpty()) {
+                continue;
+            }
             if (Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ)) > chunkRenderRadius) {
                 continue;
             }
-            if (!shouldRenderChunk(player, chunkX, chunkY, chunkZ)) {
+            if (!shouldRenderChunk(playerChunkX, playerChunkZ, chunkRenderRadius, chunkX, chunkY, chunkZ)) {
                 continue;
             }
 
@@ -836,13 +873,13 @@ final class OpenGlRenderer {
     private boolean shouldRenderChunk(PlayerState player, int chunkX, int chunkY, int chunkZ) {
         int playerChunkX = worldToChunk((int) Math.floor(player.x));
         int playerChunkZ = worldToChunk((int) Math.floor(player.z));
+        if (world.isChunkEmpty(chunkX, chunkY, chunkZ)) {
+            return false;
+        }
         return shouldRenderChunk(playerChunkX, playerChunkZ, getChunkRenderRadius(player), chunkX, chunkY, chunkZ);
     }
 
     private boolean shouldRenderChunk(int playerChunkX, int playerChunkZ, int chunkRenderRadius, int chunkX, int chunkY, int chunkZ) {
-        if (world.isChunkEmpty(chunkX, chunkY, chunkZ)) {
-            return false;
-        }
         if (Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ)) > chunkRenderRadius) {
             return false;
         }
@@ -942,6 +979,13 @@ final class OpenGlRenderer {
 
         long meshKey = chunkKey(chunkX, chunkY, chunkZ);
         ChunkMesh mesh = chunkMeshes.get(meshKey);
+        Chunk sourceChunk = world.getChunk(chunkX, chunkY, chunkZ);
+        if (sourceChunk == null || sourceChunk.isEmpty()) {
+            if (mesh != null) {
+                unloadChunkMesh(mesh);
+            }
+            return;
+        }
         if (mesh == null) {
             mesh = new ChunkMesh(chunkX, chunkY, chunkZ);
             chunkMeshes.put(meshKey, mesh);
@@ -957,7 +1001,7 @@ final class OpenGlRenderer {
         FloatArrayBuilder opaqueBuilder = acquireMeshBuilder(4096);
         FloatArrayBuilder transparentBuilder = acquireMeshBuilder(2048);
         try {
-            buildChunkDisplayList(opaqueBuilder, transparentBuilder, startX, startY, startZ, endX, endY, endZ);
+            buildChunkDisplayList(sourceChunk, opaqueBuilder, transparentBuilder, startX, startY, startZ, endX, endY, endZ);
             transparentBuilder.sortQuadsFarToNear(sortCameraX - startX, sortCameraY - startY, sortCameraZ - startZ);
 
             deleteMeshBuffer(mesh.opaqueVaoId, mesh.opaqueVboId);
@@ -997,11 +1041,11 @@ final class OpenGlRenderer {
         }
     }
 
-    private void buildChunkDisplayList(FloatArrayBuilder opaqueBuilder, FloatArrayBuilder transparentBuilder, int startX, int startY, int startZ, int endX, int endY, int endZ) {
-        for (int x = startX; x < endX; x++) {
-            for (int y = startY; y < endY; y++) {
-                for (int z = startZ; z < endZ; z++) {
-                    byte block = world.getBlock(x, y, z);
+    private void buildChunkDisplayList(Chunk sourceChunk, FloatArrayBuilder opaqueBuilder, FloatArrayBuilder transparentBuilder, int startX, int startY, int startZ, int endX, int endY, int endZ) {
+        for (int localX = 0, x = startX; x < endX; x++, localX++) {
+            for (int localY = 0, y = startY; y < endY; y++, localY++) {
+                for (int localZ = 0, z = startZ; z < endZ; z++, localZ++) {
+                    byte block = sourceChunk.getBlockLocal(localX, localY, localZ);
                     if (block == GameConfig.AIR) {
                         continue;
                     }
@@ -1023,9 +1067,6 @@ final class OpenGlRenderer {
                         || block == GameConfig.OAK_LEAVES
                         || block == GameConfig.PINE_LEAVES;
                     FloatArrayBuilder targetBuilder = (!stableOpaqueBlock && world.isTransparentBlock(block)) ? transparentBuilder : opaqueBuilder;
-                    int localX = x - startX;
-                    int localY = y - startY;
-                    int localZ = z - startZ;
                     if (block == GameConfig.OAK_DOOR) {
                         emitDoorBlock(targetBuilder, localX, localY, localZ, x, y, z);
                         continue;
@@ -1470,12 +1511,13 @@ final class OpenGlRenderer {
         int visibleChunkCount = 0;
         int rebuiltMeshCount = 0;
         meshBuildQueue.clear();
+        queuedMeshBuildKeys.clear();
 
         for (Chunk chunk : loadedChunkSnapshot) {
             int horizontalDistance = Math.max(Math.abs(chunk.chunkX - playerChunkX), Math.abs(chunk.chunkZ - playerChunkZ));
             long meshKey = chunkKey(chunk.chunkX, chunk.chunkY, chunk.chunkZ);
             ChunkMesh mesh = chunkMeshes.get(meshKey);
-            if (world.isChunkEmpty(chunk.chunkX, chunk.chunkY, chunk.chunkZ)) {
+            if (chunk.isEmpty()) {
                 if (mesh != null && mesh.resident) {
                     unloadChunkMesh(mesh);
                 }
@@ -1490,7 +1532,7 @@ final class OpenGlRenderer {
                 boolean needsUpload = mesh == null || !mesh.resident || dirtyChunkMeshes.contains(meshKey);
                 if (needsUpload) {
                     double distanceSquared = chunkDistanceSquaredToPoint(chunk.chunkX, chunk.chunkY, chunk.chunkZ, playerX, playerY, playerZ);
-                    meshBuildQueue.add(new MeshBuildCandidate(chunk.chunkX, chunk.chunkY, chunk.chunkZ, meshKey, visible, distanceSquared));
+                    queueMeshBuildCandidate(new MeshBuildCandidate(chunk.chunkX, chunk.chunkY, chunk.chunkZ, meshKey, visible, distanceSquared));
                 }
             } else if (horizontalDistance > unloadChunkRadius && mesh != null && mesh.resident) {
                 unloadChunkMesh(mesh);
@@ -1509,6 +1551,7 @@ final class OpenGlRenderer {
         }
         logMeshProfile(rebuiltMeshCount, visibleChunkCount, System.nanoTime() - meshProfileStartNs);
         meshBuildQueue.clear();
+        queuedMeshBuildKeys.clear();
 
         staleMeshKeys.clear();
         for (ChunkMesh mesh : chunkMeshes.values()) {
@@ -1523,6 +1566,12 @@ final class OpenGlRenderer {
             dirtyChunkMeshes.remove(meshKey);
         }
         staleMeshKeys.clear();
+    }
+
+    private void queueMeshBuildCandidate(MeshBuildCandidate candidate) {
+        if (queuedMeshBuildKeys.add(candidate.meshKey)) {
+            meshBuildQueue.add(candidate);
+        }
     }
 
     private void logMeshProfile(int rebuiltMeshCount, int visibleChunkCount, long elapsedNs) {
@@ -1561,10 +1610,10 @@ final class OpenGlRenderer {
     private int dynamicChunkUploadBudget() {
         if (!Settings.goodGraphics()) {
             if (debugFps >= 55.0 || debugFps <= 0.0) {
-                return 5;
+                return currentRenderDistanceChunks >= 24 ? 12 : 7;
             }
             if (debugFps >= 35.0) {
-                return 3;
+                return currentRenderDistanceChunks >= 24 ? 8 : 4;
             }
             return MIN_CHUNK_UPLOADS_PER_FRAME;
         }
@@ -1586,10 +1635,10 @@ final class OpenGlRenderer {
     private long dynamicMeshBuildBudgetNs() {
         if (!Settings.goodGraphics()) {
             if (debugFps >= 55.0 || debugFps <= 0.0) {
-                return 5_000_000L;
+                return currentRenderDistanceChunks >= 24 ? 12_000_000L : 7_000_000L;
             }
             if (debugFps >= 35.0) {
-                return 3_500_000L;
+                return currentRenderDistanceChunks >= 24 ? 8_000_000L : 5_000_000L;
             }
             return MIN_MESH_BUILD_BUDGET_NS;
         }
@@ -1896,15 +1945,13 @@ final class OpenGlRenderer {
             return;
         }
 
-        double swing = Math.sin(player.cameraBobPhase) * 26.0 * player.cameraBobAmount;
+        double walkSwing = Math.sin(player.cameraBobPhase) * 26.0 * player.cameraBobAmount;
+        double attackTime = player.handSwingTimer <= 0.0 ? 0.0 : clamp(1.0 - player.handSwingTimer / 0.22, 0.0, 1.0);
+        double attackSwing = attackTime <= 0.0 ? 0.0 : Math.sin(attackTime * Math.PI) * 46.0;
         glPushMatrix();
         glTranslated(player.x - renderCameraX, player.y - renderCameraY, player.z - renderCameraZ);
         glRotated(-Math.toDegrees(player.yaw) - 90.0, 0.0, 1.0, 0.0);
-        if (player.spectatorMode || frontThirdPersonView) {
-            drawPlayerHeadOnly(inventory, player.pitch, player.sneaking);
-        } else {
-            drawPlayerModelParts(inventory, selectedBlock, swing, player.pitch, true, player.sneaking);
-        }
+        drawPlayerModelParts(inventory, selectedBlock, walkSwing, attackSwing, player.pitch, !player.spectatorMode, player.sneaking);
         if (player.fireTimer > 0.0) {
             drawCuboid(-0.30, 0.02, -0.30, 0.30, 1.65, 0.30, 1.0f, 0.34f, 0.06f);
         }
@@ -1925,7 +1972,7 @@ final class OpenGlRenderer {
         glPopMatrix();
     }
 
-    private void drawPlayerModelParts(PlayerInventory inventory, byte selectedBlock, double swing, double pitch, boolean showHeldItem, boolean sneakingPose) {
+    private void drawPlayerModelParts(PlayerInventory inventory, byte selectedBlock, double swing, double attackSwing, double pitch, boolean showHeldItem, boolean sneakingPose) {
         float[] helmet = inventory == null ? null : armorColor(inventory.getArmorStack(0));
         float[] chest = inventory == null ? null : armorColor(inventory.getArmorStack(1));
         float[] legs = inventory == null ? null : armorColor(inventory.getArmorStack(2));
@@ -1958,7 +2005,8 @@ final class OpenGlRenderer {
 
         glPushMatrix();
         glTranslated(0.30, 1.23 + crouch, 0.0);
-        glRotated(-swing, 1.0, 0.0, 0.0);
+        glRotated(-swing - attackSwing, 1.0, 0.0, 0.0);
+        glRotated(attackSwing * 0.16, 0.0, 0.0, 1.0);
         drawCuboid(-0.08, -0.50, -0.08, 0.08, 0.16, 0.08, bodyR, bodyG, bodyB);
         if (showHeldItem && selectedBlock != GameConfig.AIR) {
             float[] heldColor = getHeldBlockColor(selectedBlock);
@@ -2061,6 +2109,81 @@ final class OpenGlRenderer {
         glEnd();
     }
 
+    private void renderChunkBorders(PlayerState player) {
+        if (!chunkBordersEnabled || player == null) {
+            return;
+        }
+
+        int centerChunkX = Math.floorDiv((int) Math.floor(player.x), GameConfig.CHUNK_SIZE);
+        int centerChunkZ = Math.floorDiv((int) Math.floor(player.z), GameConfig.CHUNK_SIZE);
+        int centerSection = GameConfig.sectionIndexForY((int) Math.floor(player.y));
+        int minSection = Math.max(0, centerSection - 1);
+        int maxSection = Math.min(GameConfig.SECTION_COUNT - 1, centerSection + 1);
+        int minY = GameConfig.sectionYForIndex(minSection);
+        int maxY = Math.min(GameConfig.WORLD_MAX_Y + 1, GameConfig.sectionYForIndex(maxSection) + GameConfig.CHUNK_SIZE);
+
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(false);
+        glLineWidth(1.0f);
+        glBegin(GL_LINES);
+
+        for (int chunkX = centerChunkX - 1; chunkX <= centerChunkX + 1; chunkX++) {
+            double minX = chunkX * GameConfig.CHUNK_SIZE;
+            double maxX = minX + GameConfig.CHUNK_SIZE;
+            for (int chunkZ = centerChunkZ - 1; chunkZ <= centerChunkZ + 1; chunkZ++) {
+                boolean currentChunk = chunkX == centerChunkX && chunkZ == centerChunkZ;
+                double minZ = chunkZ * GameConfig.CHUNK_SIZE;
+                double maxZ = minZ + GameConfig.CHUNK_SIZE;
+                double drawMinX = minX - renderCameraX;
+                double drawMaxX = maxX - renderCameraX;
+                double drawMinZ = minZ - renderCameraZ;
+                double drawMaxZ = maxZ - renderCameraZ;
+                double drawMinY = minY - renderCameraY;
+                double drawMaxY = maxY - renderCameraY;
+                glColor4f(currentChunk ? 0.95f : 0.65f, currentChunk ? 0.82f : 0.62f, 0.18f, currentChunk ? 0.64f : 0.34f);
+                emitChunkBorderVerticals(drawMinX, drawMinZ, drawMaxX, drawMaxZ, drawMinY, drawMaxY);
+                for (int section = minSection; section <= maxSection + 1; section++) {
+                    int y = section == maxSection + 1
+                        ? maxY
+                        : GameConfig.sectionYForIndex(section);
+                    double drawY = y - renderCameraY;
+                    glColor4f(0.16f, 0.38f, 0.78f, currentChunk ? 0.52f : 0.26f);
+                    emitChunkBorderSquare(drawMinX, drawMinZ, drawMaxX, drawMaxZ, drawY);
+                }
+            }
+        }
+
+        glEnd();
+        glDepthMask(true);
+        glLineWidth(1.0f);
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    private void emitChunkBorderVerticals(double minX, double minZ, double maxX, double maxZ, double minY, double maxY) {
+        glVertex3d(minX, minY, minZ);
+        glVertex3d(minX, maxY, minZ);
+        glVertex3d(maxX, minY, minZ);
+        glVertex3d(maxX, maxY, minZ);
+        glVertex3d(maxX, minY, maxZ);
+        glVertex3d(maxX, maxY, maxZ);
+        glVertex3d(minX, minY, maxZ);
+        glVertex3d(minX, maxY, maxZ);
+    }
+
+    private void emitChunkBorderSquare(double minX, double minZ, double maxX, double maxZ, double y) {
+        glVertex3d(minX, y, minZ);
+        glVertex3d(maxX, y, minZ);
+        glVertex3d(maxX, y, minZ);
+        glVertex3d(maxX, y, maxZ);
+        glVertex3d(maxX, y, maxZ);
+        glVertex3d(minX, y, maxZ);
+        glVertex3d(minX, y, maxZ);
+        glVertex3d(minX, y, minZ);
+    }
+
     private void renderHoveredOutline(RayHit hoveredBlock) {
         if (hoveredBlock == null) {
             return;
@@ -2070,8 +2193,10 @@ final class OpenGlRenderer {
             return;
         }
 
-        glLineWidth(2.0f);
-        glColor3f(1.0f, 1.0f, 1.0f);
+        glLineWidth(1.15f);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glColor4f(0.015f, 0.012f, 0.010f, 0.58f);
 
         double outlineOffset = 0.0025;
         BlockState state = world.getBlockState(hoveredBlock.x, hoveredBlock.y, hoveredBlock.z);
@@ -2087,6 +2212,7 @@ final class OpenGlRenderer {
                 lowerY + 2.0 + outlineOffset,
                 hoveredBlock.z + bounds[5] + outlineOffset
             );
+            finishHoveredOutline();
             return;
         }
         if (hoveredType == GameConfig.RED_BED) {
@@ -2103,6 +2229,7 @@ final class OpenGlRenderer {
                 hoveredBlock.y + 0.56 + outlineOffset,
                 Math.max(footZ, headZ) + 1.0 + outlineOffset
             );
+            finishHoveredOutline();
             return;
         }
         double[] bounds = selectionBounds(hoveredType, state);
@@ -2137,6 +2264,12 @@ final class OpenGlRenderer {
         glVertex3d(minX, minY, maxZ);
         glVertex3d(minX, maxY, maxZ);
         glEnd();
+        finishHoveredOutline();
+    }
+
+    private void finishHoveredOutline() {
+        glLineWidth(1.0f);
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     }
 
     private void drawAabbOutline(double worldMinX, double worldMinY, double worldMinZ,
@@ -2191,7 +2324,9 @@ final class OpenGlRenderer {
             case GameConfig.TORCH:
                 return new double[]{0.40, 0.0, 0.40, 0.60, 0.82, 0.60};
             case GameConfig.OAK_FENCE:
-                return new double[]{0.25, 0.0, 0.25, 0.75, 1.0, 0.75};
+                return new double[]{0.375, 0.0, 0.375, 0.625, 1.5, 0.625};
+            case GameConfig.CHEST:
+                return new double[]{0.0625, 0.0, 0.0625, 0.9375, 0.875, 0.9375};
             case GameConfig.RED_BED:
                 return new double[]{0.0, 0.0, 0.0, 1.0, 0.56, 1.0};
             case GameConfig.OAK_DOOR:
@@ -2460,11 +2595,11 @@ final class OpenGlRenderer {
 
     private void drawHotbar(PlayerInventory inventory, int selectedSlot) {
         float uiScale = getUiScale();
-        float slotSize = 28.0f * uiScale;
-        float spacing = 6.0f * uiScale;
+        float slotSize = 31.0f * uiScale;
+        float spacing = 0.0f;
         float totalWidth = slotSize * 9.0f + spacing * 8.0f;
         float startX = framebufferWidth * 0.5f - totalWidth * 0.5f;
-        float y = framebufferHeight - 42.0f * uiScale;
+        float y = framebufferHeight - 44.0f * uiScale;
 
         for (int slot = 0; slot < 9; slot++) {
             float x = startX + slot * (slotSize + spacing);
@@ -2499,8 +2634,8 @@ final class OpenGlRenderer {
         float uiScale = getUiScale();
         float heartScale = 1.52f * uiScale;
         float spacing = 0.9f * uiScale;
-        float slotSize = 28.0f * uiScale;
-        float slotSpacing = 6.0f * uiScale;
+        float slotSize = 31.0f * uiScale;
+        float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f - hotbarWidth * 0.5f;
         float y = framebufferHeight - 58.0f * uiScale;
@@ -2522,8 +2657,8 @@ final class OpenGlRenderer {
         float uiScale = getUiScale();
         float scale = 1.42f * uiScale;
         float spacing = 1.1f * uiScale;
-        float slotSize = 28.0f * uiScale;
-        float slotSpacing = 6.0f * uiScale;
+        float slotSize = 31.0f * uiScale;
+        float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f - hotbarWidth * 0.5f;
         float y = framebufferHeight - 76.0f * uiScale;
@@ -2540,8 +2675,8 @@ final class OpenGlRenderer {
         float uiScale = getUiScale();
         float scale = 1.32f * uiScale;
         float spacing = 1.2f * uiScale;
-        float slotSize = 28.0f * uiScale;
-        float slotSpacing = 6.0f * uiScale;
+        float slotSize = 31.0f * uiScale;
+        float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f + hotbarWidth * 0.5f - 10.0f * (scale * 7.0f + spacing);
         float y = framebufferHeight - 58.0f * uiScale;
@@ -2560,9 +2695,11 @@ final class OpenGlRenderer {
         }
     }
 
-    private void renderFirstPersonHand3d(PlayerState player, byte selectedItem) {
+    private void renderFirstPersonHand3d(PlayerState player, byte selectedItem, boolean breakingActive) {
         double bob = Math.sin(player.cameraBobPhase * 1.7) * 0.045 * player.cameraBobAmount;
-        double swing = player.handSwingTimer <= 0.0 ? 0.0 : Math.sin((1.0 - player.handSwingTimer / 0.22) * Math.PI);
+        double swingTime = player.handSwingTimer <= 0.0 ? 0.0 : clamp(1.0 - player.handSwingTimer / 0.22, 0.0, 1.0);
+        double swing = swingTime <= 0.0 ? 0.0 : Math.sin(swingTime * Math.PI);
+        double swingDip = swingTime <= 0.0 ? 0.0 : Math.sin(swingTime * Math.PI * 2.0);
         glMatrixMode(GL_MODELVIEW);
         glPushMatrix();
         glLoadIdentity();
@@ -2570,21 +2707,21 @@ final class OpenGlRenderer {
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
-        glTranslated(0.76 + bob - swing * 0.12, -0.58 + (player.sneaking ? -0.06 : 0.0) + swing * 0.05, -1.02 - swing * 0.08);
-        glRotated(-18.0 - swing * 32.0, 1.0, 0.0, 0.0);
-        glRotated(22.0 + swing * 18.0, 0.0, 1.0, 0.0);
-        glRotated(8.0 + swing * 10.0, 0.0, 0.0, 1.0);
+        glTranslated(0.64 + bob * 0.45 - swing * 0.07, -0.66 + (player.sneaking ? -0.05 : 0.0) + swing * 0.02 + swingDip * 0.025, -1.08 - swing * 0.06);
+        glRotated(-8.0 - swing * 22.0, 1.0, 0.0, 0.0);
+        glRotated(11.0 + swing * 12.0, 0.0, 1.0, 0.0);
+        glRotated(2.0 + swingDip * 5.0, 0.0, 0.0, 1.0);
 
-        drawFlatCuboid(-0.112, -0.54, -0.108, 0.112, 0.12, 0.108, 0.74f, 0.54f, 0.38f);
-        drawFlatCuboid(-0.126, -0.58, -0.122, 0.126, -0.40, 0.122, 0.12f, 0.34f, 0.70f);
-        drawFlatCuboid(-0.122, 0.08, -0.118, 0.122, 0.40, 0.118, 0.86f, 0.66f, 0.48f);
+        drawFlatCuboid(-0.092, -0.48, -0.092, 0.092, 0.08, 0.092, 0.74f, 0.54f, 0.38f);
+        drawFlatCuboid(-0.102, -0.52, -0.102, 0.102, -0.38, 0.102, 0.12f, 0.34f, 0.70f);
+        drawFlatCuboid(-0.098, 0.06, -0.098, 0.098, 0.30, 0.098, 0.86f, 0.66f, 0.48f);
 
         if (selectedItem != GameConfig.AIR) {
             float[] heldColor = getHeldBlockColor(selectedItem);
             glPushMatrix();
-            glTranslated(-0.08, 0.20, -0.18);
-            glRotated(-18.0, 1.0, 0.0, 0.0);
-            glRotated(-24.0, 0.0, 0.0, 1.0);
+            glTranslated(-0.05, 0.14, -0.16);
+            glRotated(-10.0, 1.0, 0.0, 0.0);
+            glRotated(-12.0, 0.0, 0.0, 1.0);
             if (isHeldToolItem(selectedItem)) {
                 drawCuboid(-0.025, -0.18, -0.025, 0.025, 0.26, 0.025, 0.52f, 0.34f, 0.18f);
                 drawCuboid(-0.105, 0.19, -0.030, 0.105, 0.29, 0.030, heldColor[0], heldColor[1], heldColor[2]);
@@ -2640,8 +2777,8 @@ final class OpenGlRenderer {
         float uiScale = getUiScale();
         float bubbleSize = 6.0f * uiScale;
         float spacing = 2.0f * uiScale;
-        float slotSize = 28.0f * uiScale;
-        float slotSpacing = 6.0f * uiScale;
+        float slotSize = 31.0f * uiScale;
+        float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f - hotbarWidth * 0.5f;
         float y = framebufferHeight - 93.0f * uiScale;
@@ -3309,7 +3446,7 @@ final class OpenGlRenderer {
         glTranslated(centerX, feetY, 0.0);
         glScalef(scale, -scale, scale);
         glRotated(-Math.toDegrees(player.yaw) - 25.0, 0.0, 1.0, 0.0);
-        drawPlayerModelParts(inventory, GameConfig.AIR, 0.0, player.pitch, false, player.sneaking);
+        drawPlayerModelParts(inventory, GameConfig.AIR, 0.0, 0.0, player.pitch, false, player.sneaking);
         glDisable(GL_DEPTH_TEST);
         glPopMatrix();
 

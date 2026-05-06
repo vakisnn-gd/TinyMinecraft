@@ -30,8 +30,17 @@ final class VoxelWorld implements StructureTemplates.Target {
     private static final double ZOMBIE_GROWL_DISTANCE_SQUARED = 11.0 * 11.0;
     private static final double COLLISION_EPSILON = 1.0e-7;
     private static final int ZOMBIE_TARGET_COUNT = 18;
-    private static final int MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK = Math.max(16, GameConfig.CHUNK_GENERATION_THREADS * 4);
-    private static final int MAX_PENDING_COLUMN_TASKS = Math.max(96, GameConfig.CHUNK_GENERATION_THREADS * 24);
+    private static final int MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK = Math.max(192, GameConfig.CHUNK_GENERATION_THREADS * 48);
+    private static final int MAX_INITIAL_COLUMN_SUBMISSIONS = Math.max(768, GameConfig.CHUNK_GENERATION_THREADS * 192);
+    private static final int MAX_PENDING_COLUMN_TASKS = Math.max(4096, GameConfig.CHUNK_GENERATION_THREADS * 768);
+    private static final int MAX_COLUMN_INTEGRATIONS_PER_FRAME = Math.max(24, GameConfig.CHUNK_GENERATION_THREADS * 8);
+    private static final long COLUMN_INTEGRATION_BUDGET_NS = 12_000_000L;
+    private static final int MAX_WATER_CELLS_PER_WORLD_TICK = 768;
+    private static final int MAX_LAVA_CELLS_PER_WORLD_TICK = 256;
+    private static final int MAX_SAND_CELLS_PER_WORLD_TICK = 256;
+    private static final int MAX_MOB_AI_UPDATES_PER_FRAME = 32;
+    private static final int SPAWN_LAND_SEARCH_RADIUS = 4096;
+    private static final int SPAWN_LAND_SEARCH_STEP = 16;
 
     static final class ChunkColumn {
         final int chunkX;
@@ -124,8 +133,9 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final HashSet<Long> activeSandCells = new HashSet<>();
     private final HashMap<Long, Double> leafDecayTimers = new HashMap<>();
     private final HashSet<Long> fallingBlockSources = new HashSet<>();
-    private final HashSet<Long> dirtyBlockColumns = new HashSet<>();
+    private final HashSet<Long> dirtyChunkSections = new HashSet<>();
     private final ColumnUpdateList simulationDirtyColumns = new ColumnUpdateList(64);
+    private final ArrayList<Long> readyColumnKeys = new ArrayList<>();
     private final MutableVec2 zombieSteering = new MutableVec2();
     private final MutableVec2 zombieSeparation = new MutableVec2();
     private final MutableVec3 sampledFluidFlow = new MutableVec3();
@@ -142,6 +152,18 @@ final class VoxelWorld implements StructureTemplates.Target {
     private int lastStreamingChunkX = Integer.MIN_VALUE;
     private int lastStreamingChunkZ = Integer.MIN_VALUE;
     private long nextColumnTaskSequence;
+    private long mobUpdateCounter;
+    private long droppedItemUpdateCounter;
+    private long streamingProfileLastLogNs;
+    private long streamingProfilePrepareNs;
+    private long streamingProfileDrainNs;
+    private long streamingProfileEnsureNs;
+    private long streamingProfileUnloadNs;
+    private long generationProfileNs;
+    private int streamingProfileFrames;
+    private int streamingProfileSubmittedColumns;
+    private int streamingProfileIntegratedColumns;
+    private int generationProfileColumns;
 
     private static ThreadPoolExecutor createGenerationExecutor() {
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
@@ -209,6 +231,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         this.streamingWarmupFrames = 0;
         this.lastStreamingChunkX = Integer.MIN_VALUE;
         this.lastStreamingChunkZ = Integer.MIN_VALUE;
+        this.mobUpdateCounter = 0L;
+        this.droppedItemUpdateCounter = 0L;
         waterFlowCache.clear();
         leafDecayTimers.clear();
         loadContainers();
@@ -305,7 +329,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         activeSandCells.clear();
         leafDecayTimers.clear();
         fallingBlockSources.clear();
-        dirtyBlockColumns.clear();
+        dirtyChunkSections.clear();
         simulationDirtyColumns.clear();
         waterFlowCache.clear();
         zombies.clear();
@@ -330,7 +354,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         leafDecayTimers.clear();
         fallingBlockSources.clear();
         waterFlowCache.clear();
-        dirtyBlockColumns.clear();
+        dirtyChunkSections.clear();
         simulationDirtyColumns.clear();
         zombies.clear();
         populatedVillageCells.clear();
@@ -342,6 +366,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         zombieSpawnCooldown = 20.0;
         worldTickCounter = 0L;
         worldTime = 0.30;
+        mobUpdateCounter = 0L;
+        droppedItemUpdateCounter = 0L;
         streamingWarmupFrames = 0;
         lastStreamingChunkX = Integer.MIN_VALUE;
         lastStreamingChunkZ = Integer.MIN_VALUE;
@@ -369,16 +395,73 @@ final class VoxelWorld implements StructureTemplates.Target {
             streamingWarmupFrames = Math.min(streamingWarmupFrames, 80);
         }
         streamingWarmupFrames = Math.min(600, streamingWarmupFrames + 1);
-        drainGeneratedColumns();
+        boolean profile = GameConfig.ENABLE_FRAME_PROFILING;
+        long prepareStartNs = profile ? System.nanoTime() : 0L;
         int streamingRadius = getStreamingRadius(player);
-        ensureColumnsAround(playerChunkX, playerChunkZ, streamingRadius, false);
+        cancelFarPendingColumns(playerChunkX, playerChunkZ, streamingRadius + 4);
+        long drainStartNs = profile ? System.nanoTime() : 0L;
+        int integratedColumns = drainGeneratedColumns();
+        long ensureStartNs = profile ? System.nanoTime() : 0L;
+        int submittedColumns = ensureColumnsAround(playerChunkX, playerChunkZ, streamingRadius, false);
+        long unloadStartNs = profile ? System.nanoTime() : 0L;
         unloadFarColumns(playerChunkX, playerChunkZ, streamingRadius + 2);
         cancelFarPendingColumns(playerChunkX, playerChunkZ, streamingRadius + 4);
+        if (profile) {
+            long endNs = System.nanoTime();
+            logStreamingProfile(
+                submittedColumns,
+                integratedColumns,
+                drainStartNs - prepareStartNs,
+                ensureStartNs - drainStartNs,
+                unloadStartNs - ensureStartNs,
+                endNs - unloadStartNs
+            );
+        }
+    }
+
+    void primeStreamingAround(PlayerState player) {
+        if (player == null) {
+            return;
+        }
+        int playerChunkX = worldToChunk((int) Math.floor(player.x));
+        int playerChunkZ = worldToChunk((int) Math.floor(player.z));
+        lastStreamingChunkX = playerChunkX;
+        lastStreamingChunkZ = playerChunkZ;
+        streamingWarmupFrames = Math.min(600, streamingWarmupFrames + 120);
+        int streamingRadius = getStreamingRadius(player);
+        drainGeneratedColumns(MAX_COLUMN_INTEGRATIONS_PER_FRAME * 2, COLUMN_INTEGRATION_BUDGET_NS * 2);
+        ensureColumnsAround(playerChunkX, playerChunkZ, streamingRadius, false, MAX_INITIAL_COLUMN_SUBMISSIONS);
+    }
+
+    int loadedColumnCountAround(PlayerState player, int radius) {
+        if (player == null) {
+            return 0;
+        }
+        int playerChunkX = worldToChunk((int) Math.floor(player.x));
+        int playerChunkZ = worldToChunk((int) Math.floor(player.z));
+        int loaded = 0;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                if (loadedColumns.containsKey(columnKey(playerChunkX + dx, playerChunkZ + dz))) {
+                    loaded++;
+                }
+            }
+        }
+        return loaded;
+    }
+
+    int targetColumnCountForRadius(int radius) {
+        int diameter = radius * 2 + 1;
+        return diameter * diameter;
+    }
+
+    int pendingColumnCount() {
+        return pendingColumns.size();
     }
 
     ColumnUpdateList updateWorldTicks(PlayerState player, double deltaTime) {
         simulationDirtyColumns.clear();
-        dirtyBlockColumns.clear();
+        dirtyChunkSections.clear();
         drainGeneratedColumns();
 
         updateFallingBlocks(deltaTime);
@@ -408,37 +491,30 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     void placePlayerAtSpawn(PlayerState player) {
-        ensureColumnsAround(0, 0, 1, true);
         int bestX = 0;
         int bestZ = 0;
         int bestY = Integer.MIN_VALUE;
 
-        for (int radius = 0; radius <= 64; radius += 4) {
+        for (int radius = 0; radius <= SPAWN_LAND_SEARCH_RADIUS; radius += SPAWN_LAND_SEARCH_STEP) {
             boolean found = false;
-            for (int offsetX = -radius; offsetX <= radius && !found; offsetX += 4) {
-                for (int offsetZ = -radius; offsetZ <= radius; offsetZ += 4) {
+            for (int offsetX = -radius; offsetX <= radius && !found; offsetX += SPAWN_LAND_SEARCH_STEP) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ += SPAWN_LAND_SEARCH_STEP) {
                     if (Math.abs(offsetX) != radius && Math.abs(offsetZ) != radius) {
                         continue;
                     }
                     int x = offsetX;
                     int z = offsetZ;
-                    ChunkColumn spawnColumn = ensureColumnGeneratedSync(worldToChunk(x), worldToChunk(z));
-                    if (spawnColumn == null || !spawnColumn.generated) {
+                    if (!worldGenerator.isLikelyDrySpawnColumn(x, z)) {
                         continue;
                     }
-                    int surfaceY = findSpawnGroundY(x, z);
-                    byte ground = getBlock(x, surfaceY, z);
-                    if (surfaceY <= GameConfig.WORLD_MIN_Y
-                        || !isSpawnGroundBlock(ground)
-                        || getBlock(x, surfaceY + 1, z) != GameConfig.AIR
-                        || getBlock(x, surfaceY + 2, z) != GameConfig.AIR) {
-                        continue;
+                    int[] spawn = findExactSpawnNear(x, z);
+                    if (spawn != null) {
+                        bestX = spawn[0];
+                        bestY = spawn[1];
+                        bestZ = spawn[2];
+                        found = true;
+                        break;
                     }
-                    bestX = x;
-                    bestY = surfaceY;
-                    bestZ = z;
-                    found = true;
-                    break;
                 }
             }
             if (found) {
@@ -447,16 +523,52 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         if (bestY == Integer.MIN_VALUE) {
-            bestX = 0;
-            bestZ = 0;
-            bestY = GameConfig.SEA_LEVEL;
-            ensureColumnGeneratedSync(worldToChunk(bestX), worldToChunk(bestZ));
-            createSpawnIsland(bestX, bestY, bestZ);
+            bestY = findExactSpawnAt(0, 0);
+            if (bestY == Integer.MIN_VALUE) {
+                ensureColumnGeneratedSync(0, 0);
+                bestY = Math.max(GameConfig.SEA_LEVEL + 2, getSurfaceHeight(0, 0) + 2);
+            }
         }
 
         player.x = bestX + 0.5;
         player.z = bestZ + 0.5;
         player.y = getStandingY(player.x, player.z, bestY + 1.0);
+    }
+
+    private int[] findExactSpawnNear(int centerX, int centerZ) {
+        for (int radius = 0; radius <= SPAWN_LAND_SEARCH_STEP; radius += 4) {
+            for (int offsetX = -radius; offsetX <= radius; offsetX += 4) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ += 4) {
+                    if (Math.abs(offsetX) != radius && Math.abs(offsetZ) != radius) {
+                        continue;
+                    }
+                    int x = centerX + offsetX;
+                    int z = centerZ + offsetZ;
+                    int y = findExactSpawnAt(x, z);
+                    if (y != Integer.MIN_VALUE) {
+                        return new int[]{x, y, z};
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private int findExactSpawnAt(int x, int z) {
+        ChunkColumn spawnColumn = ensureColumnGeneratedSync(worldToChunk(x), worldToChunk(z));
+        if (spawnColumn == null || !spawnColumn.generated) {
+            return Integer.MIN_VALUE;
+        }
+        int surfaceY = findSpawnGroundY(x, z);
+        byte ground = getBlock(x, surfaceY, z);
+        if (surfaceY <= GameConfig.WORLD_MIN_Y
+            || !isSpawnGroundBlock(ground)
+            || GameConfig.isLiquidBlock(ground)
+            || getBlock(x, surfaceY + 1, z) != GameConfig.AIR
+            || getBlock(x, surfaceY + 2, z) != GameConfig.AIR) {
+            return Integer.MIN_VALUE;
+        }
+        return surfaceY;
     }
 
     private int findSpawnGroundY(int x, int z) {
@@ -478,23 +590,6 @@ final class VoxelWorld implements StructureTemplates.Target {
             || block == GameConfig.STONE
             || block == GameConfig.DEEPSLATE
             || block == GameConfig.COBBLESTONE;
-    }
-
-    private void createSpawnIsland(int centerX, int surfaceY, int centerZ) {
-        for (int offsetX = -4; offsetX < 4; offsetX++) {
-            for (int offsetZ = -4; offsetZ < 4; offsetZ++) {
-                int x = centerX + offsetX;
-                int z = centerZ + offsetZ;
-                ensureColumnGeneratedSync(worldToChunk(x), worldToChunk(z));
-                setBlockState(x, surfaceY - 2, z, GameConfig.COBBLESTONE, -1);
-                setBlockState(x, surfaceY - 1, z, GameConfig.DIRT, -1);
-                setBlockState(x, surfaceY, z, GameConfig.SAND, -1);
-                setBlockState(x, surfaceY + 1, z, GameConfig.AIR, -1);
-                setBlockState(x, surfaceY + 2, z, GameConfig.AIR, -1);
-                refreshDynamicCellsAround(x, surfaceY, z);
-                refreshSurfaceHeight(x, z);
-            }
-        }
     }
 
     boolean loadPlayerState(PlayerState player) {
@@ -744,19 +839,22 @@ final class VoxelWorld implements StructureTemplates.Target {
             return;
         }
 
+        mobUpdateCounter++;
         zombieSpawnCooldown -= deltaTime;
         populateVillageResidentsNear(player);
         maybeSpawnZombieNearPlayer(player);
 
+        int aiUpdates = 0;
         for (int i = zombies.size() - 1; i >= 0; i--) {
             Zombie zombie = zombies.get(i);
             double despawnDistance = zombie.kind == MobKind.VILLAGER ? 220.0 : 96.0;
+            double playerDistanceSquared = distanceSquared(zombie.x, zombie.z, player.x, player.z);
             if (zombie.health <= 0) {
                 dropMobLoot(zombie);
                 zombies.remove(i);
                 continue;
             }
-            if (distanceSquared(zombie.x, zombie.z, player.x, player.z) > despawnDistance * despawnDistance) {
+            if (playerDistanceSquared > despawnDistance * despawnDistance) {
                 zombies.remove(i);
                 continue;
             }
@@ -796,7 +894,13 @@ final class VoxelWorld implements StructureTemplates.Target {
             zombie.loveTimer = Math.max(0.0, zombie.loveTimer - deltaTime);
             zombie.breedCooldown = Math.max(0.0, zombie.breedCooldown - deltaTime);
 
-            updateZombieAi(zombie, player, deltaTime);
+            int aiInterval = zombieAiInterval(playerDistanceSquared);
+            boolean nearMob = aiInterval <= GameConfig.ZOMBIE_NEAR_AI_TICKS;
+            boolean scheduledAi = Math.floorMod(mobUpdateCounter + zombie.aiTickOffset, aiInterval) == 0;
+            if (nearMob || (scheduledAi && aiUpdates < MAX_MOB_AI_UPDATES_PER_FRAME)) {
+                updateZombieAi(zombie, player, deltaTime * aiInterval);
+                aiUpdates++;
+            }
             updateZombieMovement(zombie, inWater, deltaTime);
             if (isHostileMob(zombie)) {
                 maybeQueueZombieGrowl(zombie, player, deltaTime);
@@ -813,6 +917,16 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     private boolean isPassiveMob(Zombie mob) {
         return mob != null && (mob.kind == MobKind.PIG || mob.kind == MobKind.SHEEP || mob.kind == MobKind.COW);
+    }
+
+    private int zombieAiInterval(double playerDistanceSquared) {
+        if (playerDistanceSquared <= GameConfig.ZOMBIE_NEAR_AI_DISTANCE * GameConfig.ZOMBIE_NEAR_AI_DISTANCE) {
+            return GameConfig.ZOMBIE_NEAR_AI_TICKS;
+        }
+        if (playerDistanceSquared <= GameConfig.ZOMBIE_MID_AI_DISTANCE * GameConfig.ZOMBIE_MID_AI_DISTANCE) {
+            return GameConfig.ZOMBIE_MID_AI_TICKS;
+        }
+        return GameConfig.ZOMBIE_FAR_AI_TICKS;
     }
 
     private void dropMobLoot(Zombie mob) {
@@ -958,7 +1072,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         updateSnowSupportAt(hit.x, hit.y + 1, hit.z);
         updateDoorSupportAt(hit.x, hit.y + 1, hit.z);
         refreshDynamicCellsAround(hit.x, hit.y, hit.z);
-        markDirtyColumn(hit.x, hit.z);
+        markDirtyBlock(hit.x, hit.y, hit.z);
         refreshSurfaceHeight(hit.x, hit.z);
         return true;
     }
@@ -1029,7 +1143,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             setBlockState(x, y, z, GameConfig.AIR, -1);
             updatePlantSupportAt(x, y + 1, z);
             refreshDynamicCellsAround(x, y, z);
-            markDirtyColumn(x, z);
+            markDirtyBlock(x, y, z);
             refreshSurfaceHeight(x, z);
             iterator.remove();
         }
@@ -1158,7 +1272,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             templateIndex = (templateIndex + 1) % StructureTemplates.NAMES.size();
         }
         setBlockState(x, y, z, new BlockState(Blocks.typeFromLegacyId(GameConfig.STRUCTURE_BLOCK), templateIndex | (rotation << 8)));
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
         refreshDynamicCellsAround(x, y, z);
         return true;
     }
@@ -1198,6 +1312,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         droppedItem.velocityZ = (worldRandom.nextDouble() - 0.5) * 1.2;
         droppedItem.verticalVelocity = 1.8 + worldRandom.nextDouble() * 1.0;
         droppedItem.spinDegrees = worldRandom.nextDouble() * 360.0;
+        droppedItem.physicsTickOffset = worldRandom.nextInt(8);
         droppedItems.add(droppedItem);
     }
 
@@ -1217,6 +1332,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         droppedItem.velocityZ = velocityZ;
         droppedItem.verticalVelocity = velocityY;
         droppedItem.spinDegrees = worldRandom.nextDouble() * 360.0;
+        droppedItem.physicsTickOffset = worldRandom.nextInt(8);
         droppedItems.add(droppedItem);
     }
 
@@ -1265,6 +1381,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     void updateDroppedItems(PlayerState player, PlayerInventory inventory, double deltaTime) {
+        droppedItemUpdateCounter++;
         for (int i = droppedItems.size() - 1; i >= 0; i--) {
             DroppedItem droppedItem = droppedItems.get(i);
             droppedItem.ageSeconds += deltaTime;
@@ -1275,24 +1392,39 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
 
-            updateDroppedItemPhysics(droppedItem, deltaTime);
+            double dx = player == null ? 0.0 : droppedItem.x - player.x;
+            double dy = player == null ? 0.0 : (droppedItem.y + droppedItem.height() * 0.5) - (player.y + GameConfig.PLAYER_HEIGHT * 0.5);
+            double dz = player == null ? 0.0 : droppedItem.z - player.z;
+            double distanceSquared = player == null ? Double.POSITIVE_INFINITY : dx * dx + dy * dy + dz * dz;
+            int physicsInterval = droppedItemPhysicsInterval(distanceSquared, droppedItem);
+            if (physicsInterval <= 1 || Math.floorMod(droppedItemUpdateCounter + droppedItem.physicsTickOffset, physicsInterval) == 0) {
+                updateDroppedItemPhysics(droppedItem, Math.min(deltaTime * physicsInterval, 0.12));
+            }
+
             if (player == null || inventory == null || droppedItem.pickupDelaySeconds > 0.0) {
                 continue;
             }
 
-            double dx = droppedItem.x - player.x;
-            double dy = (droppedItem.y + droppedItem.height() * 0.5) - (player.y + GameConfig.PLAYER_HEIGHT * 0.5);
-            double dz = droppedItem.z - player.z;
             double pickupDistance = GameConfig.DROPPED_ITEM_PICKUP_RADIUS;
-            if (dx * dx + dy * dy + dz * dz <= pickupDistance * pickupDistance
+            if (distanceSquared <= pickupDistance * pickupDistance
                 && inventory.addItem(droppedItem.itemId, droppedItem.count, droppedItem.durabilityDamage)) {
                 droppedItems.remove(i);
             }
         }
     }
 
+    private int droppedItemPhysicsInterval(double distanceSquared, DroppedItem droppedItem) {
+        if (distanceSquared <= 24.0 * 24.0) {
+            return 1;
+        }
+        if (distanceSquared <= 64.0 * 64.0) {
+            return 3;
+        }
+        return droppedItem.isGrounded ? 12 : 6;
+    }
+
     boolean placeBlock(RayHit hit, byte block, PlayerState player) {
-        if (hit == null) {
+        if (hit == null || (player != null && player.spectatorMode)) {
             return false;
         }
 
@@ -1326,7 +1458,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         boolean solidPlacement = isSolidBlock(placedBlock);
-        if (solidPlacement && blockIntersectsPlayerHitbox(placeX, placeY, placeZ, player)) {
+        if (solidPlacement && blockIntersectsPlayerHitbox(placeX, placeY, placeZ, placedBlock, player)) {
             return false;
         }
 
@@ -1343,7 +1475,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         updatePlantSupportAt(placeX, placeY + 1, placeZ);
         updateDoorSupportAt(placeX, placeY + 1, placeZ);
         refreshDynamicCellsAround(placeX, placeY, placeZ);
-        markDirtyColumn(placeX, placeZ);
+        markDirtyBlock(placeX, placeY, placeZ);
         refreshSurfaceHeight(placeX, placeZ);
         return true;
     }
@@ -1368,7 +1500,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private void removeLiquidAt(int x, int y, int z) {
         setBlockState(x, y, z, GameConfig.AIR, -1);
         refreshDynamicCellsAround(x, y, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
         refreshSurfaceHeight(x, z);
     }
 
@@ -1390,7 +1522,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         setBlockState(x, y + 1, z, Blocks.doorState(false, true, facing));
         refreshDynamicCellsAround(x, y, z);
         refreshDynamicCellsAround(x, y + 1, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
+        markDirtyBlock(x, y + 1, z);
         refreshSurfaceHeight(x, z);
         return true;
     }
@@ -1418,8 +1551,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         setBlockState(headX, y, headZ, Blocks.bedState(true, facing));
         refreshDynamicCellsAround(x, y, z);
         refreshDynamicCellsAround(headX, y, headZ);
-        markDirtyColumn(x, z);
-        markDirtyColumn(headX, headZ);
+        markDirtyBlock(x, y, z);
+        markDirtyBlock(headX, y, headZ);
         refreshSurfaceHeight(x, z);
         refreshSurfaceHeight(headX, headZ);
         return true;
@@ -1438,13 +1571,13 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (getBlock(footX, y, footZ) == GameConfig.RED_BED) {
             setBlockState(footX, y, footZ, GameConfig.AIR, -1);
             refreshDynamicCellsAround(footX, y, footZ);
-            markDirtyColumn(footX, footZ);
+            markDirtyBlock(footX, y, footZ);
             refreshSurfaceHeight(footX, footZ);
         }
         if (getBlock(headX, y, headZ) == GameConfig.RED_BED) {
             setBlockState(headX, y, headZ, GameConfig.AIR, -1);
             refreshDynamicCellsAround(headX, y, headZ);
-            markDirtyColumn(headX, headZ);
+            markDirtyBlock(headX, y, headZ);
             refreshSurfaceHeight(headX, headZ);
         }
     }
@@ -1497,7 +1630,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         refreshDynamicCellsAround(x, lowerY, z);
         refreshDynamicCellsAround(x, lowerY + 1, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, lowerY, z);
+        markDirtyBlock(x, lowerY + 1, z);
     }
 
     private void removeDoorAt(int x, int y, int z) {
@@ -1521,7 +1655,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             || getBlock(x, lowerY + 1, z) != GameConfig.OAK_DOOR
             || !isSolidBlock(getBlock(x, lowerY - 1, z))) {
             removeDoorAt(x, y, z);
-            markDirtyColumn(x, z);
+            markDirtyBlock(x, y, z);
             refreshSurfaceHeight(x, z);
         }
     }
@@ -1625,7 +1759,9 @@ final class VoxelWorld implements StructureTemplates.Target {
             case GameConfig.TORCH:
                 return new double[]{0.40, 0.0, 0.40, 0.60, 0.82, 0.60};
             case GameConfig.OAK_FENCE:
-                return new double[]{0.25, 0.0, 0.25, 0.75, 1.0, 0.75};
+                return new double[]{0.375, 0.0, 0.375, 0.625, 1.5, 0.625};
+            case GameConfig.CHEST:
+                return new double[]{0.0625, 0.0, 0.0625, 0.9375, 0.875, 0.9375};
             case GameConfig.RED_BED:
                 return new double[]{0.0, 0.0, 0.0, 1.0, 0.56, 1.0};
             case GameConfig.OAK_DOOR:
@@ -1824,7 +1960,16 @@ final class VoxelWorld implements StructureTemplates.Target {
         for (int blockX = minX; blockX <= maxX; blockX++) {
             for (int blockY = minY; blockY <= maxY; blockY++) {
                 for (int blockZ = minZ; blockZ <= maxZ; blockZ++) {
-                    if (isCollisionSolid(getBlockState(blockX, blockY, blockZ))) {
+                    BlockState state = getBlockState(blockX, blockY, blockZ);
+                    if (!isCollisionSolid(state)) {
+                        continue;
+                    }
+                    double[] bounds = selectionBounds((byte) state.type.numericId, state);
+                    if (intersectsAabb(
+                        x - radius, y, z - radius,
+                        x + radius, y + height, z + radius,
+                        blockX + bounds[0], blockY + bounds[1], blockZ + bounds[2],
+                        blockX + bounds[3], blockY + bounds[4], blockZ + bounds[5])) {
                         return true;
                     }
                 }
@@ -2034,7 +2179,7 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     public void setTemplateBlock(int x, int y, int z, BlockState state) {
         setBlockState(x, y, z, state);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
         refreshSurfaceHeight(x, z);
         refreshDynamicCellsAround(x, y, z);
     }
@@ -2216,6 +2361,15 @@ final class VoxelWorld implements StructureTemplates.Target {
         return state.type.isSolid();
     }
 
+    private boolean intersectsAabb(double minX, double minY, double minZ,
+                                   double maxX, double maxY, double maxZ,
+                                   double otherMinX, double otherMinY, double otherMinZ,
+                                   double otherMaxX, double otherMaxY, double otherMaxZ) {
+        return maxX > otherMinX + COLLISION_EPSILON && minX < otherMaxX - COLLISION_EPSILON
+            && maxY > otherMinY + COLLISION_EPSILON && minY < otherMaxY - COLLISION_EPSILON
+            && maxZ > otherMinZ + COLLISION_EPSILON && minZ < otherMaxZ - COLLISION_EPSILON;
+    }
+
     boolean isLiquidBlock(byte block) {
         return Blocks.isLiquid(block);
     }
@@ -2250,9 +2404,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         int playerChunkZ = player == null ? 0 : worldToChunk((int) Math.floor(player.z));
 
         HashSet<Long> reactionCandidates = new HashSet<>();
-        tickFluidSet(activeWaterCells, GameConfig.WATER, playerChunkX, playerChunkZ, reactionCandidates);
+        tickFluidSet(activeWaterCells, GameConfig.WATER, playerChunkX, playerChunkZ, reactionCandidates, MAX_WATER_CELLS_PER_WORLD_TICK);
         if (worldTickCounter % GameConfig.LAVA_FLOW_STEP_INTERVAL == 0) {
-            tickFluidSet(activeLavaCells, GameConfig.LAVA, playerChunkX, playerChunkZ, reactionCandidates);
+            tickFluidSet(activeLavaCells, GameConfig.LAVA, playerChunkX, playerChunkZ, reactionCandidates, MAX_LAVA_CELLS_PER_WORLD_TICK);
         }
         resolveFluidReactions(reactionCandidates);
         tickSand(playerChunkX, playerChunkZ);
@@ -2279,7 +2433,7 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
             setBlockState(x, y, z, GameConfig.GRASS, -1);
-            markDirtyColumn(x, z);
+            markDirtyBlock(x, y, z);
         }
     }
 
@@ -2294,14 +2448,18 @@ final class VoxelWorld implements StructureTemplates.Target {
             || getBlock(x, y + 1, z - 1) == GameConfig.GRASS;
     }
 
-    private void tickFluidSet(HashSet<Long> activeCells, byte fluidItem, int playerChunkX, int playerChunkZ, HashSet<Long> reactionCandidates) {
+    private void tickFluidSet(HashSet<Long> activeCells, byte fluidItem, int playerChunkX, int playerChunkZ, HashSet<Long> reactionCandidates, int maxCells) {
         if (activeCells.isEmpty()) {
             return;
         }
 
         ArrayList<Long> snapshot = new ArrayList<>(activeCells);
-        snapshot.sort(Long::compare);
+        snapshot.sort((left, right) -> Integer.compare(
+            dynamicCellPriority(left, playerChunkX, playerChunkZ),
+            dynamicCellPriority(right, playerChunkX, playerChunkZ)
+        ));
         HashMap<Long, PendingBlockChange> pendingChanges = new HashMap<>();
+        int processed = 0;
         for (long blockKey : snapshot) {
             int x = unpackBlockX(blockKey);
             int y = unpackBlockY(blockKey);
@@ -2314,6 +2472,13 @@ final class VoxelWorld implements StructureTemplates.Target {
             if (!isChunkWithinFluidSimulationDistance(worldToChunk(x), worldToChunk(z), playerChunkX, playerChunkZ)) {
                 continue;
             }
+            if (!shouldTickDynamicCell(blockKey, x, z, playerChunkX, playerChunkZ)) {
+                continue;
+            }
+            if (processed >= maxCells) {
+                break;
+            }
+            processed++;
             simulateFluidCell(x, y, z, fluidItem, pendingChanges);
         }
 
@@ -2343,7 +2508,7 @@ final class VoxelWorld implements StructureTemplates.Target {
 
             setBlockState(change.x, change.y, change.z, change.block, change.distance);
             refreshDynamicCellsAround(change.x, change.y, change.z);
-            markDirtyColumn(change.x, change.z);
+            markDirtyBlock(change.x, change.y, change.z);
             reactionCandidates.add(packBlock(change.x, change.y, change.z));
         }
     }
@@ -2398,6 +2563,11 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         ArrayList<Long> snapshot = new ArrayList<>(activeSandCells);
+        snapshot.sort((left, right) -> Integer.compare(
+            dynamicCellPriority(left, playerChunkX, playerChunkZ),
+            dynamicCellPriority(right, playerChunkX, playerChunkZ)
+        ));
+        int processed = 0;
         for (long blockKey : snapshot) {
             int x = unpackBlockX(blockKey);
             int y = unpackBlockY(blockKey);
@@ -2410,6 +2580,13 @@ final class VoxelWorld implements StructureTemplates.Target {
             if (!isChunkWithinFluidSimulationDistance(worldToChunk(x), worldToChunk(z), playerChunkX, playerChunkZ)) {
                 continue;
             }
+            if (!shouldTickDynamicCell(blockKey, x, z, playerChunkX, playerChunkZ)) {
+                continue;
+            }
+            if (processed >= MAX_SAND_CELLS_PER_WORLD_TICK) {
+                break;
+            }
+            processed++;
             byte below = getBlock(x, y - 1, z);
             if (!isReplaceableForFallingBlock(below)) {
                 refreshDynamicCellsAround(x, y, z);
@@ -2431,7 +2608,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         setBlockState(x, y, z, GameConfig.AIR, -1);
         updatePlantSupportAt(x, y + 1, z);
         refreshDynamicCellsAround(x, y, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
         refreshSurfaceHeight(x, z);
         fallingBlocks.add(new FallingBlock(block, x, y, z));
     }
@@ -2496,7 +2673,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         setBlockState(x, placeY, z, fallingBlock.blockId, -1);
         updatePlantSupportAt(x, placeY + 1, z);
         refreshDynamicCellsAround(x, placeY, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, placeY, z);
         refreshSurfaceHeight(x, z);
     }
 
@@ -2564,7 +2741,7 @@ final class VoxelWorld implements StructureTemplates.Target {
 
         setBlockState(x, y, z, getFluidReactionBlock(waterBlock, lavaBlock), -1);
         refreshDynamicCellsAround(x, y, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
         refreshSurfaceHeight(x, z);
     }
 
@@ -3236,6 +3413,12 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private void applyPlayerDamage(PlayerState player, double amount) {
+        if (player == null || player.health <= 0.0 || player.creativeMode || player.spectatorMode) {
+            if (player != null && player.health <= 0.0) {
+                player.health = 0.0;
+            }
+            return;
+        }
         int armor = Math.max(0, Math.min(20, player.armorProtection));
         double protectedDamage = Math.ceil(amount * (1.0 - armor * 0.04) * 2.0) / 2.0;
         player.health = Math.max(0.0, player.health - Math.max(0.5, protectedDamage));
@@ -3254,7 +3437,12 @@ final class VoxelWorld implements StructureTemplates.Target {
             }
             int blockX = (int) Math.floor(player.x) + offsetX;
             int blockZ = (int) Math.floor(player.z) + offsetZ;
-            ensureColumnLoadedSync(worldToChunk(blockX), worldToChunk(blockZ));
+            int chunkX = worldToChunk(blockX);
+            int chunkZ = worldToChunk(blockZ);
+            if (!isChunkLoaded(chunkX, chunkZ)) {
+                submitColumnTask(chunkX, chunkZ);
+                continue;
+            }
             int surfaceY = getSurfaceHeight(blockX, blockZ);
             if (surfaceY <= GameConfig.WORLD_MIN_Y || surfaceY + 2 > GameConfig.WORLD_MAX_Y) {
                 continue;
@@ -3299,15 +3487,21 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private boolean blockIntersectsPlayerHitbox(int blockX, int blockY, int blockZ, PlayerState player) {
+        return blockIntersectsPlayerHitbox(blockX, blockY, blockZ, getBlock(blockX, blockY, blockZ), player);
+    }
+
+    private boolean blockIntersectsPlayerHitbox(int blockX, int blockY, int blockZ, byte block, PlayerState player) {
         if (player == null || player.spectatorMode) {
             return false;
         }
-        double blockMinX = blockX;
-        double blockMaxX = blockX + 1.0;
-        double blockMinY = blockY;
-        double blockMaxY = blockY + 1.0;
-        double blockMinZ = blockZ;
-        double blockMaxZ = blockZ + 1.0;
+        BlockState state = new BlockState(Blocks.typeFromLegacyId(block));
+        double[] bounds = selectionBounds(block, state);
+        double blockMinX = blockX + bounds[0];
+        double blockMaxX = blockX + bounds[3];
+        double blockMinY = blockY + bounds[1];
+        double blockMaxY = blockY + bounds[4];
+        double blockMinZ = blockZ + bounds[2];
+        double blockMaxZ = blockZ + bounds[5];
 
         double playerMinX = player.x - GameConfig.PLAYER_RADIUS;
         double playerMaxX = player.x + GameConfig.PLAYER_RADIUS;
@@ -3321,29 +3515,34 @@ final class VoxelWorld implements StructureTemplates.Target {
             && playerMaxZ > blockMinZ && playerMinZ < blockMaxZ;
     }
 
-    private void ensureColumnsAround(int centerChunkX, int centerChunkZ, int chunkRadius, boolean synchronousOnly) {
-        int syncRadius = synchronousOnly ? chunkRadius : 1;
+    private int ensureColumnsAround(int centerChunkX, int centerChunkZ, int chunkRadius, boolean synchronousOnly) {
+        return ensureColumnsAround(centerChunkX, centerChunkZ, chunkRadius, synchronousOnly, MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK);
+    }
+
+    private int ensureColumnsAround(int centerChunkX, int centerChunkZ, int chunkRadius, boolean synchronousOnly, int asyncSubmissionLimit) {
+        int syncRadius = synchronousOnly ? chunkRadius : 0;
         int submittedAsync = 0;
         for (int radius = 0; radius <= chunkRadius; radius++) {
             for (int dx = -radius; dx <= radius; dx++) {
-                submittedAsync = ensureColumnAtRadius(centerChunkX + dx, centerChunkZ - radius, radius, syncRadius, synchronousOnly, submittedAsync);
+                submittedAsync = ensureColumnAtRadius(centerChunkX + dx, centerChunkZ - radius, radius, syncRadius, synchronousOnly, submittedAsync, asyncSubmissionLimit);
                 if (radius != 0) {
-                    submittedAsync = ensureColumnAtRadius(centerChunkX + dx, centerChunkZ + radius, radius, syncRadius, synchronousOnly, submittedAsync);
+                    submittedAsync = ensureColumnAtRadius(centerChunkX + dx, centerChunkZ + radius, radius, syncRadius, synchronousOnly, submittedAsync, asyncSubmissionLimit);
                 }
             }
             for (int dz = -radius + 1; dz <= radius - 1; dz++) {
-                submittedAsync = ensureColumnAtRadius(centerChunkX - radius, centerChunkZ + dz, radius, syncRadius, synchronousOnly, submittedAsync);
+                submittedAsync = ensureColumnAtRadius(centerChunkX - radius, centerChunkZ + dz, radius, syncRadius, synchronousOnly, submittedAsync, asyncSubmissionLimit);
                 if (radius != 0) {
-                    submittedAsync = ensureColumnAtRadius(centerChunkX + radius, centerChunkZ + dz, radius, syncRadius, synchronousOnly, submittedAsync);
+                    submittedAsync = ensureColumnAtRadius(centerChunkX + radius, centerChunkZ + dz, radius, syncRadius, synchronousOnly, submittedAsync, asyncSubmissionLimit);
                 }
             }
         }
+        return submittedAsync;
     }
 
-    private int ensureColumnAtRadius(int chunkX, int chunkZ, int radius, int syncRadius, boolean synchronousOnly, int submittedAsync) {
+    private int ensureColumnAtRadius(int chunkX, int chunkZ, int radius, int syncRadius, boolean synchronousOnly, int submittedAsync, int asyncSubmissionLimit) {
         if (radius <= syncRadius || synchronousOnly) {
             ensureColumnLoadedSync(chunkX, chunkZ);
-        } else if (submittedAsync < MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK) {
+        } else if (submittedAsync < asyncSubmissionLimit) {
             if (submitColumnTask(chunkX, chunkZ)) {
                 submittedAsync++;
             }
@@ -3366,10 +3565,37 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
     }
 
-    private void drainGeneratedColumns() {
+    private int drainGeneratedColumns() {
+        return drainGeneratedColumns(MAX_COLUMN_INTEGRATIONS_PER_FRAME, COLUMN_INTEGRATION_BUDGET_NS);
+    }
+
+    private int drainGeneratedColumns(int maxColumns, long budgetNs) {
+        readyColumnKeys.clear();
         for (Map.Entry<Long, Future<ChunkColumn>> entry : pendingColumns.entrySet()) {
-            Future<ChunkColumn> future = entry.getValue();
-            if (!future.isDone()) {
+            if (entry.getValue().isDone()) {
+                readyColumnKeys.add(entry.getKey());
+            }
+        }
+        if (readyColumnKeys.isEmpty()) {
+            return 0;
+        }
+
+        readyColumnKeys.sort((left, right) -> Integer.compare(
+            chunkPriority(unpackColumnX(left), unpackColumnZ(left)),
+            chunkPriority(unpackColumnX(right), unpackColumnZ(right))
+        ));
+
+        long startNs = System.nanoTime();
+        int integrated = 0;
+        for (long key : readyColumnKeys) {
+            if (integrated >= maxColumns) {
+                break;
+            }
+            if (integrated > 0 && System.nanoTime() - startNs >= budgetNs) {
+                break;
+            }
+            Future<ChunkColumn> future = pendingColumns.get(key);
+            if (future == null || !future.isDone()) {
                 continue;
             }
             try {
@@ -3377,13 +3603,17 @@ final class VoxelWorld implements StructureTemplates.Target {
                 integrateColumn(column);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
+                break;
             } catch (ExecutionException exception) {
                 if (GameConfig.ENABLE_DEBUG_LOGS) {
                     System.out.println("VoxelWorld: column task failed: " + exception.getMessage());
                 }
             }
-            pendingColumns.remove(entry.getKey(), future);
+            pendingColumns.remove(key, future);
+            integrated++;
         }
+        readyColumnKeys.clear();
+        return integrated;
     }
 
     private void ensureColumnLoadedSync(int chunkX, int chunkZ) {
@@ -3537,6 +3767,8 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private ChunkColumn generateColumn(int chunkX, int chunkZ) {
+        boolean profile = GameConfig.ENABLE_FRAME_PROFILING;
+        long startNs = profile ? System.nanoTime() : 0L;
         if (worldGenerator == null) {
             worldGenerator = new WorldGenerator(seed);
         }
@@ -3556,7 +3788,70 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         column.dirty = false;
         column.naturalTerrain = true;
+        if (profile) {
+            logGenerationProfile(System.nanoTime() - startNs);
+        }
         return column;
+    }
+
+    private void logStreamingProfile(
+        int submittedColumns,
+        int integratedColumns,
+        long prepareNs,
+        long drainNs,
+        long ensureNs,
+        long unloadNs
+    ) {
+        streamingProfileFrames++;
+        streamingProfileSubmittedColumns += submittedColumns;
+        streamingProfileIntegratedColumns += integratedColumns;
+        streamingProfilePrepareNs += prepareNs;
+        streamingProfileDrainNs += drainNs;
+        streamingProfileEnsureNs += ensureNs;
+        streamingProfileUnloadNs += unloadNs;
+        long nowNs = System.nanoTime();
+        if (streamingProfileLastLogNs == 0L) {
+            streamingProfileLastLogNs = nowNs;
+            return;
+        }
+        long intervalNs = nowNs - streamingProfileLastLogNs;
+        if (intervalNs < (long) (GameConfig.FRAME_PROFILE_LOG_INTERVAL_SECONDS * 1_000_000_000.0)) {
+            return;
+        }
+
+        double frames = Math.max(1, streamingProfileFrames);
+        double generationAverageMs = generationProfileColumns == 0
+            ? 0.0
+            : generationProfileNs / 1_000_000.0 / generationProfileColumns;
+        System.out.printf(
+            "VoxelWorld profile: frames=%d loaded=%d pending=%d submitted=%d integrated=%d prepare=%.3fms drain=%.3fms ensure=%.3fms unload=%.3fms genColumns=%d genAvg=%.3fms%n",
+            streamingProfileFrames,
+            loadedColumns.size(),
+            pendingColumns.size(),
+            streamingProfileSubmittedColumns,
+            streamingProfileIntegratedColumns,
+            streamingProfilePrepareNs / 1_000_000.0 / frames,
+            streamingProfileDrainNs / 1_000_000.0 / frames,
+            streamingProfileEnsureNs / 1_000_000.0 / frames,
+            streamingProfileUnloadNs / 1_000_000.0 / frames,
+            generationProfileColumns,
+            generationAverageMs
+        );
+        streamingProfileLastLogNs = nowNs;
+        streamingProfileFrames = 0;
+        streamingProfileSubmittedColumns = 0;
+        streamingProfileIntegratedColumns = 0;
+        streamingProfilePrepareNs = 0L;
+        streamingProfileDrainNs = 0L;
+        streamingProfileEnsureNs = 0L;
+        streamingProfileUnloadNs = 0L;
+        generationProfileColumns = 0;
+        generationProfileNs = 0L;
+    }
+
+    private void logGenerationProfile(long elapsedNs) {
+        generationProfileColumns++;
+        generationProfileNs += elapsedNs;
     }
 
     private void recalculateColumnSurfaceHeights(ChunkColumn column) {
@@ -3801,7 +4096,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         setBlockState(x, y, z, GameConfig.AIR, -1);
         refreshDynamicCellsAround(x, y, z);
-        markDirtyColumn(x, z);
+        markDirtyBlock(x, y, z);
     }
 
     private boolean canSnowStay(int x, int y, int z) {
@@ -3884,6 +4179,24 @@ final class VoxelWorld implements StructureTemplates.Target {
             && Math.abs(chunkZ - playerChunkZ) <= GameConfig.FLUID_SIMULATION_CHUNK_DISTANCE;
     }
 
+    private int dynamicCellPriority(long blockKey, int playerChunkX, int playerChunkZ) {
+        int x = unpackBlockX(blockKey);
+        int z = unpackBlockZ(blockKey);
+        int distance = Math.max(Math.abs(worldToChunk(x) - playerChunkX), Math.abs(worldToChunk(z) - playerChunkZ));
+        int y = unpackBlockY(blockKey) - GameConfig.WORLD_MIN_Y;
+        return distance * 8192 + y;
+    }
+
+    private boolean shouldTickDynamicCell(long blockKey, int x, int z, int playerChunkX, int playerChunkZ) {
+        int distance = Math.max(Math.abs(worldToChunk(x) - playerChunkX), Math.abs(worldToChunk(z) - playerChunkZ));
+        int interval = distance <= 1 ? 1 : (distance == 2 ? 2 : 4);
+        if (interval <= 1) {
+            return true;
+        }
+        long phase = worldTickCounter + blockKey;
+        return Math.floorMod(phase, interval) == 0;
+    }
+
     private int getStreamingRadius(PlayerState player) {
         int renderRadius = player != null && player.spectatorMode
             ? Math.max(renderDistanceChunks, GameConfig.SPECTATOR_CHUNK_RENDER_DISTANCE)
@@ -3891,11 +4204,53 @@ final class VoxelWorld implements StructureTemplates.Target {
         return Math.max(renderRadius + GameConfig.RENDER_CHUNK_UNLOAD_PADDING + 2, GameConfig.ACTIVE_SIMULATION_CHUNK_DISTANCE + 2);
     }
 
-    private void markDirtyColumn(int x, int z) {
-        long dirtyKey = (((long) x) << 32) ^ (((long) z) & 0xFFFFFFFFL);
-        if (dirtyBlockColumns.add(dirtyKey)) {
-            simulationDirtyColumns.add(x, z);
+    private void markDirtyBlock(int x, int y, int z) {
+        if (!GameConfig.isWorldYInside(y)) {
+            return;
         }
+        int chunkX = worldToChunk(x);
+        int chunkY = GameConfig.sectionIndexForY(y);
+        int chunkZ = worldToChunk(z);
+        markDirtySection(chunkX, chunkY, chunkZ);
+
+        int localX = localBlockCoordinate(x);
+        int localY = GameConfig.localYForWorldY(y);
+        int localZ = localBlockCoordinate(z);
+        if (localX == 0) {
+            markDirtySection(chunkX - 1, chunkY, chunkZ);
+        } else if (localX == GameConfig.CHUNK_SIZE - 1) {
+            markDirtySection(chunkX + 1, chunkY, chunkZ);
+        }
+        if (localZ == 0) {
+            markDirtySection(chunkX, chunkY, chunkZ - 1);
+        } else if (localZ == GameConfig.CHUNK_SIZE - 1) {
+            markDirtySection(chunkX, chunkY, chunkZ + 1);
+        }
+        if (localY == 0) {
+            markDirtySection(chunkX, chunkY - 1, chunkZ);
+        } else if (localY == GameConfig.CHUNK_SIZE - 1) {
+            markDirtySection(chunkX, chunkY + 1, chunkZ);
+        }
+    }
+
+    private void markDirtySection(int chunkX, int chunkY, int chunkZ) {
+        if (chunkY < 0 || chunkY >= GameConfig.WORLD_CHUNKS_Y) {
+            return;
+        }
+        long dirtyKey = chunkSectionKey(chunkX, chunkY, chunkZ);
+        if (dirtyChunkSections.add(dirtyKey)) {
+            int blockX = chunkX * GameConfig.CHUNK_SIZE + GameConfig.CHUNK_SIZE / 2;
+            int blockY = GameConfig.sectionYForIndex(chunkY) + GameConfig.CHUNK_SIZE / 2;
+            int blockZ = chunkZ * GameConfig.CHUNK_SIZE + GameConfig.CHUNK_SIZE / 2;
+            simulationDirtyColumns.add(blockX, blockY, blockZ);
+        }
+    }
+
+    private long chunkSectionKey(int chunkX, int chunkY, int chunkZ) {
+        long packedX = ((long) chunkX) & 0x3FFFFFFL;
+        long packedZ = ((long) chunkZ) & 0x3FFFFFFL;
+        long packedY = chunkY & 0xFFFL;
+        return (packedX << 38) | (packedZ << 12) | packedY;
     }
 
     private void updateDroppedItemPhysics(DroppedItem droppedItem, double deltaTime) {

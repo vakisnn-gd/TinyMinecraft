@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 cd /d "%~dp0"
 
 if not exist out\TinyCraft.class (
@@ -6,16 +6,18 @@ if not exist out\TinyCraft.class (
     echo Trying to compile TinyCraft...
 
     if not exist out mkdir out
-    javac -encoding UTF-8 -cp "lib/*" -d out *.java
+    javac -encoding UTF-8 --release 21 -cp "lib/*" -d out *.java
     if errorlevel 1 (
         echo.
-        echo Compilation failed. Install Java JDK 17 or newer and try again.
+        echo Compilation failed. Install Java JDK 21 or newer and try again.
         pause
         exit /b 1
     )
 )
 
-java -cp "out;lib/*" TinyCraft
+set "JAVA_FLAGS=--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
+
+java %JAVA_FLAGS% -cp "out;lib/*" TinyCraft
 if errorlevel 1 (
     echo.
     echo TinyCraft stopped with an error.

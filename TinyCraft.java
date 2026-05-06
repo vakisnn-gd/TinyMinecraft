@@ -26,6 +26,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_8;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_9;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_A;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_C;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_D;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_E;
@@ -36,9 +37,11 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F5;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F11;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_G;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL;
 import static org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_Q;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT;
@@ -74,6 +77,7 @@ import static org.lwjgl.glfw.GLFW.glfwSetCursorPosCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetFramebufferSizeCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetInputMode;
 import static org.lwjgl.glfw.GLFW.glfwSetCharCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetClipboardString;
 import static org.lwjgl.glfw.GLFW.glfwSetKeyCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetMouseButtonCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
@@ -120,14 +124,17 @@ public class TinyCraft {
     private boolean frontThirdPersonView;
     private boolean paused;
     private boolean deathScreenActive;
+    private boolean inventoryDroppedOnDeath;
     private boolean mainMenuActive;
     private boolean inventoryOpen;
     private int inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
     private ContainerInventory activeChestContainer;
     private FurnaceBlockEntity activeFurnace;
     private boolean showDebugInfo;
+    private boolean showChunkBorders;
     private boolean hideHud;
     private boolean f3Held;
+    private boolean f3ComboConsumed;
     private boolean gameModeSwitcherActive;
     private boolean mouseInitialized;
     private boolean worldLoaded;
@@ -175,7 +182,81 @@ public class TinyCraft {
     private int lastWorldSlotClickIndex = -1;
 
     public static void main(String[] args) {
+        if (args.length > 0 && "--profile-world".equals(args[0])) {
+            runWorldProfile(args);
+            return;
+        }
         new TinyCraft().run();
+    }
+
+    private static void runWorldProfile(String[] args) {
+        long profileSeed = args.length > 1 ? parseProfileSeed(args[1]) : 0x5cfa085fdacb6033L;
+        int radius = args.length > 2 ? Math.max(1, parseProfileInt(args[2], 6)) : 6;
+        WorldGenerator generator = new WorldGenerator(profileSeed);
+        int columns = 0;
+        long generationNs = 0L;
+        long copyNs = 0L;
+        long generationMaxNs = 0L;
+        long copyMaxNs = 0L;
+        for (int chunkX = -radius; chunkX <= radius; chunkX++) {
+            for (int chunkZ = -radius; chunkZ <= radius; chunkZ++) {
+                long generationStartNs = System.nanoTime();
+                GeneratedChunkColumn generated = generator.generateChunk(chunkX, chunkZ);
+                long generationElapsedNs = System.nanoTime() - generationStartNs;
+                long copyStartNs = System.nanoTime();
+                VoxelWorld.ChunkColumn column = new VoxelWorld.ChunkColumn(chunkX, chunkZ, false);
+                Chunk[] generatedSections = generated.sections();
+                for (int chunkY = 0; chunkY < GameConfig.SECTION_COUNT; chunkY++) {
+                    column.sections[chunkY] = generatedSections[chunkY];
+                }
+                for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+                    for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                        column.setSurfaceHeightLocal(localX, localZ, generated.getSurfaceHeight(localX, localZ));
+                    }
+                }
+                long copyElapsedNs = System.nanoTime() - copyStartNs;
+                generationNs += generationElapsedNs;
+                copyNs += copyElapsedNs;
+                generationMaxNs = Math.max(generationMaxNs, generationElapsedNs);
+                copyMaxNs = Math.max(copyMaxNs, copyElapsedNs);
+                columns++;
+            }
+        }
+        double totalMs = (generationNs + copyNs) / 1_000_000.0;
+        System.out.printf(
+            Locale.ROOT,
+            "World profile: seed=%016x radius=%d columns=%d height=%d..%d generationAvg=%.3fms generationMax=%.3fms integrationCopyAvg=%.3fms integrationCopyMax=%.3fms total=%.3fms%n",
+            profileSeed,
+            radius,
+            columns,
+            GameConfig.WORLD_MIN_Y,
+            GameConfig.WORLD_MAX_Y,
+            generationNs / 1_000_000.0 / Math.max(1, columns),
+            generationMaxNs / 1_000_000.0,
+            copyNs / 1_000_000.0 / Math.max(1, columns),
+            copyMaxNs / 1_000_000.0,
+            totalMs
+        );
+    }
+
+    private static long parseProfileSeed(String value) {
+        try {
+            return Long.parseUnsignedLong(value, 16);
+        } catch (NumberFormatException exception) {
+            try {
+                return Long.parseLong(value);
+            } catch (NumberFormatException ignored) {
+                return 0x5cfa085fdacb6033L;
+            }
+        }
+    }
+
+    private static int parseProfileInt(String value, int fallback) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException exception) {
+            return fallback;
+        }
     }
 
     private void run() {
@@ -347,6 +428,11 @@ public class TinyCraft {
 
             if (chat.isActive()) {
                 if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+                    if (key == GLFW_KEY_C && (mods & GLFW_MOD_CONTROL) != 0) {
+                        copyChatToClipboard();
+                        resetMovement();
+                        return;
+                    }
                     if (key == GLFW_KEY_ENTER) {
                         chat.submit(new ChatSystem.CommandTarget() {
                             @Override
@@ -393,17 +479,17 @@ public class TinyCraft {
 
                             @Override
                             public String locateBiome(String biomeName) {
-                                return locateBiomeAndTeleport(biomeName);
+                                return TinyCraft.this.locateBiome(biomeName);
                             }
 
                             @Override
                             public String locateStructure(String structureName) {
-                                return locateStructureAndTeleport(structureName);
+                                return TinyCraft.this.locateStructureAndTeleport(structureName);
                             }
 
                             @Override
                             public String placeStructure(String structureName, int rotation) {
-                                return placeStructureNearPlayer(structureName, rotation);
+                                return TinyCraft.this.placeStructureNearPlayer(structureName, rotation);
                             }
 
                             @Override
@@ -602,18 +688,27 @@ public class TinyCraft {
                 case GLFW_KEY_F3:
                     if (action == GLFW_PRESS) {
                         f3Held = true;
+                        f3ComboConsumed = false;
                     } else if (action == GLFW_RELEASE) {
                         if (gameModeSwitcherActive) {
                             applySelectedGameMode();
-                        } else {
+                        } else if (!f3ComboConsumed) {
                             showDebugInfo = !showDebugInfo;
                         }
                         f3Held = false;
+                        f3ComboConsumed = false;
                     }
                     break;
                 case GLFW_KEY_F4:
                     if (action == GLFW_PRESS && f3Held) {
+                        f3ComboConsumed = true;
                         cycleGameModeSelection();
+                    }
+                    break;
+                case GLFW_KEY_G:
+                    if (action == GLFW_PRESS && f3Held) {
+                        showChunkBorders = !showChunkBorders;
+                        f3ComboConsumed = true;
                     }
                     break;
                 case GLFW_KEY_F5:
@@ -821,6 +916,9 @@ public class TinyCraft {
             }
 
             if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                if (action == GLFW_PRESS) {
+                    player.handSwingTimer = Math.max(player.handSwingTimer, 0.22);
+                }
                 if (action == GLFW_PRESS && world.attackMobInReach(player, attackDamageForHeldItem(), knockbackForHeldItem())) {
                     player.handSwingTimer = 0.22;
                     if (!creativeMode) {
@@ -933,7 +1031,7 @@ public class TinyCraft {
                 }
                 ColumnUpdateList dirtyColumns = world.updateWorldTicks(player, deltaTime);
                 for (int i = 0; i < dirtyColumns.size(); i++) {
-                    renderer.rebuildChunksAroundBlock(dirtyColumns.xAt(i), dirtyColumns.zAt(i));
+                    renderer.rebuildChunkSectionAroundBlock(dirtyColumns.xAt(i), dirtyColumns.yAt(i), dirtyColumns.zAt(i));
                 }
                 updateWaterAmbientAudio(deltaTime);
                 if (!inventoryOpen && !chat.isActive() && !deathScreenActive && !mainMenuActive && !spectatorMode) {
@@ -953,6 +1051,7 @@ public class TinyCraft {
             long renderStartNs = System.nanoTime();
             audio.updateListener(player);
             boolean sprinting = shouldRunWorldSimulation() && sprint && player.hunger > 6 && (forward || backward || left || right);
+            renderer.setChunkBordersEnabled(showChunkBorders);
             renderer.render(
                 player,
                 inventory,
@@ -1241,6 +1340,14 @@ public class TinyCraft {
         return world.canStandOnFluid(player.x, player.y, player.z, player.radius(), GameConfig.WATER_FLOWING);
     }
 
+    private void copyChatToClipboard() {
+        String text = chat.copyText();
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        glfwSetClipboardString(window, text);
+    }
+
     private void teleportPlayerTo(double x, double y, double z) {
         player.x = x;
         player.y = clamp(y, GameConfig.WORLD_MIN_Y + 1.0, GameConfig.WORLD_MAX_Y - 1.0);
@@ -1253,10 +1360,10 @@ public class TinyCraft {
         renderer.rebuildChunksAroundBlock((int) Math.floor(player.x), (int) Math.floor(player.z));
     }
 
-    private String locateBiomeAndTeleport(String biomeName) {
+    private String locateBiome(String biomeName) {
         String query = normalizeBiomeName(biomeName);
         if (query.isEmpty()) {
-            return "Usage: /locate biome <name>";
+            return "Usage: /locatebiome <name>";
         }
 
         int startX = (int) Math.floor(player.x);
@@ -1272,12 +1379,11 @@ public class TinyCraft {
                     int sampleX = startX + offsetX;
                     int sampleZ = startZ + offsetZ;
                     String candidate = world.getBiomeName(sampleX, sampleZ);
-                    if (!normalizeBiomeName(candidate).contains(query)) {
+                    if (!matchesBiomeQuery(candidate, query)) {
                         continue;
                     }
-                    int surfaceY = world.getSurfaceHeight(sampleX, sampleZ);
-                    teleportPlayerTo(sampleX + 0.5, surfaceY + 2.0, sampleZ + 0.5);
-                    return "Located " + candidate + " at " + sampleX + " " + surfaceY + " " + sampleZ + ".";
+                    int surfaceY = world.getGeneratedSurfaceHeight(sampleX, sampleZ);
+                    return "Nearest " + candidate + ": " + sampleX + " " + surfaceY + " " + sampleZ + ".";
                 }
             }
         }
@@ -1289,10 +1395,10 @@ public class TinyCraft {
         if (query.isEmpty()) {
             return "Usage: /locate structure <village|mineshaft>";
         }
-        if (query.contains("village") || query.contains("РґРµСЂРµРІРЅ")) {
+        if (query.contains("village") || query.contains("деревн")) {
             return locateVillageAndTeleport();
         }
-        if (query.contains("mineshaft") || query.contains("shaft") || query.contains("С€Р°С…С‚")) {
+        if (query.contains("mineshaft") || query.contains("shaft") || query.contains("шахт")) {
             return locateMineshaftAndTeleport();
         }
         return "Unknown structure '" + structureName + "'. Try village or mineshaft.";
@@ -1490,6 +1596,26 @@ public class TinyCraft {
         return name.toLowerCase(Locale.ROOT).replace('_', ' ').trim();
     }
 
+    private boolean matchesBiomeQuery(String candidate, String normalizedQuery) {
+        String normalized = normalizeBiomeName(candidate);
+        if (normalized.isEmpty() || normalizedQuery.isEmpty()) {
+            return false;
+        }
+        if (normalized.equals(normalizedQuery)) {
+            return true;
+        }
+        if ("desert".equals(normalizedQuery)) {
+            return normalized.equals("desert");
+        }
+        if ("mountain".equals(normalizedQuery) || "mountains".equals(normalizedQuery)) {
+            return normalized.contains("mountain");
+        }
+        if ("meadow".equals(normalizedQuery) || "plain".equals(normalizedQuery) || "plains".equals(normalizedQuery)) {
+            return normalized.equals("meadow") || normalized.equals("plains");
+        }
+        return normalized.contains(normalizedQuery);
+    }
+
     private void updatePlayerAirSupply(double deltaTime) {
         if (creativeMode || spectatorMode || player.health <= 0) {
             resetPlayerAirSupply();
@@ -1654,9 +1780,18 @@ public class TinyCraft {
     }
 
     private void applyPlayerDamage(double amount) {
+        if (deathScreenActive || creativeMode || spectatorMode || player.health <= 0.0) {
+            if (player.health <= 0.0) {
+                player.health = 0.0;
+            }
+            return;
+        }
         int armor = Math.max(0, Math.min(20, player.armorProtection));
         double protectedDamage = Math.ceil(amount * (1.0 - armor * 0.04) * 2.0) / 2.0;
         player.health = Math.max(0.0, player.health - Math.max(0.5, protectedDamage));
+        if (player.health <= 0.0) {
+            enterDeathScreen();
+        }
     }
 
     private int lavaDamageAmount() {
@@ -2544,6 +2679,40 @@ public class TinyCraft {
         inventory.clearCursor();
     }
 
+    private void dropInventoryOnDeath() {
+        if (inventoryDroppedOnDeath) {
+            return;
+        }
+        inventoryDroppedOnDeath = true;
+        for (int i = 0; i < PlayerInventory.STORAGE_SIZE; i++) {
+            dropInventoryStack(inventory.getStorageStack(i));
+        }
+        for (int i = 0; i < PlayerInventory.HOTBAR_SIZE; i++) {
+            dropInventoryStack(inventory.getHotbarStack(i));
+        }
+        for (int i = 0; i < PlayerInventory.ARMOR_SIZE; i++) {
+            dropInventoryStack(inventory.getArmorStack(i));
+        }
+        for (int i = 0; i < PlayerInventory.CRAFT_SIZE; i++) {
+            dropInventoryStack(inventory.getCraftStack(i));
+        }
+        for (int i = 0; i < PlayerInventory.WORKBENCH_CRAFT_SIZE; i++) {
+            dropInventoryStack(inventory.getWorkbenchCraftStack(i));
+        }
+        dropInventoryStack(inventory.getOffhandStack());
+        dropInventoryStack(inventory.getCursorStack());
+        inventory.clearAll();
+        syncSelectedHotbarItem();
+    }
+
+    private void dropInventoryStack(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return;
+        }
+        world.spawnDroppedItem(stack.itemId, stack.count, stack.durabilityDamage,
+            player.x, player.y + 0.55, player.z);
+    }
+
     private void dropSelectedHotbarItem() {
         ItemStack stack = inventory.getHotbarStack(selectedSlot);
         if (stack == null || stack.isEmpty()) {
@@ -2624,7 +2793,13 @@ public class TinyCraft {
     }
 
     private void enterDeathScreen() {
+        if (deathScreenActive) {
+            player.health = 0.0;
+            return;
+        }
         deathScreenActive = true;
+        player.health = 0.0;
+        dropInventoryOnDeath();
         gameModeSwitcherActive = false;
         f3Held = false;
         deathSelection = 0;
@@ -2980,11 +3155,15 @@ public class TinyCraft {
             syncLocalModeStateFromPlayer();
         }
         world.prepareForPlayer(player);
+        world.primeStreamingAround(player);
+        warmupWorldStreaming(worldInfo.name);
         long meshBuildStart = System.nanoTime();
         renderer.buildAllChunkMeshes();
         FrameProfiler.logTask("renderer.buildAllChunkMeshes", System.nanoTime() - meshBuildStart);
         loadedWorldName = worldInfo.name;
         worldLoaded = true;
+        deathScreenActive = false;
+        inventoryDroppedOnDeath = false;
         player.health = Math.max(0.5, player.health);
         player.hunger = clamp(player.hunger, 0.0, GameConfig.MAX_HUNGER);
         player.verticalVelocity = 0.0;
@@ -2995,6 +3174,31 @@ public class TinyCraft {
         resetBreakingProgress();
         syncPlayerModeState();
         syncSelectedHotbarItem();
+    }
+
+    private void warmupWorldStreaming(String worldName) {
+        int warmupRadius = Math.min(renderDistanceChunks, 14);
+        int targetColumns = world.targetColumnCountForRadius(warmupRadius);
+        int minimumReadyColumns = Math.max(9, (int) Math.ceil(targetColumns * 0.70));
+        long deadlineNs = System.nanoTime() + 4_000_000_000L;
+        int loadedColumns = world.loadedColumnCountAround(player, warmupRadius);
+        while (loadedColumns < minimumReadyColumns && System.nanoTime() < deadlineNs && !glfwWindowShouldClose(window)) {
+            world.primeStreamingAround(player);
+            String detail = worldName + " " + loadedColumns + "/" + targetColumns
+                + " chunks, queue " + world.pendingColumnCount();
+            showLoadingScreen(loadingTerrainText(), detail);
+            sleepQuietly(25L);
+            loadedColumns = world.loadedColumnCountAround(player, warmupRadius);
+        }
+        world.primeStreamingAround(player);
+    }
+
+    private void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void enterMainMenu() {
@@ -3052,7 +3256,7 @@ public class TinyCraft {
         } catch (IOException ignored) {
         }
 
-        availableWorlds.sort(Comparator.comparingLong((WorldInfo info) -> info.lastModifiedMillis).reversed().thenComparing(info -> info.name.toLowerCase()));
+        availableWorlds.sort((left, right) -> compareWorldInfoByName(right, left));
         if (availableWorlds.isEmpty()) {
             selectedWorldIndex = 0;
             mainMenuScrollOffset = 0;
@@ -3083,6 +3287,67 @@ public class TinyCraft {
     private void clampMainMenuScrollOffset() {
         int maxOffset = Math.max(0, availableWorlds.size() - GameConfig.WORLD_MENU_VISIBLE_ROWS);
         mainMenuScrollOffset = Math.max(0, Math.min(maxOffset, mainMenuScrollOffset));
+    }
+
+    private static int compareWorldInfoByName(WorldInfo left, WorldInfo right) {
+        int nameCompare = compareNatural(left.name, right.name);
+        if (nameCompare != 0) {
+            return nameCompare;
+        }
+        return left.directory.toString().compareToIgnoreCase(right.directory.toString());
+    }
+
+    private static int compareNatural(String left, String right) {
+        String a = left == null ? "" : left;
+        String b = right == null ? "" : right;
+        int ia = 0;
+        int ib = 0;
+        while (ia < a.length() && ib < b.length()) {
+            char ca = a.charAt(ia);
+            char cb = b.charAt(ib);
+            if (Character.isDigit(ca) && Character.isDigit(cb)) {
+                int startA = ia;
+                int startB = ib;
+                while (ia < a.length() && Character.isDigit(a.charAt(ia))) {
+                    ia++;
+                }
+                while (ib < b.length() && Character.isDigit(b.charAt(ib))) {
+                    ib++;
+                }
+                String numberA = a.substring(startA, ia);
+                String numberB = b.substring(startB, ib);
+                String trimmedA = trimLeadingZeroes(numberA);
+                String trimmedB = trimLeadingZeroes(numberB);
+                int lengthCompare = Integer.compare(trimmedA.length(), trimmedB.length());
+                if (lengthCompare != 0) {
+                    return lengthCompare;
+                }
+                int valueCompare = trimmedA.compareTo(trimmedB);
+                if (valueCompare != 0) {
+                    return valueCompare;
+                }
+                int zeroCompare = Integer.compare(numberA.length(), numberB.length());
+                if (zeroCompare != 0) {
+                    return zeroCompare;
+                }
+                continue;
+            }
+            int charCompare = Character.compare(Character.toLowerCase(ca), Character.toLowerCase(cb));
+            if (charCompare != 0) {
+                return charCompare;
+            }
+            ia++;
+            ib++;
+        }
+        return Integer.compare(a.length(), b.length());
+    }
+
+    private static String trimLeadingZeroes(String value) {
+        int index = 0;
+        while (index < value.length() - 1 && value.charAt(index) == '0') {
+            index++;
+        }
+        return value.substring(index);
     }
 
     private WorldMetadata readWorldMetadata(Path directory) throws IOException {
@@ -3257,11 +3522,11 @@ public class TinyCraft {
     }
 
     private String loadingTerrainText() {
-        return Settings.isRussian() ? "Р“РµРЅРµСЂР°С†РёСЏ РјРёСЂР°" : "Generating terrain";
+        return Settings.isRussian() ? "Генерация мира" : "Generating terrain";
     }
 
     private String buildingWorldText() {
-        return Settings.isRussian() ? "РџРѕРґРіРѕС‚РѕРІРєР° С‡Р°РЅРєРѕРІ" : "Building world";
+        return Settings.isRussian() ? "Подготовка чанков" : "Building world";
     }
 
     private void createNewWorld(String requestedName, String requestedSeed, int gameMode, int difficulty) {
@@ -3439,6 +3704,7 @@ public class TinyCraft {
 
     private void respawnPlayer() {
         deathScreenActive = false;
+        inventoryDroppedOnDeath = false;
         mainMenuActive = false;
         gameModeSwitcherActive = false;
         f3Held = false;

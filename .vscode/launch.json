@@ -1,4 +1,4 @@
-﻿{
+{
   "version": "0.2.0",
   "configurations": [
     {
@@ -7,7 +7,22 @@
       "request": "launch",
       "mainClass": "TinyCraft",
       "cwd": "${workspaceFolder}",
-      "vmArgs": "-Dfile.encoding=UTF-8"
+      "classPaths": [
+        "${workspaceFolder}/out",
+        "${workspaceFolder}/lib/lwjgl-3.3.3.jar",
+        "${workspaceFolder}/lib/lwjgl-3.3.3-natives-windows.jar",
+        "${workspaceFolder}/lib/lwjgl-glfw-3.3.3.jar",
+        "${workspaceFolder}/lib/lwjgl-glfw-3.3.3-natives-windows.jar",
+        "${workspaceFolder}/lib/lwjgl-openal-3.3.3.jar",
+        "${workspaceFolder}/lib/lwjgl-openal-3.3.3-natives-windows.jar",
+        "${workspaceFolder}/lib/lwjgl-opengl-3.3.3.jar",
+        "${workspaceFolder}/lib/lwjgl-opengl-3.3.3-natives-windows.jar",
+        "${workspaceFolder}/lib/lwjgl-stb-3.3.3.jar",
+        "${workspaceFolder}/lib/lwjgl-stb-3.3.3-natives-windows.jar"
+      ],
+      "vmArgs": "--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8",
+      "console": "integratedTerminal",
+      "preLaunchTask": "compile TinyCraft"
     }
   ]
 }

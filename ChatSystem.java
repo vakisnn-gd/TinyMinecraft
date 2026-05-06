@@ -162,6 +162,10 @@ final class ChatSystem {
             executeLocate(parts, target);
             return;
         }
+        if ("locatebiome".equals(command) || "locateBiome".equals(command)) {
+            executeLocateBiomeAlias(parts, target);
+            return;
+        }
         if ("place".equals(command)) {
             executePlace(parts, target);
             return;
@@ -183,6 +187,22 @@ final class ChatSystem {
             return;
         }
         addMessage("Unknown command: /" + parts[0]);
+    }
+
+    private void executeLocateBiomeAlias(String[] parts, CommandTarget target) {
+        if (parts.length < 2) {
+            addMessage("Usage: /locatebiome <name>");
+            return;
+        }
+        StringBuilder biomeName = new StringBuilder();
+        for (int i = 1; i < parts.length; i++) {
+            if (biomeName.length() > 0) {
+                biomeName.append(' ');
+            }
+            biomeName.append(parts[i]);
+        }
+        String result = target.locateBiome(biomeName.toString());
+        addMessage(result == null || result.isBlank() ? "Biome not found." : result);
     }
 
     private void executeTeleport(String[] parts, CommandTarget target) {
@@ -343,6 +363,16 @@ final class ChatSystem {
         }
 
         addMessage("Usage: /locate biome <name> or /locate structure <village|mineshaft>");
+    }
+
+    String copyText() {
+        if (active && input.length() > 0) {
+            return input.toString();
+        }
+        if (messages.isEmpty()) {
+            return "";
+        }
+        return messages.get(messages.size() - 1);
     }
 
     private void executePlace(String[] parts, CommandTarget target) {

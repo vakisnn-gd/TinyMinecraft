@@ -1,12 +1,17 @@
 {
   "java.project.sourcePaths": [
-    "",
     "."
   ],
   "java.project.outputPath": "out",
-  "java.project.referencedLibraries": [
-    "lib/*.jar",
-    "lib/**/*.jar"
+  "java.project.excludedPaths": [
+    "out/**",
+    "release/**",
+    "saves/**"
   ],
+  "java.project.referencedLibraries": [
+    "lib/*.jar"
+  ],
+  "java.autobuild.enabled": false,
+  "java.debug.settings.forceBuildBeforeLaunch": false,
   "java.compile.nullAnalysis.mode": "disabled"
 }
