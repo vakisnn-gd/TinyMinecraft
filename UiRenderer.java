@@ -15,6 +15,10 @@ final class UiRenderer {
     }
 
     InventoryUiLayout buildInventoryLayout(boolean creativeMode, int activeCreativeTab, int framebufferWidth, int framebufferHeight, float uiScale, int screenMode) {
+        return buildInventoryLayout(creativeMode, activeCreativeTab, framebufferWidth, framebufferHeight, uiScale, screenMode, 0);
+    }
+
+    InventoryUiLayout buildInventoryLayout(boolean creativeMode, int activeCreativeTab, int framebufferWidth, int framebufferHeight, float uiScale, int screenMode, int creativeScrollOffset) {
         if (creativeMode) {
             screenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
         }
@@ -92,9 +96,12 @@ final class UiRenderer {
                 hotbarAbsoluteY,
                 slotSize);
             int[] tabIndices = InventoryItems.CREATIVE_TAB_INDICES[Math.max(0, Math.min(activeCreativeTab, InventoryItems.CREATIVE_TAB_INDICES.length - 1))];
+            int visibleSlots = 4 * 9;
+            int maxOffset = Math.max(0, tabIndices.length - visibleSlots);
+            int scrollOffset = Math.max(0, Math.min(creativeScrollOffset, maxOffset));
             for (int row = 0; row < 4; row++) {
                 for (int column = 0; column < 9; column++) {
-                    int visibleIndex = row * 9 + column;
+                    int visibleIndex = row * 9 + column + scrollOffset;
                     if (visibleIndex >= tabIndices.length) {
                         continue;
                     }

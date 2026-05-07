@@ -152,6 +152,7 @@ public class TinyCraft {
     private int gameModeSelection;
     private int selectedSlot;
     private int creativeTab;
+    private int creativeScrollOffset;
     private int activeMenuTextField = -1;
     private int createWorldGameMode;
     private int createWorldDifficulty = 2;
@@ -194,15 +195,19 @@ public class TinyCraft {
         int radius = args.length > 2 ? Math.max(1, parseProfileInt(args[2], 6)) : 6;
         WorldGenerator generator = new WorldGenerator(profileSeed);
         int columns = 0;
+        ArrayList<Long> generationSamples = new ArrayList<>();
         long generationNs = 0L;
         long copyNs = 0L;
         long generationMaxNs = 0L;
         long copyMaxNs = 0L;
+        generator.generateChunk(radius + 1000, radius + 1000);
+        generator.generateChunk(-radius - 1000, radius + 1001);
         for (int chunkX = -radius; chunkX <= radius; chunkX++) {
             for (int chunkZ = -radius; chunkZ <= radius; chunkZ++) {
                 long generationStartNs = System.nanoTime();
                 GeneratedChunkColumn generated = generator.generateChunk(chunkX, chunkZ);
                 long generationElapsedNs = System.nanoTime() - generationStartNs;
+                generationSamples.add(generationElapsedNs);
                 long copyStartNs = System.nanoTime();
                 VoxelWorld.ChunkColumn column = new VoxelWorld.ChunkColumn(chunkX, chunkZ, false);
                 Chunk[] generatedSections = generated.sections();
@@ -222,21 +227,42 @@ public class TinyCraft {
                 columns++;
             }
         }
+        generationSamples.sort(Long::compare);
+        long generationP95Ns = percentileNs(generationSamples, 0.95);
+        long heavyThresholdNs = Math.max(50_000_000L, generationP95Ns);
+        int heavyColumns = 0;
+        for (long sampleNs : generationSamples) {
+            if (sampleNs >= heavyThresholdNs) {
+                heavyColumns++;
+            }
+        }
         double totalMs = (generationNs + copyNs) / 1_000_000.0;
         System.out.printf(
             Locale.ROOT,
-            "World profile: seed=%016x radius=%d columns=%d height=%d..%d generationAvg=%.3fms generationMax=%.3fms integrationCopyAvg=%.3fms integrationCopyMax=%.3fms total=%.3fms%n",
+            "World profile: seed=%016x radius=%d columns=%d height=%d..%d generationAvg=%.3fms generationP95=%.3fms generationMax=%.3fms heavyColumns=%d@%.1fms integrationCopyAvg=%.3fms integrationCopyMax=%.3fms total=%.3fms%n",
             profileSeed,
             radius,
             columns,
             GameConfig.WORLD_MIN_Y,
             GameConfig.WORLD_MAX_Y,
             generationNs / 1_000_000.0 / Math.max(1, columns),
+            generationP95Ns / 1_000_000.0,
             generationMaxNs / 1_000_000.0,
+            heavyColumns,
+            heavyThresholdNs / 1_000_000.0,
             copyNs / 1_000_000.0 / Math.max(1, columns),
             copyMaxNs / 1_000_000.0,
             totalMs
         );
+    }
+
+    private static long percentileNs(ArrayList<Long> sortedSamples, double percentile) {
+        if (sortedSamples.isEmpty()) {
+            return 0L;
+        }
+        int index = (int) Math.ceil(percentile * sortedSamples.size()) - 1;
+        index = Math.max(0, Math.min(sortedSamples.size() - 1, index));
+        return sortedSamples.get(index);
     }
 
     private static long parseProfileSeed(String value) {
@@ -403,6 +429,10 @@ public class TinyCraft {
         });
 
         glfwSetScrollCallback(window, (handle, xoffset, yoffset) -> {
+            if (inventoryOpen && creativeMode && inventoryScreenMode == GameConfig.INVENTORY_SCREEN_PLAYER) {
+                scrollCreativeInventory((int) Math.signum(yoffset));
+                return;
+            }
             if (!mainMenuActive || mainMenuScreen != GameConfig.MENU_SCREEN_SINGLEPLAYER || availableWorlds.isEmpty()) {
                 return;
             }
@@ -921,6 +951,7 @@ public class TinyCraft {
                 }
                 if (action == GLFW_PRESS && world.attackMobInReach(player, attackDamageForHeldItem(), knockbackForHeldItem())) {
                     player.handSwingTimer = 0.22;
+                    spendHunger(0.12);
                     if (!creativeMode) {
                         inventory.damageSelectedItem(selectedSlot, 1);
                         syncSelectedHotbarItem();
@@ -1087,6 +1118,7 @@ public class TinyCraft {
                 selectedBlock,
                 selectedSlot,
                 creativeTab,
+                creativeScrollOffset,
                 creativeMode,
                 thirdPersonView,
                 frontThirdPersonView,
@@ -1221,10 +1253,12 @@ public class TinyCraft {
             if (jumpQueued && canJumpFromFlowingWater()) {
                 player.verticalVelocity = GameConfig.JUMP_SPEED;
                 player.isGrounded = false;
+                spendHunger(0.04);
             }
         } else if (jumpQueued && player.isGrounded) {
             player.verticalVelocity = GameConfig.JUMP_SPEED;
             player.isGrounded = false;
+            spendHunger(sprint && movingHorizontally ? 0.16 : 0.08);
         }
         jumpQueued = false;
 
@@ -1268,6 +1302,21 @@ public class TinyCraft {
         if (creativeMode || spectatorMode || player.health <= 0) {
             player.hungerDrainTimer = 0.0;
             player.hungerDamageTimer = 0.0;
+            return;
+        }
+        if (currentWorldDifficulty <= 0) {
+            player.hunger = GameConfig.MAX_HUNGER;
+            player.hungerDamageTimer = 0.0;
+            player.hungerDrainTimer = 0.0;
+            if (player.health < GameConfig.MAX_HEALTH) {
+                player.hungerRegenTimer += deltaTime;
+                while (player.hungerRegenTimer >= 2.0 && player.health < GameConfig.MAX_HEALTH) {
+                    player.hungerRegenTimer -= 2.0;
+                    player.health = Math.min(GameConfig.MAX_HEALTH, player.health + 0.5);
+                }
+            } else {
+                player.hungerRegenTimer = 0.0;
+            }
             return;
         }
         if (sprintingHorizontally && player.hunger > 0) {
@@ -1798,6 +1847,16 @@ public class TinyCraft {
         return currentWorldDifficulty >= 3 ? 2 : GameConfig.LAVA_DAMAGE;
     }
 
+    private void spendHunger(double amount) {
+        if (amount <= 0.0 || creativeMode || spectatorMode || currentWorldDifficulty <= 0 || player.health <= 0.0) {
+            return;
+        }
+        player.hunger = Math.max(0.0, player.hunger - amount);
+        if (player.hunger < 18.0) {
+            player.hungerRegenTimer = 0.0;
+        }
+    }
+
     private boolean useHeldFood(byte heldItem) {
         int foodValue = InventoryItems.foodValue(heldItem);
         if (foodValue <= 0 || creativeMode || spectatorMode || player.hunger >= GameConfig.MAX_HUNGER) {
@@ -1898,6 +1957,7 @@ public class TinyCraft {
             if (droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock)) {
                 world.spawnDroppedItem(droppedItem, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
             }
+            spendHunger(isCorrectToolForBlock(inventory.getSelectedItemId(selectedSlot), targetBlock) ? 0.025 : 0.045);
             damageSelectedToolForBlock(targetBlock);
             audio.playBreak(targetBlock, blockX + 0.5, blockY + 0.5, blockZ + 0.5);
             renderer.rebuildChunkSectionAroundBlock(blockX, blockY, blockZ);
@@ -2156,6 +2216,9 @@ public class TinyCraft {
         if (block == GameConfig.DIAMOND_ORE || block == GameConfig.DEEPSLATE_DIAMOND_ORE) {
             return InventoryItems.DIAMOND_ITEM;
         }
+        if (block == GameConfig.STONE) {
+            return GameConfig.COBBLESTONE;
+        }
         return block;
     }
 
@@ -2220,20 +2283,20 @@ public class TinyCraft {
                 break;
             case GameConfig.COBBLESTONE:
             case GameConfig.STONE:
-                baseDuration = 1.5;
+                baseDuration = 1.1;
                 break;
             case GameConfig.DEEPSLATE:
-                baseDuration = 2.2;
+                baseDuration = 1.7;
                 break;
             case GameConfig.COAL_ORE:
             case GameConfig.IRON_ORE:
             case GameConfig.DIAMOND_ORE:
-                baseDuration = 2.0;
+                baseDuration = 1.6;
                 break;
             case GameConfig.DEEPSLATE_COAL_ORE:
             case GameConfig.DEEPSLATE_IRON_ORE:
             case GameConfig.DEEPSLATE_DIAMOND_ORE:
-                baseDuration = 2.6;
+                baseDuration = 2.0;
                 break;
             case GameConfig.OBSIDIAN:
                 baseDuration = 8.5;
@@ -2281,10 +2344,10 @@ public class TinyCraft {
             || block == GameConfig.OAK_FENCE
             || block == GameConfig.OAK_DOOR;
         if ((heldItem == InventoryItems.DIAMOND_PICKAXE || heldItem == InventoryItems.NETHERITE_PICKAXE) && stoneLike) {
-            return heldItem == InventoryItems.NETHERITE_PICKAXE ? 6.5 : 5.5;
+            return heldItem == InventoryItems.NETHERITE_PICKAXE ? 7.0 : 6.2;
         }
         if ((heldItem == InventoryItems.IRON_PICKAXE || heldItem == InventoryItems.STONE_PICKAXE || heldItem == InventoryItems.WOODEN_PICKAXE) && stoneLike) {
-            return heldItem == InventoryItems.IRON_PICKAXE ? 4.4 : (heldItem == InventoryItems.STONE_PICKAXE ? 3.2 : 2.0);
+            return heldItem == InventoryItems.IRON_PICKAXE ? 5.2 : (heldItem == InventoryItems.STONE_PICKAXE ? 3.8 : 2.4);
         }
         if ((heldItem == InventoryItems.DIAMOND_SHOVEL || heldItem == InventoryItems.NETHERITE_SHOVEL) && dirtLike) {
             return heldItem == InventoryItems.NETHERITE_SHOVEL ? 6.0 : 5.0;
@@ -2489,6 +2552,7 @@ public class TinyCraft {
             inventoryOpen = false;
         } else {
             inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
+            clampCreativeScrollOffset();
             activeChestContainer = null;
             activeFurnace = null;
             inventoryOpen = true;
@@ -2525,9 +2589,12 @@ public class TinyCraft {
     }
 
     private void returnCursorToInventory() {
-        if (!inventory.getCursorStack().isEmpty()) {
-            inventory.addItem(inventory.getCursorStack().itemId, inventory.getCursorStack().count);
-            inventory.clearCursor();
+        ItemStack cursor = inventory.getCursorStack();
+        if (!cursor.isEmpty()) {
+            if (!inventory.addItem(cursor.itemId, cursor.count, cursor.durabilityDamage)) {
+                world.spawnDroppedItem(cursor.itemId, cursor.count, cursor.durabilityDamage, player.x, player.y + 0.8, player.z);
+            }
+            cursor.clear();
         }
     }
 
@@ -2634,11 +2701,12 @@ public class TinyCraft {
             int clickedTab = renderer.getCreativeTabAt(mouseX, mouseY, creativeTab);
             if (clickedTab != -1) {
                 creativeTab = clickedTab;
+                creativeScrollOffset = 0;
                 return;
             }
         }
 
-        InventorySlotRef slot = renderer.getInventorySlotAt(inventory, creativeInventory, creativeTab, inventoryScreenMode, mouseX, mouseY);
+        InventorySlotRef slot = renderer.getInventorySlotAt(inventory, creativeInventory, creativeTab, creativeScrollOffset, inventoryScreenMode, mouseX, mouseY);
         boolean insideInventory = renderer.isInventoryPointInside(creativeInventory, creativeTab, inventoryScreenMode, mouseX, mouseY);
         if (slot == null && !insideInventory) {
             dropCursorStack();
@@ -3199,6 +3267,24 @@ public class TinyCraft {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private void scrollCreativeInventory(int direction) {
+        if (direction == 0) {
+            return;
+        }
+        int step = 9;
+        creativeScrollOffset = clamp(creativeScrollOffset - direction * step, 0, creativeMaxScrollOffset());
+    }
+
+    private void clampCreativeScrollOffset() {
+        creativeScrollOffset = clamp(creativeScrollOffset, 0, creativeMaxScrollOffset());
+    }
+
+    private int creativeMaxScrollOffset() {
+        int tab = clamp(creativeTab, 0, InventoryItems.CREATIVE_TAB_INDICES.length - 1);
+        int visibleSlots = 36;
+        return Math.max(0, InventoryItems.CREATIVE_TAB_INDICES[tab].length - visibleSlots);
     }
 
     private void enterMainMenu() {

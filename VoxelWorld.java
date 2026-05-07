@@ -32,9 +32,9 @@ final class VoxelWorld implements StructureTemplates.Target {
     private static final int ZOMBIE_TARGET_COUNT = 18;
     private static final int MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK = Math.max(192, GameConfig.CHUNK_GENERATION_THREADS * 48);
     private static final int MAX_INITIAL_COLUMN_SUBMISSIONS = Math.max(768, GameConfig.CHUNK_GENERATION_THREADS * 192);
-    private static final int MAX_PENDING_COLUMN_TASKS = Math.max(4096, GameConfig.CHUNK_GENERATION_THREADS * 768);
-    private static final int MAX_COLUMN_INTEGRATIONS_PER_FRAME = Math.max(24, GameConfig.CHUNK_GENERATION_THREADS * 8);
-    private static final long COLUMN_INTEGRATION_BUDGET_NS = 12_000_000L;
+    private static final int MAX_PENDING_COLUMN_TASKS = Math.max(8192, GameConfig.CHUNK_GENERATION_THREADS * 1024);
+    private static final int MAX_COLUMN_INTEGRATIONS_PER_FRAME = Math.max(16, GameConfig.CHUNK_GENERATION_THREADS * 5);
+    private static final long COLUMN_INTEGRATION_BUDGET_NS = 5_000_000L;
     private static final int MAX_WATER_CELLS_PER_WORLD_TICK = 768;
     private static final int MAX_LAVA_CELLS_PER_WORLD_TICK = 256;
     private static final int MAX_SAND_CELLS_PER_WORLD_TICK = 256;
@@ -2822,6 +2822,9 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     private boolean canIntroduceFluidNow(int x, int y, int z, byte fluidItem, int desiredDistance) {
         byte currentBlock = getBlock(x, y, z);
+        if (currentBlock == GameConfig.SEAGRASS) {
+            return false;
+        }
         if (currentBlock == GameConfig.sourceBlockForFluid(fluidItem)) {
             return false;
         }
@@ -3941,6 +3944,9 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     private boolean isFluidActiveCandidate(int x, int y, int z, byte fluidItem) {
         byte block = getBlock(x, y, z);
+        if (block == GameConfig.SEAGRASS) {
+            return false;
+        }
         if (GameConfig.fluidItemForBlock(block) != fluidItem) {
             return false;
         }

@@ -256,7 +256,7 @@ final class GameConfig {
     }
 
     static boolean isWaterBlock(byte block) {
-        return block == WATER_SOURCE || block == WATER_FLOWING;
+        return block == WATER_SOURCE || block == WATER_FLOWING || block == SEAGRASS;
     }
 
     static boolean isLavaBlock(byte block) {
@@ -312,6 +312,9 @@ final class GameConfig {
     }
 
     static byte fluidItemForBlock(byte block) {
+        if (block == SEAGRASS) {
+            return WATER;
+        }
         if (isWaterBlock(block)) {
             return WATER;
         }

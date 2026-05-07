@@ -94,7 +94,10 @@ final class StructureTemplates {
                 for (int y = 1; y <= wallHeight; y++) {
                     boolean edge = x == 0 || x == width - 1 || z == 0 || z == depth - 1;
                     boolean corner = (x == 0 || x == width - 1) && (z == 0 || z == depth - 1);
-                    set(target, ox, oy, oz, x, y, z, rot, edge ? (corner ? GameConfig.OAK_LOG : wallBlock) : GameConfig.AIR);
+                    boolean sideWindow = y == 2 && !corner && edge
+                        && ((x == 0 || x == width - 1) ? z == depth / 2 : x == width / 2);
+                    byte block = sideWindow ? GameConfig.GLASS : (edge ? (corner ? GameConfig.OAK_LOG : wallBlock) : GameConfig.AIR);
+                    set(target, ox, oy, oz, x, y, z, rot, block);
                 }
             }
         }

@@ -113,10 +113,10 @@ import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 final class OpenGlRenderer {
     private static final int FLOATS_PER_VERTEX = 7;
     private static final int BYTES_PER_VERTEX = FLOATS_PER_VERTEX * Float.BYTES;
-    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 4;
-    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 18;
-    private static final long MIN_MESH_BUILD_BUDGET_NS = 5_000_000L;
-    private static final long MAX_MESH_BUILD_BUDGET_NS = 18_000_000L;
+    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 2;
+    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 10;
+    private static final long MIN_MESH_BUILD_BUDGET_NS = 3_000_000L;
+    private static final long MAX_MESH_BUILD_BUDGET_NS = 10_000_000L;
     private static final double LIQUID_SURFACE_Z_OFFSET = 0.01;
     private static final double CAMERA_NEAR_PLANE = 0.08;
     private static final double CAMERA_FAR_PADDING = 64.0;
@@ -352,8 +352,8 @@ final class OpenGlRenderer {
         return -1;
     }
 
-    InventorySlotRef getInventorySlotAt(PlayerInventory inventory, boolean creativeMode, int creativeTab, int inventoryScreenMode, double mouseX, double mouseY) {
-        UiRenderer.InventoryUiLayout layout = buildInventoryLayout(creativeMode, creativeTab, inventoryScreenMode);
+    InventorySlotRef getInventorySlotAt(PlayerInventory inventory, boolean creativeMode, int creativeTab, int creativeScrollOffset, int inventoryScreenMode, double mouseX, double mouseY) {
+        UiRenderer.InventoryUiLayout layout = buildInventoryLayout(creativeMode, creativeTab, creativeScrollOffset, inventoryScreenMode);
         UiRenderer.SlotBox slot = layout.hitTest(mouseX, mouseY);
         if (slot == null) {
             return null;
@@ -373,8 +373,7 @@ final class OpenGlRenderer {
         float uiScale = getInventoryUiScale();
         float gap = 4.0f * uiScale;
         String[] tabLabels = GameConfig.creativeTabs();
-        float tabWidth = Math.min(68.0f * uiScale,
-            (layout.panelWidth - 32.0f * uiScale - gap * (tabLabels.length - 1)) / tabLabels.length);
+        float tabWidth = (layout.panelWidth - 32.0f * uiScale - gap * (tabLabels.length - 1)) / tabLabels.length;
         float tabHeight = 22.0f * uiScale;
         float totalWidth = tabWidth * tabLabels.length + gap * (tabLabels.length - 1);
         float startX = layout.panelX + layout.panelWidth * 0.5f - totalWidth * 0.5f;
@@ -535,7 +534,7 @@ final class OpenGlRenderer {
         }
     }
 
-    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, ChatSystem chat) {
+    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, ChatSystem chat) {
         if (!resourcesReady || framebufferWidth <= 0 || framebufferHeight <= 0) {
             return;
         }
@@ -581,7 +580,7 @@ final class OpenGlRenderer {
             renderBreakingOverlay(breakingBlock, breakingProgress);
             renderWorldTint(player);
         }
-        renderOverlay(player, inventory, hoveredBlock, paused, inventoryOpen, inventoryScreenMode, chestContainer, furnace, deathScreenActive, deathSelection, mainMenuActive, mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, activeMenuTextField, renameWorldName, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, showDebugInfo, hideHud, pauseSelection, gameModeSwitcherActive, gameModeSelection, selectedBlock, selectedSlot, creativeTab, creativeMode, thirdPersonView, renderDistanceChunks, fovDegrees, timeOfDay, mouseX, mouseY, chat);
+        renderOverlay(player, inventory, hoveredBlock, paused, inventoryOpen, inventoryScreenMode, chestContainer, furnace, deathScreenActive, deathSelection, mainMenuActive, mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, activeMenuTextField, renameWorldName, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, showDebugInfo, hideHud, pauseSelection, gameModeSwitcherActive, gameModeSelection, selectedBlock, selectedSlot, creativeTab, creativeScrollOffset, creativeMode, thirdPersonView, renderDistanceChunks, fovDegrees, timeOfDay, mouseX, mouseY, chat);
         logOpenGlError("render");
     }
 
@@ -1342,7 +1341,9 @@ final class OpenGlRenderer {
             brightness *= 0.88f;
         }
         float alpha = 1.0f;
-        if (GameConfig.isWaterBlock(block)) {
+        if (block == GameConfig.SEAGRASS) {
+            alpha = 0.72f;
+        } else if (GameConfig.isWaterBlock(block)) {
             alpha = 0.60f;
         } else if (GameConfig.isLavaBlock(block)) {
             alpha = 0.85f;
@@ -1610,10 +1611,10 @@ final class OpenGlRenderer {
     private int dynamicChunkUploadBudget() {
         if (!Settings.goodGraphics()) {
             if (debugFps >= 55.0 || debugFps <= 0.0) {
-                return currentRenderDistanceChunks >= 24 ? 12 : 7;
+                return currentRenderDistanceChunks >= 24 ? 7 : 5;
             }
             if (debugFps >= 35.0) {
-                return currentRenderDistanceChunks >= 24 ? 8 : 4;
+                return currentRenderDistanceChunks >= 24 ? 5 : 3;
             }
             return MIN_CHUNK_UPLOADS_PER_FRAME;
         }
@@ -1635,10 +1636,10 @@ final class OpenGlRenderer {
     private long dynamicMeshBuildBudgetNs() {
         if (!Settings.goodGraphics()) {
             if (debugFps >= 55.0 || debugFps <= 0.0) {
-                return currentRenderDistanceChunks >= 24 ? 12_000_000L : 7_000_000L;
+                return currentRenderDistanceChunks >= 24 ? 7_000_000L : 5_000_000L;
             }
             if (debugFps >= 35.0) {
-                return currentRenderDistanceChunks >= 24 ? 8_000_000L : 5_000_000L;
+                return currentRenderDistanceChunks >= 24 ? 5_000_000L : 4_000_000L;
             }
             return MIN_MESH_BUILD_BUDGET_NS;
         }
@@ -1966,6 +1967,7 @@ final class OpenGlRenderer {
         glTranslated(0.0, bodyTopY + 0.23, sneakingPose ? -0.04 : 0.0);
         glRotated(Math.toDegrees(pitch), 1.0, 0.0, 0.0);
         drawCuboid(-0.23, -0.23, -0.23, 0.23, 0.23, 0.23, 0.91f, 0.78f, 0.63f);
+        drawPlayerEyes();
         if (helmet != null) {
             drawCuboid(-0.255, -0.255, -0.255, 0.255, 0.07, 0.255, helmet[0], helmet[1], helmet[2]);
         }
@@ -1992,6 +1994,7 @@ final class OpenGlRenderer {
         glTranslated(0.0, bodyMaxY + 0.23, sneakingPose ? -0.04 : 0.0);
         glRotated(Math.toDegrees(pitch), 1.0, 0.0, 0.0);
         drawCuboid(-0.23, -0.23, -0.23, 0.23, 0.23, 0.23, 0.91f, 0.78f, 0.63f);
+        drawPlayerEyes();
         if (helmet != null) {
             drawCuboid(-0.255, -0.255, -0.255, 0.255, 0.07, 0.255, helmet[0], helmet[1], helmet[2]);
         }
@@ -2037,6 +2040,13 @@ final class OpenGlRenderer {
         drawCuboid(-0.09, legBottom, -0.09, 0.09, 0.0, 0.09, legR, legG, legB);
         drawCuboid(-0.095, legBottom, -0.095, 0.095, legBottom + 0.22, 0.095, footR, footG, footB);
         glPopMatrix();
+    }
+
+    private void drawPlayerEyes() {
+        drawCuboid(-0.13, 0.00, -0.245, -0.055, 0.075, -0.225, 0.03f, 0.03f, 0.035f);
+        drawCuboid(0.055, 0.00, -0.245, 0.13, 0.075, -0.225, 0.03f, 0.03f, 0.035f);
+        drawCuboid(-0.12, 0.035, -0.248, -0.095, 0.060, -0.222, 0.95f, 0.95f, 0.92f);
+        drawCuboid(0.065, 0.035, -0.248, 0.090, 0.060, -0.222, 0.95f, 0.95f, 0.92f);
     }
 
     private void drawCuboid(double minX, double minY, double minZ, double maxX, double maxY, double maxZ, float red, float green, float blue) {
@@ -2434,7 +2444,7 @@ final class OpenGlRenderer {
         glEnd();
     }
 
-    private void renderOverlay(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, boolean creativeMode, boolean thirdPersonView, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, ChatSystem chat) {
+    private void renderOverlay(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, ChatSystem chat) {
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -2460,7 +2470,7 @@ final class OpenGlRenderer {
         }
         if (inventoryOpen) {
             boolean creativeInventory = creativeMode && inventoryScreenMode == GameConfig.INVENTORY_SCREEN_PLAYER;
-            renderInventoryScreen(player, inventory, creativeInventory, selectedSlot, creativeTab, inventoryScreenMode, chestContainer, furnace, mouseX, mouseY);
+            renderInventoryScreen(player, inventory, creativeInventory, selectedSlot, creativeTab, creativeScrollOffset, inventoryScreenMode, chestContainer, furnace, mouseX, mouseY);
         }
         if (!blockingOverlay && player.fireTimer > 0.0) {
             renderFireOverlay(player.fireTimer);
@@ -3195,29 +3205,14 @@ final class OpenGlRenderer {
         drawText(textX, textY, textScale, text, red, green, blue);
     }
 
-    private void renderInventoryScreen(PlayerState player, PlayerInventory inventory, boolean creativeMode, int selectedSlot, int creativeTab, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, double mouseX, double mouseY) {
-        UiRenderer.InventoryUiLayout layout = buildInventoryLayout(creativeMode, creativeTab, inventoryScreenMode);
+    private void renderInventoryScreen(PlayerState player, PlayerInventory inventory, boolean creativeMode, int selectedSlot, int creativeTab, int creativeScrollOffset, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, double mouseX, double mouseY) {
+        UiRenderer.InventoryUiLayout layout = buildInventoryLayout(creativeMode, creativeTab, creativeScrollOffset, inventoryScreenMode);
         UiRenderer.SlotBox hovered = layout.hitTest(mouseX, mouseY);
         float uiScale = getInventoryUiScale();
 
         drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.0f, 0.0f, 0.0f, 0.34f);
         drawRect(layout.panelX, layout.panelY, layout.panelWidth, layout.panelHeight, 0.09f, 0.09f, 0.10f, 0.78f);
         drawOutline(layout.panelX, layout.panelY, layout.panelWidth, layout.panelHeight, 2.4f * uiScale, 0.90f, 0.90f, 0.95f, 0.92f);
-
-        if (!creativeMode && (inventoryScreenMode == GameConfig.INVENTORY_SCREEN_PLAYER || inventoryScreenMode == GameConfig.INVENTORY_SCREEN_WORKBENCH)) {
-            float titleX = layout.craftX;
-            float titleY = layout.craftY - 14.0f * uiScale;
-            if (inventoryScreenMode == GameConfig.INVENTORY_SCREEN_WORKBENCH) {
-                for (UiRenderer.SlotBox slot : layout.slots) {
-                    if (slot.ref.group == InventorySlotGroup.CRAFT_3X3 && slot.ref.index == 0) {
-                        titleX = slot.x;
-                        titleY = slot.y - 14.0f * uiScale;
-                        break;
-                    }
-                }
-            }
-            drawShadowText(titleX, titleY, uiScale * 0.78f, "Crafting", 0.92f, 0.92f, 0.92f);
-        }
         if (!creativeMode && inventoryScreenMode == GameConfig.INVENTORY_SCREEN_PLAYER) {
             renderInventoryPlayerPreview(
                 player,
@@ -3238,9 +3233,12 @@ final class OpenGlRenderer {
                 }
             }
             int[] tabIndices = InventoryItems.CREATIVE_TAB_INDICES[layout.activeCreativeTab];
+            int visibleSlots = layout.creativeRows * layout.creativeColumns;
+            int maxOffset = Math.max(0, tabIndices.length - visibleSlots);
+            int scrollOffset = Math.max(0, Math.min(creativeScrollOffset, maxOffset));
             for (int row = 0; row < layout.creativeRows; row++) {
                 for (int column = 0; column < layout.creativeColumns; column++) {
-                    int visibleIndex = row * layout.creativeColumns + column;
+                    int visibleIndex = row * layout.creativeColumns + column + scrollOffset;
                     int globalIndex = visibleIndex < tabIndices.length ? tabIndices[visibleIndex] : -1;
                     ItemStack stack = globalIndex >= 0
                         ? new ItemStack(InventoryItems.CREATIVE_ITEMS[globalIndex], 1)
@@ -3255,6 +3253,9 @@ final class OpenGlRenderer {
                         null
                     );
                 }
+            }
+            if (maxOffset > 0) {
+                drawCreativeScrollbar(layout, scrollOffset, maxOffset);
             }
         }
 
@@ -3358,20 +3359,17 @@ final class OpenGlRenderer {
         } else if (!creativeMode && inventoryScreenMode == GameConfig.INVENTORY_SCREEN_FURNACE) {
             for (UiRenderer.SlotBox slot : layout.slots) {
                 ItemStack stack = null;
-                String hint = null;
                 if (slot.ref.group == InventorySlotGroup.FURNACE_INPUT) {
                     stack = furnace == null ? null : furnace.input;
-                    hint = "I";
                 } else if (slot.ref.group == InventorySlotGroup.FURNACE_FUEL) {
                     stack = furnace == null ? null : furnace.fuel;
-                    hint = "F";
                 } else if (slot.ref.group == InventorySlotGroup.FURNACE_OUTPUT) {
                     stack = furnace == null ? null : furnace.output;
                 } else {
                     continue;
                 }
                 drawItemSlot(slot.x, slot.y, slot.size, stack, false,
-                    hovered != null && hovered.ref.group == slot.ref.group, hint);
+                    hovered != null && hovered.ref.group == slot.ref.group, null);
             }
             if (furnace != null) {
                 float barX = layout.panelX + layout.panelWidth * 0.5f - 44.0f * uiScale;
@@ -3394,18 +3392,42 @@ final class OpenGlRenderer {
             } else {
                 ItemStack tooltipStack = inventory.peekSlot(hovered.ref, creativeMode, chestContainer, furnace);
                 if (tooltipStack != null && !tooltipStack.isEmpty()) {
-                drawTooltip((float) mouseX + 14.0f, (float) mouseY + 18.0f, InventoryItems.name(tooltipStack.itemId));
+                    drawTooltip((float) mouseX + 14.0f, (float) mouseY + 18.0f, itemTooltipText(tooltipStack));
                 }
             }
         }
+    }
+
+    private String uiText(String russian, String english) {
+        return Settings.isRussian() ? russian : english;
+    }
+
+    private String itemTooltipText(ItemStack stack) {
+        String text = InventoryItems.name(stack.itemId);
+        if (InventoryItems.isDurableItem(stack.itemId)) {
+            text += "\n" + uiText("\u041f\u0440\u043e\u0447\u043d\u043e\u0441\u0442\u044c: ", "Durability: ")
+                + stack.remainingDurability() + "/" + InventoryItems.maxDurability(stack.itemId);
+        }
+        return text;
+    }
+
+    private void drawCreativeScrollbar(UiRenderer.InventoryUiLayout layout, int scrollOffset, int maxOffset) {
+        float uiScale = getInventoryUiScale();
+        float x = layout.creativeX + layout.creativeColumns * (layout.slotSize + layout.slotGap) + 5.0f * uiScale;
+        float y = layout.creativeY;
+        float height = layout.creativeRows * layout.slotSize + (layout.creativeRows - 1) * layout.slotGap;
+        float width = 3.0f * uiScale;
+        drawRect(x, y, width, height, 0.06f, 0.06f, 0.07f, 0.70f);
+        float thumbHeight = Math.max(14.0f * uiScale, height * 36.0f / (36.0f + maxOffset));
+        float thumbY = y + (height - thumbHeight) * (scrollOffset / (float) Math.max(1, maxOffset));
+        drawRect(x, thumbY, width, thumbHeight, 0.80f, 0.80f, 0.84f, 0.88f);
     }
 
     private void renderCreativeTabs(UiRenderer.InventoryUiLayout layout, int creativeTab, double mouseX, double mouseY) {
         float uiScale = getInventoryUiScale();
         float gap = 4.0f * uiScale;
         String[] tabLabels = GameConfig.creativeTabs();
-        float tabWidth = Math.min(68.0f * uiScale,
-            (layout.panelWidth - 32.0f * uiScale - gap * (tabLabels.length - 1)) / tabLabels.length);
+        float tabWidth = (layout.panelWidth - 32.0f * uiScale - gap * (tabLabels.length - 1)) / tabLabels.length;
         float tabHeight = 22.0f * uiScale;
         float totalWidth = tabWidth * tabLabels.length + gap * (tabLabels.length - 1);
         float startX = layout.panelX + layout.panelWidth * 0.5f - totalWidth * 0.5f;
@@ -3488,7 +3510,9 @@ final class OpenGlRenderer {
                     1.0f - durability, 0.32f + durability * 0.62f, 0.12f, 0.98f);
             }
         } else if (placeholder != null) {
-            drawShadowText(x + size * 0.33f, y + size * 0.62f, getUiScale() * 0.70f, placeholder, 0.66f, 0.66f, 0.70f);
+            float scale = Math.min(getUiScale() * 0.56f, size / Math.max(1.0f, measureTextWidth(placeholder, 1.0f)) * 0.70f);
+            drawShadowText(x + size * 0.5f - measureTextWidth(placeholder, scale) * 0.5f,
+                y + size * 0.62f, scale, placeholder, 0.66f, 0.66f, 0.70f);
         }
     }
 
@@ -3668,13 +3692,23 @@ final class OpenGlRenderer {
     private void drawTooltip(float x, float y, String text) {
         float uiScale = getUiScale();
         float scale = uiScale * 0.86f;
-        float width = Math.max(84.0f * uiScale, text.length() * 8.2f * scale);
-        float height = 24.0f * uiScale;
+        String[] lines = text == null ? new String[0] : text.split("\\n", -1);
+        float textWidth = 0.0f;
+        for (String line : lines) {
+            textWidth = Math.max(textWidth, measureTextWidth(line, scale));
+        }
+        float lineHeight = 15.0f * uiScale;
+        float width = Math.max(84.0f * uiScale, textWidth + 16.0f * uiScale);
+        float height = Math.max(24.0f * uiScale, 10.0f * uiScale + lineHeight * Math.max(1, lines.length));
         float clampedX = Math.min(x, framebufferWidth - width - 8.0f * uiScale);
         float clampedY = Math.min(y, framebufferHeight - height - 8.0f * uiScale);
         drawRect(clampedX, clampedY, width, height, 0.04f, 0.04f, 0.05f, 0.92f);
         drawOutline(clampedX, clampedY, width, height, 1.4f * uiScale, 0.94f, 0.94f, 0.98f, 0.94f);
-        drawShadowText(clampedX + 8.0f * uiScale, clampedY + 17.0f * uiScale, scale, text, 1.0f, 1.0f, 1.0f);
+        for (int i = 0; i < Math.max(1, lines.length); i++) {
+            String line = lines.length == 0 ? "" : lines[i];
+            drawShadowText(clampedX + 8.0f * uiScale, clampedY + 17.0f * uiScale + i * lineHeight,
+                scale, line, 1.0f, 1.0f, 1.0f);
+        }
     }
 
     private void drawOutline(float x, float y, float width, float height, float thickness, float red, float green, float blue, float alpha) {
@@ -4354,7 +4388,11 @@ final class OpenGlRenderer {
     }
 
     private UiRenderer.InventoryUiLayout buildInventoryLayout(boolean creativeMode, int creativeTab, int inventoryScreenMode) {
-        return uiRenderer.buildInventoryLayout(creativeMode, creativeTab, framebufferWidth, framebufferHeight, getInventoryUiScale(), inventoryScreenMode);
+        return buildInventoryLayout(creativeMode, creativeTab, 0, inventoryScreenMode);
+    }
+
+    private UiRenderer.InventoryUiLayout buildInventoryLayout(boolean creativeMode, int creativeTab, int creativeScrollOffset, int inventoryScreenMode) {
+        return uiRenderer.buildInventoryLayout(creativeMode, creativeTab, framebufferWidth, framebufferHeight, getInventoryUiScale(), inventoryScreenMode, creativeScrollOffset);
     }
 
     private void verifyOpenGl(String step) {

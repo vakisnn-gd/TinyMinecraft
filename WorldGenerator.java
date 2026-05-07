@@ -7,7 +7,7 @@ final class WorldGenerator {
     private static final int COLUMN_AREA = GameConfig.CHUNK_SIZE * GameConfig.CHUNK_SIZE;
     private static final Biome[] BIOMES = Biome.values();
     private static final double CONTINENT_SCALE = 0.0028;
-    private static final double CONTINENTALNESS_SCALE = 0.00155;
+    private static final double CONTINENTALNESS_SCALE = 0.00135;
     private static final double EROSION_SCALE = 0.0042;
     private static final double RIDGE_SCALE = 0.0105;
     private static final double DETAIL_SCALE = 0.036;
@@ -21,10 +21,10 @@ final class WorldGenerator {
     private static final double CAVE_ROOM_FREQUENCY = 0.0062;
     private static final int CAVE_MIN_DEPTH_BELOW_SURFACE = 6;
     private static final double CANYON_SCALE = 0.0068;
-    private static final double OCEAN_COASTLINE = -0.16;
-    private static final double COASTLINE_WIDTH = 0.120;
-    private static final int BEACH_MAX_HEIGHT_ABOVE_SEA = 2;
-    private static final int OCEAN_SAND_DEPTH = 3;
+    private static final double OCEAN_COASTLINE = -0.05;
+    private static final double COASTLINE_WIDTH = 0.085;
+    private static final int BEACH_MAX_HEIGHT_ABOVE_SEA = 1;
+    private static final int OCEAN_SAND_DEPTH = 2;
     private static final int SHORE_SAND_MIN_Y = GameConfig.SEA_LEVEL - 1;
     private static final int SHORE_SAND_MAX_Y = GameConfig.SEA_LEVEL + 4;
     private static final double RIVER_MIN_WIDTH_BLOCKS = 2.6;
@@ -36,8 +36,8 @@ final class WorldGenerator {
     private static final double LAKE_BANK_WIDTH = 0.112;
     private static final int VILLAGE_CELL_SIZE_CHUNKS = 7;
     private static final double VILLAGE_CHANCE = 0.42;
-    private static final int VILLAGE_FOUNDATION_DEPTH = 14;
-    private static final int VILLAGE_ROAD_FOUNDATION_DEPTH = 12;
+    private static final int VILLAGE_FOUNDATION_DEPTH = 8;
+    private static final int VILLAGE_ROAD_FOUNDATION_DEPTH = 6;
     private static final int VILLAGE_STRUCTURE_PROTECTION_DEPTH = 36;
     private static final int WET_RIVER_CAVE_PROTECTION_DEPTH = 28;
     private static final int VILLAGE_ROAD_HALF_WIDTH = 2;
@@ -290,7 +290,9 @@ final class WorldGenerator {
                 int z = centerZ + dz;
                 TerrainSample sample = terrainSampleAt(x, z);
                 RiverSample river = sampleRiver(x, z, sample.approximateSurfaceHeight, sampleContinentalness(x, z), sampleLakeBasin(x, z));
-                if (isAquaticTerrain(sample.terrainFlags) || (river != null && river.wet && river.mask > 0.30)) {
+                if (isAquaticTerrain(sample.terrainFlags)
+                    || (sample.terrainFlags & TERRAIN_BEACH) != 0
+                    || (river != null && river.wet && river.mask > 0.30)) {
                     return false;
                 }
                 minY = Math.min(minY, sample.approximateSurfaceHeight);
@@ -1027,12 +1029,12 @@ final class WorldGenerator {
                     boolean carveTunnel = stoneLike
                         && !protectedRoof
                         && depth >= roofDepth + 2
-                        && caveDensity > (worldY < 0 ? CAVE_TUNNEL_THRESHOLD + 0.02 : CAVE_TUNNEL_THRESHOLD + 0.08);
+                        && caveDensity > (worldY < 0 ? CAVE_TUNNEL_THRESHOLD : CAVE_TUNNEL_THRESHOLD + 0.035);
                     boolean carveRoom = stoneLike
                         && !protectedRoof
                         && worldY < 28
                         && depth >= roofDepth + 18
-                        && caveDensity > CAVE_ROOM_THRESHOLD + 0.11;
+                        && caveDensity > CAVE_ROOM_THRESHOLD + 0.045;
                     boolean carveEntrance = canCarveCaveEntranceBlock(block, entranceColumn)
                         && !aquatic
                         && worldY >= surfaceHeight - 24
@@ -1058,7 +1060,7 @@ final class WorldGenerator {
         for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
             for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
                 long caveSeed = mix64(seed ^ ((long) cellX * 544910567L) ^ ((long) cellZ * 1301081L));
-                if (randomUnit(caveSeed) > 0.66) {
+                if (randomUnit(caveSeed) > 0.76) {
                     continue;
                 }
                 int centerX = cellX * CAVE_SYSTEM_SIZE + 14 + (int) (randomUnit(caveSeed ^ 0xCAFE1L) * 36.0);
@@ -1090,7 +1092,7 @@ final class WorldGenerator {
                 for (int tunnel = 0; tunnel < tunnels; tunnel++) {
                     carveCaveTunnel(column, scratch, startX, startZ, caveSeed, centerX, centerY, centerZ, tunnel);
                 }
-                if (randomUnit(caveSeed ^ 0x33L) < 0.36) {
+                if (randomUnit(caveSeed ^ 0x33L) < 0.58) {
                     carveCaveEntrance(column, scratch, startX, startZ, caveSeed, centerX, centerY, centerZ, sample.approximateSurfaceHeight);
                 }
                 if (randomUnit(caveSeed ^ 0x44L) < 0.24) {
@@ -1792,11 +1794,11 @@ final class WorldGenerator {
                     double ironCluster = Math.abs(fractalNoise3((worldX + 40.0) * 0.138, (worldY - 18.0) * 0.126, (worldZ - 65.0) * 0.138, 2, 0.55));
                     double diamondCluster = Math.abs(fractalNoise3((worldX - 170.0) * 0.185, (worldY + 11.0) * 0.192, (worldZ + 210.0) * 0.185, 2, 0.53));
 
-                    if (worldY < 18 && diamondCluster > (worldY < -32 ? 0.78 : 0.825)) {
+                    if (worldY < 18 && diamondCluster > (worldY < -32 ? 0.755 : 0.805)) {
                         column.setBlock(worldX, worldY, worldZ, oreForHost(oreHost, GameConfig.DIAMOND_ORE));
-                    } else if (worldY < 54 && ironCluster > (worldY < 0 ? 0.755 : 0.805)) {
+                    } else if (worldY < 54 && ironCluster > (worldY < 0 ? 0.735 : 0.785)) {
                         column.setBlock(worldX, worldY, worldZ, oreForHost(oreHost, GameConfig.IRON_ORE));
-                    } else if (worldY < 72 && coalCluster > 0.735) {
+                    } else if (worldY < 72 && coalCluster > 0.710) {
                         column.setBlock(worldX, worldY, worldZ, oreForHost(oreHost, GameConfig.COAL_ORE));
                     }
                 }
@@ -1821,11 +1823,11 @@ final class WorldGenerator {
                         continue;
                     }
                     double seam = climate01(fractalNoise3((worldX + 3100.0) * 0.165, (worldY - 25.0) * 0.122, (worldZ - 2700.0) * 0.165, 2, 0.55));
-                    if (worldY < 12 && seam > 0.910) {
+                    if (worldY < 12 && seam > 0.895) {
                         column.setBlock(worldX, worldY, worldZ, oreForHost(host, GameConfig.DIAMOND_ORE));
-                    } else if (worldY < 56 && seam > 0.790) {
+                    } else if (worldY < 56 && seam > 0.760) {
                         column.setBlock(worldX, worldY, worldZ, oreForHost(host, GameConfig.IRON_ORE));
-                    } else if (worldY < 82 && seam < 0.275) {
+                    } else if (worldY < 82 && seam < 0.245) {
                         column.setBlock(worldX, worldY, worldZ, oreForHost(host, GameConfig.COAL_ORE));
                     }
                 }
@@ -1910,7 +1912,13 @@ final class WorldGenerator {
                 }
 
                 double floraNoise = fractalNoise((worldX + 120.0) * 0.120, (worldZ - 340.0) * 0.120, 2, 0.55);
-                if ((biome == Biome.FOREST || biome == Biome.RAINFOREST || biome == Biome.SEASONAL_FOREST) && floraNoise > 0.38) {
+                if ((biome == Biome.FOREST
+                    || biome == Biome.BIRCH_FOREST
+                    || biome == Biome.DARK_FOREST
+                    || biome == Biome.JUNGLE
+                    || biome == Biome.RAINFOREST
+                    || biome == Biome.SEASONAL_FOREST
+                    || biome == Biome.WOODED_HILLS) && floraNoise > 0.38) {
                     column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.TALL_GRASS);
                 } else if ((biome == Biome.PLAINS || biome == Biome.SAVANNA || biome == Biome.MEADOW) && floraNoise > 0.20) {
                     column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.TALL_GRASS);
@@ -1934,17 +1942,18 @@ final class WorldGenerator {
                 }
 
                 int beachSurfaceY = Math.max(surfaceY, GameConfig.SEA_LEVEL);
-                for (int y = surfaceY + 1; y <= Math.min(beachSurfaceY, GameConfig.WORLD_MAX_Y); y++) {
-                    byte block = column.getBlock(worldX, y, worldZ);
-                    if (block == GameConfig.AIR || GameConfig.isLiquidBlock(block) || isPlant(block)) {
-                        column.setBlock(worldX, y, worldZ, GameConfig.SAND);
+                if (surfaceY < beachSurfaceY) {
+                    for (int y = surfaceY + 1; y <= beachSurfaceY; y++) {
+                        byte block = column.getBlock(worldX, y, worldZ);
+                        if (block == GameConfig.AIR || GameConfig.isLiquidBlock(block) || isPlant(block)) {
+                            column.setBlock(worldX, y, worldZ, GameConfig.SAND);
+                        }
                     }
                 }
-
                 int bottomY = Math.max(GameConfig.WORLD_MIN_Y, beachSurfaceY - OCEAN_SAND_DEPTH);
                 for (int y = beachSurfaceY; y >= bottomY; y--) {
                     byte block = column.getBlock(worldX, y, worldZ);
-                    if (isNaturalSurfaceBlock(block) || (y >= SHORE_SAND_MIN_Y && y <= SHORE_SAND_MAX_Y)) {
+                    if (isNaturalSurfaceBlock(block)) {
                         column.setBlock(worldX, y, worldZ, GameConfig.SAND);
                     }
                 }
@@ -2101,21 +2110,24 @@ final class WorldGenerator {
         double detail = fractalNoise((worldX + 120.0) * DETAIL_SCALE, (worldZ - 290.0) * DETAIL_SCALE, 3, 0.46);
 
         double landBlend = smoothstep(OCEAN_COASTLINE - COASTLINE_WIDTH, OCEAN_COASTLINE + COASTLINE_WIDTH, continentalness);
-        double inland = smoothstep(OCEAN_COASTLINE + 0.07, 0.40, continentalness);
-        double oceanDepth = smoothstep(OCEAN_COASTLINE - 0.05, -0.72, continentalness);
+        double inland = smoothstep(OCEAN_COASTLINE + 0.10, 0.42, continentalness);
+        double oceanDepth = smoothstep(OCEAN_COASTLINE - 0.12, -0.72, continentalness);
+        double coastalShelf = smoothstep(OCEAN_COASTLINE - 0.22, OCEAN_COASTLINE - 0.04, continentalness)
+            * (1.0 - smoothstep(OCEAN_COASTLINE + 0.02, OCEAN_COASTLINE + 0.12, continentalness));
 
         double oceanHeight = GameConfig.SEA_LEVEL - 12.0
-            - oceanDepth * 34.0
-            + erosion * 2.2
-            + detail * 1.0;
-        double shoreLift = smoothstep(OCEAN_COASTLINE + 0.02, OCEAN_COASTLINE + 0.22, continentalness) * 2.4;
+            - oceanDepth * 30.0
+            + coastalShelf * 5.0
+            + erosion * 1.5
+            + detail * 0.7;
+        double shoreLift = smoothstep(OCEAN_COASTLINE + 0.02, OCEAN_COASTLINE + 0.26, continentalness) * 1.8;
         double landHeight = GameConfig.SEA_LEVEL + 4.0
             + shoreLift
             + inland * biome.continentAmplitude * 0.48
-            + continentRelief * biome.erosionAmplitude * 0.45
-            + erosion * biome.erosionAmplitude * 0.42
+            + continentRelief * biome.erosionAmplitude * (0.34 + inland * 0.11)
+            + erosion * biome.erosionAmplitude * (0.30 + inland * 0.12)
             + ridges * ridges * biome.ridgeAmplitude * (0.16 + inland * 0.34)
-            + detail * biome.detailAmplitude * 0.55;
+            + detail * biome.detailAmplitude * (0.36 + inland * 0.19);
 
         double baseHeight = lerp(oceanHeight, landHeight, landBlend);
         if (continentalness > OCEAN_COASTLINE + 0.26 && lakeBasin < LAKE_BANK_WIDTH) {
@@ -2170,14 +2182,16 @@ final class WorldGenerator {
         if (lake) {
             return TERRAIN_LAKE;
         }
-        if (continentalness < OCEAN_COASTLINE || surfaceHeight < GameConfig.SEA_LEVEL) {
+        if (continentalness < OCEAN_COASTLINE) {
             return TERRAIN_OCEAN;
         }
 
-        boolean shorelineHeight = surfaceHeight >= GameConfig.SEA_LEVEL - 1
+        boolean shorelineHeight = surfaceHeight >= GameConfig.SEA_LEVEL - 3
             && surfaceHeight <= GameConfig.SEA_LEVEL + BEACH_MAX_HEIGHT_ABOVE_SEA;
-        boolean coastline = continentalness <= OCEAN_COASTLINE + COASTLINE_WIDTH;
-        if (shorelineHeight && coastline) {
+        boolean oceanCoastline = continentalness >= OCEAN_COASTLINE
+            && continentalness <= OCEAN_COASTLINE + COASTLINE_WIDTH
+            && lakeBasin >= LAKE_BANK_WIDTH;
+        if (shorelineHeight && oceanCoastline) {
             return TERRAIN_BEACH;
         }
 
@@ -2268,13 +2282,20 @@ final class WorldGenerator {
         );
         double highland = climate01(fractalNoise((worldX - 2140.0) * 0.0018, (worldZ + 990.0) * 0.0018, 4, 0.56));
         double ridgeGate = Math.abs(fractalNoise((worldX + 750.0) * 0.0048, (worldZ - 1180.0) * 0.0048, 3, 0.55));
+        double weirdness = climate01(fractalNoise((worldX + 150.0) * 0.0034, (worldZ - 2060.0) * 0.0034, 3, 0.57));
         if (highland > 0.79 && ridgeGate > 0.22 && temperature < 0.78 && humidity > 0.18) {
             return Biome.MOUNTAINS;
+        }
+        if (highland > 0.70 && temperature < 0.54 && humidity > 0.44) {
+            return Biome.GROVE;
+        }
+        if (highland > 0.68 && humidity > 0.42 && weirdness > 0.62) {
+            return Biome.WOODED_HILLS;
         }
         if (highland > 0.66 && temperature > 0.42 && temperature < 0.76 && humidity > 0.34 && humidity < 0.72) {
             return Biome.MEADOW;
         }
-        return betaBiomeFromClimate(temperature, humidity);
+        return betaBiomeFromClimate(temperature, humidity, weirdness);
     }
 
     String debugBiomeName(int worldX, int worldZ) {
@@ -2337,7 +2358,7 @@ final class WorldGenerator {
         double density = densitySampler.sampleTerrainDensity(worldX, worldY, worldZ, sample);
         double cave = densitySampler.sampleCaveDensity(worldX, worldY, worldZ);
         int depthBelowSurface = sample.approximateSurfaceHeight - worldY;
-        double openThreshold = CAVE_TUNNEL_THRESHOLD + smoothstep(-4.0, GameConfig.WORLD_MIN_Y + 18.0, worldY) * 0.12;
+        double openThreshold = CAVE_TUNNEL_THRESHOLD + smoothstep(-4.0, GameConfig.WORLD_MIN_Y + 18.0, worldY) * 0.065;
         return "density=" + formatDebug(density)
             + " approx=" + sample.approximateSurfaceHeight
             + " caveDensity=" + formatDebug(cave)
@@ -2390,10 +2411,15 @@ final class WorldGenerator {
 
     private boolean biomeSupportsTrees(Biome biome) {
         return biome == Biome.RAINFOREST
+            || biome == Biome.JUNGLE
             || biome == Biome.SEASONAL_FOREST
             || biome == Biome.FOREST
+            || biome == Biome.BIRCH_FOREST
+            || biome == Biome.DARK_FOREST
             || biome == Biome.SWAMPLAND
             || biome == Biome.TAIGA
+            || biome == Biome.GROVE
+            || biome == Biome.WOODED_HILLS
             || biome == Biome.MOUNTAINS
             || biome == Biome.MEADOW
             || biome == Biome.PLAINS;
@@ -2403,7 +2429,8 @@ final class WorldGenerator {
         if (biome.snowCovered) {
             return true;
         }
-        return biome == Biome.MOUNTAINS && sampleSurfaceHeight(worldX, worldZ, biome) > GameConfig.SEA_LEVEL + 54;
+        return (biome == Biome.MOUNTAINS || biome == Biome.GROVE)
+            && sampleSurfaceHeight(worldX, worldZ, biome) > GameConfig.SEA_LEVEL + 54;
     }
 
     private boolean canSupportSnow(byte block) {
@@ -2485,15 +2512,24 @@ final class WorldGenerator {
 
     private double treeChanceForBiome(Biome biome) {
         switch (biome) {
+            case JUNGLE:
+                return 0.175;
             case RAINFOREST:
                 return 0.145;
+            case DARK_FOREST:
+                return 0.155;
             case FOREST:
             case SEASONAL_FOREST:
                 return 0.110;
+            case BIRCH_FOREST:
+                return 0.082;
             case SWAMPLAND:
                 return 0.060;
+            case GROVE:
             case TAIGA:
                 return 0.085;
+            case WOODED_HILLS:
+                return 0.070;
             case MOUNTAINS:
                 return 0.020;
             case MEADOW:
@@ -2505,16 +2541,22 @@ final class WorldGenerator {
         }
     }
 
-    private Biome betaBiomeFromClimate(double temperature, double humidity) {
+    private Biome betaBiomeFromClimate(double temperature, double humidity, double weirdness) {
         double adjustedHumidity = humidity * temperature;
         if (temperature < 0.12) {
             return humidity < 0.10 ? Biome.ICE_DESERT : Biome.TUNDRA;
         }
+        if (temperature < 0.34 && humidity > 0.46 && weirdness > 0.56) {
+            return Biome.GROVE;
+        }
         if (temperature > 0.92 && humidity < 0.12) {
-            return Biome.DESERT;
+            return weirdness > 0.60 ? Biome.BADLANDS : Biome.DESERT;
         }
         if (humidity < 0.24) {
             return temperature > 0.58 ? Biome.SAVANNA : Biome.SHRUBLAND;
+        }
+        if (temperature > 0.82 && humidity > 0.78) {
+            return weirdness > 0.42 ? Biome.JUNGLE : Biome.RAINFOREST;
         }
         if (adjustedHumidity > 0.52 && temperature < 0.68) {
             return Biome.SWAMPLAND;
@@ -2523,6 +2565,12 @@ final class WorldGenerator {
             return Biome.TAIGA;
         }
         if (temperature < 0.82) {
+            if (humidity > 0.62 && weirdness > 0.55) {
+                return Biome.DARK_FOREST;
+            }
+            if (humidity > 0.36 && humidity < 0.66 && weirdness < 0.30) {
+                return Biome.BIRCH_FOREST;
+            }
             if (humidity < 0.38) {
                 return Biome.SHRUBLAND;
             }
@@ -2574,9 +2622,14 @@ final class WorldGenerator {
 
     private boolean isForestLikeBiome(Biome biome) {
         return biome == Biome.FOREST
+            || biome == Biome.BIRCH_FOREST
+            || biome == Biome.DARK_FOREST
+            || biome == Biome.JUNGLE
             || biome == Biome.RAINFOREST
             || biome == Biome.SEASONAL_FOREST
             || biome == Biome.TAIGA
+            || biome == Biome.GROVE
+            || biome == Biome.WOODED_HILLS
             || biome == Biome.SWAMPLAND;
     }
 
@@ -2610,7 +2663,7 @@ final class WorldGenerator {
         }
         double mouthLine = Math.abs(fractalNoise((worldX - 1600.0) * CAVE_ENTRANCE_SCALE, (worldZ + 1440.0) * CAVE_ENTRANCE_SCALE, 2, 0.55));
         double mouthGate = climate01(fractalNoise((worldX + 420.0) * 0.012, (worldZ - 610.0) * 0.012, 2, 0.56));
-        return mouthLine < 0.046 && mouthGate > 0.64;
+        return mouthLine < 0.064 && mouthGate > 0.56;
     }
 
     private boolean shouldCarveCaveEntrance(int worldX, int worldY, int worldZ, int surfaceHeight) {
@@ -2618,7 +2671,7 @@ final class WorldGenerator {
         if (depth < 0 || depth > 18) {
             return false;
         }
-        double taper = lerp(0.042, 0.104, depth / 18.0);
+        double taper = lerp(0.055, 0.128, depth / 18.0);
         double throat = Math.abs(fractalNoise3((worldX + 2100.0) * 0.034, (worldY + 70.0) * 0.058, (worldZ - 1900.0) * 0.034, 2, 0.52));
         return throat < taper;
     }
@@ -2735,7 +2788,7 @@ final class WorldGenerator {
                     if (isGeneratedSandSupport(support)) {
                         continue;
                     }
-                    column.setBlock(worldX, worldY, worldZ, beachSandFallbackBlock(worldY));
+                    column.setBlock(worldX, worldY, worldZ, GameConfig.AIR);
                 }
             }
         }
@@ -2750,12 +2803,6 @@ final class WorldGenerator {
             || block == GameConfig.STONE
             || block == GameConfig.DEEPSLATE
             || block == GameConfig.CLAY;
-    }
-
-    private byte beachSandFallbackBlock(int worldY) {
-        return worldY >= SHORE_SAND_MIN_Y && worldY <= SHORE_SAND_MAX_Y
-            ? GameConfig.DIRT
-            : baseStoneForY(worldY);
     }
 
     private void stabilizeRiverBanks(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
@@ -3018,15 +3065,21 @@ final class WorldGenerator {
 
     private enum Biome {
         RAINFOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 18.0, 8.0, 9.0, 4.2, 0.10, false, false),
+        JUNGLE(GameConfig.GRASS, GameConfig.DIRT, 5, 20.0, 9.0, 12.0, 4.8, 0.11, false, false),
         SWAMPLAND(GameConfig.GRASS, GameConfig.DIRT, 5, 13.0, 5.0, 4.0, 2.0, 0.04, false, false),
         SEASONAL_FOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 17.0, 7.0, 8.0, 3.5, 0.10, false, false),
         FOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 18.0, 8.0, 10.0, 4.0, 0.12, false, false),
+        BIRCH_FOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 16.0, 6.0, 7.0, 3.0, 0.08, false, false),
+        DARK_FOREST(GameConfig.GRASS, GameConfig.DIRT, 5, 17.0, 7.5, 8.0, 2.7, 0.06, false, false),
         SAVANNA(GameConfig.GRASS, GameConfig.DIRT, 4, 16.0, 6.0, 4.0, 2.4, 0.05, false, false),
         SHRUBLAND(GameConfig.GRASS, GameConfig.DIRT, 4, 15.0, 6.0, 5.0, 2.6, 0.06, false, false),
         TAIGA(GameConfig.GRASS, GameConfig.DIRT, 5, 17.0, 7.0, 11.0, 3.4, 0.14, true, true),
+        GROVE(GameConfig.GRASS, GameConfig.DIRT, 5, 18.0, 7.0, 12.0, 3.0, 0.10, true, true),
         MOUNTAINS(GameConfig.GRASS, GameConfig.DIRT, 4, 34.0, 16.0, 36.0, 7.0, 0.12, false, true),
+        WOODED_HILLS(GameConfig.GRASS, GameConfig.DIRT, 4, 25.0, 11.0, 22.0, 5.2, 0.13, false, false),
         MEADOW(GameConfig.GRASS, GameConfig.DIRT, 4, 19.0, 5.0, 8.0, 2.8, 0.04, false, false),
         DESERT(GameConfig.SAND, GameConfig.SAND, 4, 16.0, 7.0, 5.0, 2.8, 0.05, false, false),
+        BADLANDS(GameConfig.SAND, GameConfig.SAND, 3, 22.0, 10.0, 18.0, 4.5, 0.16, false, false),
         PLAINS(GameConfig.GRASS, GameConfig.DIRT, 4, 16.0, 7.0, 8.0, 3.0, 0.18, false, false),
         ICE_DESERT(GameConfig.SAND, GameConfig.SAND, 4, 12.0, 4.0, 3.0, 1.8, 0.04, true, false),
         TUNDRA(GameConfig.GRASS, GameConfig.DIRT, 4, 14.0, 5.0, 4.0, 2.0, 0.05, true, false);
@@ -3084,7 +3137,7 @@ final class WorldGenerator {
             }
             double cave = sampleCaveDensity(worldX, worldY, worldZ);
             boolean protectedAquaticRoof = isAquaticTerrain(sample.terrainFlags) && surfaceDepth < naturalRoofDepth + 8;
-            double deepTightening = smoothstep(-4.0, GameConfig.WORLD_MIN_Y + 18.0, worldY) * 0.12;
+            double deepTightening = smoothstep(-4.0, GameConfig.WORLD_MIN_Y + 18.0, worldY) * 0.065;
             double openThreshold = CAVE_TUNNEL_THRESHOLD + deepTightening;
             if (!protectedAquaticRoof && cave > openThreshold && worldY > GameConfig.WORLD_MIN_Y + 7) {
                 density = Math.min(density, -4.0 - cave * 4.0);
@@ -3117,7 +3170,7 @@ final class WorldGenerator {
             double roomNoise = climate01(fractalNoise3((x - 940.0) * CAVE_ROOM_FREQUENCY, (y + 70.0) * (CAVE_ROOM_FREQUENCY * 1.36), (z + 610.0) * CAVE_ROOM_FREQUENCY, 3, 0.56));
             double roomBand = smoothstep(GameConfig.SEA_LEVEL + 2.0, GameConfig.SEA_LEVEL - 34.0, y)
                 * (1.0 - smoothstep(-30.0, GameConfig.WORLD_MIN_Y + 12.0, y));
-            double roomOpen = smoothstep(CAVE_ROOM_THRESHOLD + 0.03, 0.98, roomNoise) * roomBand * 0.16;
+            double roomOpen = smoothstep(CAVE_ROOM_THRESHOLD - 0.01, 0.98, roomNoise) * roomBand * 0.20;
             return clamp(Math.max(tunnelOpen * depthFactor * 1.08, roomOpen) + upperCaveBonus * 0.65, 0.0, 1.0);
         }
     }
