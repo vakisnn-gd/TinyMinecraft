@@ -300,7 +300,7 @@ final class WorldGenerator {
                 samples++;
             }
         }
-        return samples > 0 && maxY - minY <= 5 && Math.abs(baseY - ((minY + maxY) / 2)) <= 3;
+        return samples > 0 && maxY - minY <= 3 && Math.abs(baseY - ((minY + maxY) / 2)) <= 2;
     }
 
     private boolean isNaturalVillageClearing(int centerX, int centerZ) {
@@ -528,10 +528,40 @@ final class WorldGenerator {
                 stabilizeVillageColumn(column, x, z, groundY, VILLAGE_FOUNDATION_DEPTH, GameConfig.GRASS, clearHeight);
             }
         }
+        featherVillageArea(column, originX, originZ, width, depth, groundY);
+    }
+
+    private void featherVillageArea(GeneratedChunkColumn column, int originX, int originZ, int width, int depth, int groundY) {
+        final int margin = 4;
+        for (int x = originX - margin; x < originX + width + margin; x++) {
+            for (int z = originZ - margin; z < originZ + depth + margin; z++) {
+                if (!isInColumn(column, x, z) || inRect(x, z, originX, originZ, width, depth)) {
+                    continue;
+                }
+                int outside = distanceOutsideRect(x, z, originX, originZ, width, depth);
+                if (outside <= 0 || outside > margin) {
+                    continue;
+                }
+                int surfaceY = findSurface(column, x, z);
+                if (surfaceY <= GameConfig.WORLD_MIN_Y || Math.abs(surfaceY - groundY) > 8) {
+                    continue;
+                }
+                double blend = outside / (double) (margin + 1);
+                int targetY = (int) Math.round(lerp(groundY, surfaceY, blend));
+                stabilizeVillageColumn(column, x, z, targetY, 5, GameConfig.GRASS, 1);
+            }
+        }
+    }
+
+    private int distanceOutsideRect(int x, int z, int originX, int originZ, int width, int depth) {
+        int dx = x < originX ? originX - x : (x >= originX + width ? x - (originX + width - 1) : 0);
+        int dz = z < originZ ? originZ - z : (z >= originZ + depth ? z - (originZ + depth - 1) : 0);
+        return Math.max(dx, dz);
     }
 
     private void stabilizeVillageColumn(GeneratedChunkColumn column, int x, int z, int groundY, int foundationDepth, byte surfaceBlock, int clearHeight) {
         int bottomY = Math.max(GameConfig.WORLD_MIN_Y + 1, groundY - foundationDepth);
+        int surfaceY = findSurface(column, x, z);
         for (int y = bottomY; y < groundY; y++) {
             byte block = column.getBlock(x, y, z);
             if (shouldReplaceVillageFoundation(block)) {
@@ -539,7 +569,8 @@ final class WorldGenerator {
             }
         }
         setStructureBlock(column, x, groundY, z, surfaceBlock);
-        for (int y = groundY + 1; y <= Math.min(GameConfig.WORLD_MAX_Y, groundY + clearHeight); y++) {
+        int clearTop = Math.max(groundY + clearHeight, surfaceY + clearHeight);
+        for (int y = groundY + 1; y <= Math.min(GameConfig.WORLD_MAX_Y, clearTop); y++) {
             setStructureBlock(column, x, y, z, GameConfig.AIR);
         }
     }
@@ -3316,7 +3347,9 @@ final class GeneratedChunkColumn implements StructureTemplates.Target {
     }
 
     byte getBlock(int worldX, int worldY, int worldZ) {
-        if (!GameConfig.isWorldYInside(worldY)) {
+        if (!GameConfig.isWorldYInside(worldY)
+            || Math.floorDiv(worldX, GameConfig.CHUNK_SIZE) != chunkX
+            || Math.floorDiv(worldZ, GameConfig.CHUNK_SIZE) != chunkZ) {
             return GameConfig.AIR;
         }
         int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
@@ -3327,7 +3360,9 @@ final class GeneratedChunkColumn implements StructureTemplates.Target {
     }
 
     void setBlock(int worldX, int worldY, int worldZ, byte block) {
-        if (!GameConfig.isWorldYInside(worldY)) {
+        if (!GameConfig.isWorldYInside(worldY)
+            || Math.floorDiv(worldX, GameConfig.CHUNK_SIZE) != chunkX
+            || Math.floorDiv(worldZ, GameConfig.CHUNK_SIZE) != chunkZ) {
             return;
         }
         int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);
@@ -3362,7 +3397,9 @@ final class GeneratedChunkColumn implements StructureTemplates.Target {
     }
 
     BlockState getBlockState(int worldX, int worldY, int worldZ) {
-        if (!GameConfig.isWorldYInside(worldY)) {
+        if (!GameConfig.isWorldYInside(worldY)
+            || Math.floorDiv(worldX, GameConfig.CHUNK_SIZE) != chunkX
+            || Math.floorDiv(worldZ, GameConfig.CHUNK_SIZE) != chunkZ) {
             return Blocks.stateFromLegacyId(GameConfig.AIR);
         }
         int localX = Math.floorMod(worldX, GameConfig.CHUNK_SIZE);

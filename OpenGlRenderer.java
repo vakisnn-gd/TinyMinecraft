@@ -1341,7 +1341,9 @@ final class OpenGlRenderer {
             brightness *= 0.88f;
         }
         float alpha = 1.0f;
-        if (block == GameConfig.SEAGRASS) {
+        if (block == GameConfig.GLASS) {
+            alpha = 0.36f;
+        } else if (block == GameConfig.SEAGRASS) {
             alpha = 0.72f;
         } else if (GameConfig.isWaterBlock(block)) {
             alpha = 0.60f;
