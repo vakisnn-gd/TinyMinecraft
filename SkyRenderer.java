@@ -89,16 +89,16 @@ final class SkyRenderer {
         for (int cellX = baseCellX - GameConfig.CLOUD_RENDER_RADIUS; cellX <= baseCellX + GameConfig.CLOUD_RENDER_RADIUS; cellX++) {
             for (int cellZ = baseCellZ - GameConfig.CLOUD_RENDER_RADIUS; cellZ <= baseCellZ + GameConfig.CLOUD_RENDER_RADIUS; cellZ++) {
                 double density = hash01(cellX, cellZ, 11);
-                if (density < 0.64) {
+                if (density < 0.58) {
                     continue;
                 }
 
-                double centerX = cellX * GameConfig.CLOUD_CELL_SIZE - cloudDriftOffset + (hash01(cellX, cellZ, 17) - 0.5) * 12.0 - renderCameraX;
-                double centerZ = cellZ * GameConfig.CLOUD_CELL_SIZE + (hash01(cellX, cellZ, 23) - 0.5) * 12.0 - renderCameraZ;
-                double centerY = GameConfig.CLOUD_LAYER_BASE_HEIGHT + hash01(cellX, cellZ, 29) * 4.5 - renderCameraY;
-                double width = 18.0 + hash01(cellX, cellZ, 31) * 18.0;
-                double depth = 12.0 + hash01(cellX, cellZ, 37) * 14.0;
-                double thickness = 2.0 + hash01(cellX, cellZ, 41) * 1.8;
+                double centerX = cellX * GameConfig.CLOUD_CELL_SIZE - cloudDriftOffset + (hash01(cellX, cellZ, 17) - 0.5) * 18.0 - renderCameraX;
+                double centerZ = cellZ * GameConfig.CLOUD_CELL_SIZE + (hash01(cellX, cellZ, 23) - 0.5) * 18.0 - renderCameraZ;
+                double centerY = GameConfig.CLOUD_LAYER_BASE_HEIGHT + hash01(cellX, cellZ, 29) * 5.0 - renderCameraY;
+                double width = 30.0 + hash01(cellX, cellZ, 31) * 30.0;
+                double depth = 20.0 + hash01(cellX, cellZ, 37) * 24.0;
+                double thickness = 2.4 + hash01(cellX, cellZ, 41) * 2.4;
 
                 renderCloudPuff(
                     centerX - width * 0.5,
@@ -111,16 +111,16 @@ final class SkyRenderer {
                     alpha
                 );
 
-                if (density > 0.78) {
-                    double offsetX = (hash01(cellX, cellZ, 43) - 0.5) * 11.0;
-                    double offsetZ = (hash01(cellX, cellZ, 47) - 0.5) * 11.0;
+                if (density > 0.72) {
+                    double offsetX = (hash01(cellX, cellZ, 43) - 0.5) * 18.0;
+                    double offsetZ = (hash01(cellX, cellZ, 47) - 0.5) * 18.0;
                     renderCloudPuff(
-                        centerX - width * 0.42 + offsetX,
+                        centerX - width * 0.45 + offsetX,
                         centerY + 0.3,
-                        centerZ - depth * 0.36 + offsetZ,
-                        centerX + width * 0.42 + offsetX,
+                        centerZ - depth * 0.40 + offsetZ,
+                        centerX + width * 0.45 + offsetX,
                         centerY + thickness + 0.5,
-                        centerZ + depth * 0.36 + offsetZ,
+                        centerZ + depth * 0.40 + offsetZ,
                         daylightFactor,
                         alpha * 0.86f
                     );

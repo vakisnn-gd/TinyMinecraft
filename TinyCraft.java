@@ -98,6 +98,7 @@ public class TinyCraft {
     private final OpenGlRenderer renderer = new OpenGlRenderer(world);
     private final AudioEngine audio = new AudioEngine();
     private final PlayerInventory inventory = new PlayerInventory();
+    private final PlayerState renderPlayer = new PlayerState();
     private final Random ambientRandom = new Random();
     private final ArrayList<WorldInfo> availableWorlds = new ArrayList<>();
     private final MutableVec3 playerFluidFlow = new MutableVec3();
@@ -159,6 +160,7 @@ public class TinyCraft {
     private int currentWorldDifficulty = 2;
     private int renderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
     private int fovDegrees = (int) GameConfig.FOV_DEGREES;
+    private int maxFps = 144;
     private boolean optionsOpenedFromPause;
     private byte selectedBlock = GameConfig.GRASS;
     private String createWorldName = "New World";
@@ -179,6 +181,11 @@ public class TinyCraft {
     private double lastCreativeJumpTapTime = -1.0;
     private double waterAmbientCooldown;
     private double lastWorldSlotClickTime = -1.0;
+    private double simulationAccumulator;
+    private double previousPlayerX;
+    private double previousPlayerY;
+    private double previousPlayerZ;
+    private boolean interpolationInitialized;
     private String loadedWorldName;
     private int lastWorldSlotClickIndex = -1;
 
@@ -318,8 +325,8 @@ public class TinyCraft {
         }
 
         glfwDefaultWindowHints();
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
@@ -346,7 +353,7 @@ public class TinyCraft {
         if (window == NULL) {
             throw new IllegalStateException("Window handle is invalid");
         }
-        glfwSwapInterval(1);
+        glfwSwapInterval(0);
         glfwShowWindow(window);
 
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -975,7 +982,7 @@ public class TinyCraft {
                 RayHit hit = world.raycastBlock(player);
                 boolean shiftDown = (mods & GLFW_MOD_SHIFT) != 0;
                 if (world.interactBlock(hit, player, shiftDown)) {
-                    renderer.rebuildChunkSectionAroundBlock(hit.x, hit.y, hit.z);
+                    renderer.forceRebuildBlockEdit(hit.x, hit.y, hit.z);
                     return;
                 }
                 if (hit != null && !shiftDown) {
@@ -1020,7 +1027,7 @@ public class TinyCraft {
                         inventory.consumeSelectedItem(selectedSlot);
                         syncSelectedHotbarItem();
                     }
-                    renderer.rebuildChunkSectionAroundBlock(hit.previousX, hit.previousY, hit.previousZ);
+                    renderer.forceRebuildBlockEdit(hit.previousX, hit.previousY, hit.previousZ);
                 }
             }
         });
@@ -1038,53 +1045,35 @@ public class TinyCraft {
             renderer.updateFramebufferSize(window);
 
             boolean simulateWorld = shouldRunWorldSimulation();
-            long worldStartNs = System.nanoTime();
+            long simulationStartNs = System.nanoTime();
+            long simulationNs = 0L;
             if (simulateWorld) {
-                world.setRenderDistanceChunks(renderDistanceChunks);
-                world.advanceWorldTime(deltaTime);
-                world.prepareForPlayer(player);
-                updatePlayerArmorProtection();
-                updatePlayer(deltaTime);
-                world.updateDroppedItems(player, inventory, deltaTime);
-                world.updateZombies(player, deltaTime);
-                if (!deathScreenActive && !creativeMode && !spectatorMode && player.health <= 0) {
-                    enterDeathScreen();
+                simulationAccumulator = Math.min(simulationAccumulator + deltaTime, GameConfig.GAME_TICK_SECONDS * 4.0);
+                int ticksThisFrame = 0;
+                while (simulationAccumulator >= GameConfig.GAME_TICK_SECONDS && ticksThisFrame < 3) {
+                    runWorldSimulationTick(GameConfig.GAME_TICK_SECONDS);
+                    simulationAccumulator -= GameConfig.GAME_TICK_SECONDS;
+                    ticksThisFrame++;
                 }
-                for (Zombie zombie : world.getZombies()) {
-                    if (zombie.growlQueued) {
-                        audio.playMobAmbient(zombie.kind, zombie.x, zombie.y + 1.4, zombie.z);
-                        zombie.growlQueued = false;
-                    }
-                    if (zombie.splashQueued) {
-                        audio.playSplash(zombie.x, zombie.y + 0.3, zombie.z);
-                        zombie.splashQueued = false;
-                    }
-                }
-                ColumnUpdateList dirtyColumns = world.updateWorldTicks(player, deltaTime);
-                for (int i = 0; i < dirtyColumns.size(); i++) {
-                    renderer.rebuildChunkSectionAroundBlock(dirtyColumns.xAt(i), dirtyColumns.yAt(i), dirtyColumns.zAt(i));
-                }
-                updateWaterAmbientAudio(deltaTime);
-                if (!inventoryOpen && !chat.isActive() && !deathScreenActive && !mainMenuActive && !spectatorMode) {
-                    hoveredBlock = world.raycastBlock(player);
-                    updateBlockInteraction(deltaTime);
-                } else {
-                    hoveredBlock = null;
-                    resetBreakingProgress();
+                if (ticksThisFrame == 3 && simulationAccumulator >= GameConfig.GAME_TICK_SECONDS) {
+                    simulationAccumulator = 0.0;
                 }
             }
             player.handSwingTimer = Math.max(0.0, player.handSwingTimer - deltaTime);
             if (!simulateWorld) {
+                simulationAccumulator = 0.0;
                 hoveredBlock = null;
                 resetBreakingProgress();
             }
+            simulationNs = System.nanoTime() - simulationStartNs;
+            PlayerState framePlayer = interpolatedPlayerForRender(simulateWorld);
 
             long renderStartNs = System.nanoTime();
             audio.updateListener(player);
             boolean sprinting = shouldRunWorldSimulation() && sprint && player.hunger > 6 && (forward || backward || left || right);
             renderer.setChunkBordersEnabled(showChunkBorders);
             renderer.render(
-                player,
+                framePlayer,
                 inventory,
                 hoveredBlock,
                 currentBreakingHit(),
@@ -1129,18 +1118,159 @@ public class TinyCraft {
                 mouseX,
                 mouseY,
                 deltaTime,
+                currentPartialTicks(simulateWorld),
                 chat
             );
             long frameEndNs = System.nanoTime();
             glfwSwapBuffers(window);
             frameProfiler.recordFrame(
                 deltaTime,
-                worldStartNs - updateStartNs,
-                renderStartNs - worldStartNs,
+                simulationStartNs - updateStartNs,
+                simulationNs,
                 frameEndNs - renderStartNs,
                 0L
             );
+            limitFrameRate(now);
         }
+    }
+
+    private void limitFrameRate(double frameStartSeconds) {
+        if (maxFps <= 0) {
+            return;
+        }
+        double targetFrameSeconds = 1.0 / maxFps;
+        while (true) {
+            double remaining = targetFrameSeconds - (glfwGetTime() - frameStartSeconds);
+            if (remaining <= 0.0005) {
+                break;
+            }
+            long sleepMillis = Math.max(0L, (long) ((remaining - 0.0003) * 1000.0));
+            if (sleepMillis > 0L) {
+                sleepQuietly(sleepMillis);
+            } else {
+                Thread.yield();
+            }
+        }
+    }
+
+    private void runWorldSimulationTick(double tickDelta) {
+        capturePreviousPlayerForInterpolation();
+        capturePreviousEntityPositions();
+        world.setRenderDistanceChunks(renderDistanceChunks);
+        world.advanceWorldTime(tickDelta);
+        world.prepareForPlayer(player);
+        updatePlayerArmorProtection();
+        updatePlayer(tickDelta);
+        world.updateDroppedItems(player, inventory, tickDelta);
+        world.updateZombies(player, tickDelta);
+        if (!deathScreenActive && !creativeMode && !spectatorMode && player.health <= 0) {
+            enterDeathScreen();
+        }
+        for (Zombie zombie : world.getZombies()) {
+            if (zombie.growlQueued) {
+                audio.playMobAmbient(zombie.kind, zombie.x, zombie.y + 1.4, zombie.z);
+                zombie.growlQueued = false;
+            }
+            if (zombie.splashQueued) {
+                audio.playSplash(zombie.x, zombie.y + 0.3, zombie.z);
+                zombie.splashQueued = false;
+            }
+        }
+        ColumnUpdateList dirtyColumns = world.updateWorldTicks(player, tickDelta);
+        for (int i = 0; i < dirtyColumns.size(); i++) {
+            renderer.rebuildChunkSectionAroundBlockThrottled(dirtyColumns.xAt(i), dirtyColumns.yAt(i), dirtyColumns.zAt(i));
+        }
+        updateWaterAmbientAudio(tickDelta);
+        if (!inventoryOpen && !chat.isActive() && !deathScreenActive && !mainMenuActive && !spectatorMode) {
+            hoveredBlock = world.raycastBlock(player);
+            updateBlockInteraction(tickDelta);
+        } else {
+            hoveredBlock = null;
+            resetBreakingProgress();
+        }
+    }
+
+    private void capturePreviousEntityPositions() {
+        for (Zombie zombie : world.getZombies()) {
+            zombie.capturePreviousPosition();
+        }
+        for (DroppedItem droppedItem : world.getDroppedItems()) {
+            droppedItem.capturePreviousPosition();
+        }
+        for (FallingBlock fallingBlock : world.getFallingBlocks()) {
+            fallingBlock.capturePreviousPosition();
+        }
+    }
+
+    private void capturePreviousPlayerForInterpolation() {
+        previousPlayerX = player.x;
+        previousPlayerY = player.y;
+        previousPlayerZ = player.z;
+        interpolationInitialized = true;
+    }
+
+    private PlayerState interpolatedPlayerForRender(boolean simulateWorld) {
+        if (!interpolationInitialized || !simulateWorld) {
+            resetRenderInterpolation();
+        }
+        copyPlayerState(player, renderPlayer);
+        double partialTicks = currentPartialTicks(simulateWorld);
+        renderPlayer.x = lerp(previousPlayerX, player.x, partialTicks);
+        renderPlayer.y = lerp(previousPlayerY, player.y, partialTicks);
+        renderPlayer.z = lerp(previousPlayerZ, player.z, partialTicks);
+        return renderPlayer;
+    }
+
+    private double currentPartialTicks(boolean simulateWorld) {
+        return simulateWorld ? clamp(simulationAccumulator / GameConfig.GAME_TICK_SECONDS, 0.0, 1.0) : 1.0;
+    }
+
+    private void resetRenderInterpolation() {
+        previousPlayerX = player.x;
+        previousPlayerY = player.y;
+        previousPlayerZ = player.z;
+        interpolationInitialized = true;
+    }
+
+    private void copyPlayerState(PlayerState source, PlayerState target) {
+        target.x = source.x;
+        target.y = source.y;
+        target.z = source.z;
+        target.velocityX = source.velocityX;
+        target.velocityZ = source.velocityZ;
+        target.verticalVelocity = source.verticalVelocity;
+        target.fallDistance = source.fallDistance;
+        target.isGrounded = source.isGrounded;
+        target.stepTimer = source.stepTimer;
+        target.health = source.health;
+        target.airUnits = source.airUnits;
+        target.airUnitTimer = source.airUnitTimer;
+        target.drowningTimer = source.drowningTimer;
+        target.lavaDamageTimer = source.lavaDamageTimer;
+        target.fireTimer = source.fireTimer;
+        target.fireDamageTimer = source.fireDamageTimer;
+        target.wasInWater = source.wasInWater;
+        target.yaw = source.yaw;
+        target.pitch = source.pitch;
+        target.cameraBobPhase = source.cameraBobPhase;
+        target.cameraBobAmount = source.cameraBobAmount;
+        target.handSwingTimer = source.handSwingTimer;
+        target.suffocationTimer = source.suffocationTimer;
+        target.hungerDrainTimer = source.hungerDrainTimer;
+        target.hungerDamageTimer = source.hungerDamageTimer;
+        target.hungerRegenTimer = source.hungerRegenTimer;
+        target.hunger = source.hunger;
+        target.armorProtection = source.armorProtection;
+        target.headInWater = source.headInWater;
+        target.wasInLiquid = source.wasInLiquid;
+        target.creativeMode = source.creativeMode;
+        target.spectatorMode = source.spectatorMode;
+        target.flightEnabled = source.flightEnabled;
+        target.sneaking = source.sneaking;
+        target.hasCustomSpawn = source.hasCustomSpawn;
+        target.spawnX = source.spawnX;
+        target.spawnY = source.spawnY;
+        target.spawnZ = source.spawnZ;
     }
 
     private void updatePlayer(double deltaTime) {
@@ -1406,6 +1536,7 @@ public class TinyCraft {
         resetPlayerFluidState();
         resetBreakingProgress();
         world.prepareForPlayer(player);
+        resetRenderInterpolation();
         renderer.rebuildChunksAroundBlock((int) Math.floor(player.x), (int) Math.floor(player.z));
     }
 
@@ -1882,7 +2013,7 @@ public class TinyCraft {
                 inventory.addItem(filledBucket, 1);
                 syncSelectedHotbarItem();
             }
-            renderer.rebuildChunkSectionAroundBlock(hit.x, hit.y, hit.z);
+            renderer.forceRebuildBlockEdit(hit.x, hit.y, hit.z);
             return true;
         }
         if (heldItem != InventoryItems.ITEM_WATER_BUCKET && heldItem != InventoryItems.ITEM_LAVA_BUCKET) {
@@ -1894,7 +2025,7 @@ public class TinyCraft {
                 inventory.addItem(InventoryItems.ITEM_BUCKET, 1);
                 syncSelectedHotbarItem();
             }
-            renderer.rebuildChunkSectionAroundBlock(hit.previousX, hit.previousY, hit.previousZ);
+            renderer.forceRebuildBlockEdit(hit.previousX, hit.previousY, hit.previousZ);
         }
         return true;
     }
@@ -1960,7 +2091,7 @@ public class TinyCraft {
             spendHunger(isCorrectToolForBlock(inventory.getSelectedItemId(selectedSlot), targetBlock) ? 0.025 : 0.045);
             damageSelectedToolForBlock(targetBlock);
             audio.playBreak(targetBlock, blockX + 0.5, blockY + 0.5, blockZ + 0.5);
-            renderer.rebuildChunkSectionAroundBlock(blockX, blockY, blockZ);
+            renderer.forceRebuildBlockEdit(blockX, blockY, blockZ);
             hoveredBlock = world.raycastBlock(player);
         }
         resetBreakingProgress();
@@ -2045,6 +2176,7 @@ public class TinyCraft {
             || block == GameConfig.CHEST
             || block == GameConfig.CRAFTING_TABLE
             || block == GameConfig.OAK_FENCE
+            || block == GameConfig.OAK_FENCE_GATE
             || block == GameConfig.OAK_DOOR;
         boolean hoeLike = block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES;
         return (stoneLike && isPickaxe(heldItem))
@@ -2342,6 +2474,7 @@ public class TinyCraft {
             || block == GameConfig.CHEST
             || block == GameConfig.CRAFTING_TABLE
             || block == GameConfig.OAK_FENCE
+            || block == GameConfig.OAK_FENCE_GATE
             || block == GameConfig.OAK_DOOR;
         if ((heldItem == InventoryItems.DIAMOND_PICKAXE || heldItem == InventoryItems.NETHERITE_PICKAXE) && stoneLike) {
             return heldItem == InventoryItems.NETHERITE_PICKAXE ? 7.0 : 6.2;
@@ -2402,7 +2535,7 @@ public class TinyCraft {
         if (world.breakBlock(hit)) {
             player.handSwingTimer = 0.18;
             audio.playBreak(targetBlock, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
-            renderer.rebuildChunkSectionAroundBlock(hit.x, hit.y, hit.z);
+            renderer.forceRebuildBlockEdit(hit.x, hit.y, hit.z);
             hoveredBlock = world.raycastBlock(player);
         }
         resetBreakingProgress();
@@ -2473,6 +2606,7 @@ public class TinyCraft {
         player.isGrounded = spectatorMode ? false : isStandingOnGround();
         player.cameraBobAmount = 0.0;
         player.stepTimer = 0.0;
+        resetRenderInterpolation();
         resetPlayerFluidState();
         resetPlayerDamageTimers();
         jumpQueued = false;
@@ -3236,6 +3370,7 @@ public class TinyCraft {
         player.hunger = clamp(player.hunger, 0.0, GameConfig.MAX_HUNGER);
         player.verticalVelocity = 0.0;
         player.isGrounded = true;
+        resetRenderInterpolation();
         resetPlayerDamageTimers();
         resetPlayerFluidState();
         resetMovement();

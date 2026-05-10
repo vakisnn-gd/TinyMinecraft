@@ -22,9 +22,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ThreadPoolExecutor;
 
 final class VoxelWorld implements StructureTemplates.Target {
-    private static final int SAVE_FORMAT_VERSION = 4;
+    private static final int SAVE_FORMAT_VERSION = 5;
+    private static final int LEGACY_BYTE_BLOCK_SAVE_FORMAT_VERSION = 4;
     private static final int CONTAINER_SAVE_MAGIC = 0x544D4354;
     private static final int CONTAINER_SAVE_VERSION = 3;
+    private static final int MOB_SAVE_MAGIC = 0x544D4F42;
+    private static final int MOB_SAVE_VERSION = 1;
     private static final int PLAYER_INVENTORY_SAVE_MAGIC = 0x544D5049;
     private static final int PLAYER_INVENTORY_SAVE_VERSION = 1;
     private static final double ZOMBIE_GROWL_DISTANCE_SQUARED = 11.0 * 11.0;
@@ -121,6 +124,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final ConcurrentHashMap<Long, ChunkColumn> loadedColumns = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Future<ChunkColumn>> pendingColumns = new ConcurrentHashMap<>();
     private final ThreadPoolExecutor generationExecutor = createGenerationExecutor();
+    private final BackgroundSaveService backgroundSaveService = new BackgroundSaveService();
     private final int[] permutation = new int[512];
     private final ArrayList<Zombie> zombies = new ArrayList<>();
     private final HashSet<Long> populatedVillageCells = new HashSet<>();
@@ -134,6 +138,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final HashMap<Long, Double> leafDecayTimers = new HashMap<>();
     private final HashSet<Long> fallingBlockSources = new HashSet<>();
     private final HashSet<Long> dirtyChunkSections = new HashSet<>();
+    private final HashSet<Long> pendingMeshDirtySections = new HashSet<>();
     private final ColumnUpdateList simulationDirtyColumns = new ColumnUpdateList(64);
     private final ArrayList<Long> readyColumnKeys = new ArrayList<>();
     private final MutableVec2 zombieSteering = new MutableVec2();
@@ -204,6 +209,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     void configureWorld(Path worldDirectory, long seed) {
         if (this.worldDirectory != null && !this.worldDirectory.equals(worldDirectory)) {
             flushLoadedColumns();
+            saveMobs();
             for (Future<ChunkColumn> future : pendingColumns.values()) {
                 future.cancel(true);
             }
@@ -236,6 +242,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         waterFlowCache.clear();
         leafDecayTimers.clear();
         loadContainers();
+        loadMobs();
     }
 
     List<Zombie> getZombies() {
@@ -270,6 +277,11 @@ final class VoxelWorld implements StructureTemplates.Target {
             return null;
         }
         return column.section(chunkY);
+    }
+
+    ChunkSectionSnapshot getChunkSnapshot(int chunkX, int chunkY, int chunkZ) {
+        Chunk chunk = getChunk(chunkX, chunkY, chunkZ);
+        return chunk == null ? null : chunk.snapshot();
     }
 
     boolean isChunkEmpty(int chunkX, int chunkY, int chunkZ) {
@@ -315,7 +327,9 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     void saveAllLoadedColumns() {
         flushLoadedColumns();
+        backgroundSaveService.flush();
         saveContainers();
+        saveMobs();
     }
 
     void discardLoadedWorld() {
@@ -323,6 +337,9 @@ final class VoxelWorld implements StructureTemplates.Target {
             future.cancel(true);
         }
         pendingColumns.clear();
+        flushLoadedColumns();
+        backgroundSaveService.flush();
+        saveMobs();
         loadedColumns.clear();
         activeWaterCells.clear();
         activeLavaCells.clear();
@@ -330,6 +347,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         leafDecayTimers.clear();
         fallingBlockSources.clear();
         dirtyChunkSections.clear();
+        pendingMeshDirtySections.clear();
         simulationDirtyColumns.clear();
         waterFlowCache.clear();
         zombies.clear();
@@ -346,6 +364,7 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     void generateWorld() {
         flushLoadedColumns();
+        backgroundSaveService.flush();
         loadedColumns.clear();
         pendingColumns.clear();
         activeWaterCells.clear();
@@ -355,6 +374,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         fallingBlockSources.clear();
         waterFlowCache.clear();
         dirtyChunkSections.clear();
+        pendingMeshDirtySections.clear();
         simulationDirtyColumns.clear();
         zombies.clear();
         populatedVillageCells.clear();
@@ -463,6 +483,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         simulationDirtyColumns.clear();
         dirtyChunkSections.clear();
         drainGeneratedColumns();
+        drainPendingMeshDirtySections();
 
         updateFallingBlocks(deltaTime);
         tickLeafDecay(deltaTime);
@@ -834,6 +855,114 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
     }
 
+    private void loadMobs() {
+        zombies.clear();
+        if (worldDirectory == null) {
+            return;
+        }
+        Path path = worldDirectory.resolve("mobs.dat");
+        if (!Files.isRegularFile(path)) {
+            return;
+        }
+        try (DataInputStream input = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)))) {
+            int magic = input.readInt();
+            if (magic != MOB_SAVE_MAGIC) {
+                return;
+            }
+            int version = input.readInt();
+            if (version < 1 || version > MOB_SAVE_VERSION) {
+                return;
+            }
+            int count = Math.max(0, Math.min(input.readInt(), 512));
+            for (int i = 0; i < count; i++) {
+                MobKind kind = mobKindFromOrdinal(input.readInt());
+                double x = input.readDouble();
+                double y = input.readDouble();
+                double z = input.readDouble();
+                double homeX = input.readDouble();
+                double homeZ = input.readDouble();
+                Zombie mob = new Zombie(kind, x, y, z, homeX, homeZ, worldRandom);
+                mob.health = Math.max(0.0, Math.min(input.readDouble(), maxMobHealth(kind)));
+                mob.velocityX = input.readDouble();
+                mob.velocityZ = input.readDouble();
+                mob.verticalVelocity = input.readDouble();
+                mob.isGrounded = input.readBoolean();
+                mob.bodyYaw = input.readDouble();
+                mob.targetBodyYaw = input.readDouble();
+                mob.wanderDirection = input.readDouble();
+                mob.wanderTime = input.readDouble();
+                mob.directionIndex = input.readInt();
+                mob.attackCooldown = input.readDouble();
+                mob.hurtCooldown = input.readDouble();
+                mob.fleeTimer = input.readDouble();
+                mob.loveTimer = input.readDouble();
+                mob.breedCooldown = input.readDouble();
+                if (mob.health > 0.0 && isInside((int) Math.floor(mob.x), (int) Math.floor(mob.y), (int) Math.floor(mob.z))) {
+                    zombies.add(mob);
+                }
+            }
+        } catch (IOException ignored) {
+            zombies.clear();
+        }
+    }
+
+    private void saveMobs() {
+        if (worldDirectory == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(worldDirectory);
+            Path path = worldDirectory.resolve("mobs.dat");
+            try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(path)))) {
+                output.writeInt(MOB_SAVE_MAGIC);
+                output.writeInt(MOB_SAVE_VERSION);
+                int count = 0;
+                for (Zombie mob : zombies) {
+                    if (mob != null && mob.health > 0.0) {
+                        count++;
+                    }
+                }
+                output.writeInt(count);
+                for (Zombie mob : zombies) {
+                    if (mob == null || mob.health <= 0.0) {
+                        continue;
+                    }
+                    output.writeInt(mob.kind.ordinal());
+                    output.writeDouble(mob.x);
+                    output.writeDouble(mob.y);
+                    output.writeDouble(mob.z);
+                    output.writeDouble(mob.homeX);
+                    output.writeDouble(mob.homeZ);
+                    output.writeDouble(mob.health);
+                    output.writeDouble(mob.velocityX);
+                    output.writeDouble(mob.velocityZ);
+                    output.writeDouble(mob.verticalVelocity);
+                    output.writeBoolean(mob.isGrounded);
+                    output.writeDouble(mob.bodyYaw);
+                    output.writeDouble(mob.targetBodyYaw);
+                    output.writeDouble(mob.wanderDirection);
+                    output.writeDouble(mob.wanderTime);
+                    output.writeInt(mob.directionIndex);
+                    output.writeDouble(mob.attackCooldown);
+                    output.writeDouble(mob.hurtCooldown);
+                    output.writeDouble(mob.fleeTimer);
+                    output.writeDouble(mob.loveTimer);
+                    output.writeDouble(mob.breedCooldown);
+                }
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private MobKind mobKindFromOrdinal(int ordinal) {
+        MobKind[] values = MobKind.values();
+        return ordinal >= 0 && ordinal < values.length ? values[ordinal] : MobKind.ZOMBIE;
+    }
+
+    private double maxMobHealth(MobKind kind) {
+        return kind == MobKind.COW || kind == MobKind.SHEEP || kind == MobKind.PIG ? 10.0 : 20.0;
+    }
+
     void updateZombies(PlayerState player, double deltaTime) {
         if (player == null) {
             return;
@@ -1183,6 +1312,10 @@ final class VoxelWorld implements StructureTemplates.Target {
             toggleDoorAt(hit.x, hit.y, hit.z);
             return true;
         }
+        if (block == GameConfig.OAK_FENCE_GATE) {
+            toggleFenceGateAt(hit.x, hit.y, hit.z);
+            return true;
+        }
         if (block == GameConfig.RED_BED) {
             BlockState bed = getBlockState(hit.x, hit.y, hit.z);
             int facing = Blocks.bedFacing(bed);
@@ -1446,6 +1579,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (placedBlock == GameConfig.OAK_DOOR) {
             return placeDoor(placeX, placeY, placeZ, player);
         }
+        if (placedBlock == GameConfig.OAK_FENCE_GATE) {
+            return placeFenceGate(placeX, placeY, placeZ, player);
+        }
         if (placedBlock == GameConfig.RED_BED) {
             return placeBed(placeX, placeY, placeZ, player);
         }
@@ -1524,6 +1660,21 @@ final class VoxelWorld implements StructureTemplates.Target {
         refreshDynamicCellsAround(x, y + 1, z);
         markDirtyBlock(x, y, z);
         markDirtyBlock(x, y + 1, z);
+        refreshSurfaceHeight(x, z);
+        return true;
+    }
+
+    private boolean placeFenceGate(int x, int y, int z, PlayerState player) {
+        if (!isInside(x, y, z) || y <= GameConfig.WORLD_MIN_Y || !isReplaceableForPlacement(getBlock(x, y, z))) {
+            return false;
+        }
+        if (!isSolidBlock(getBlock(x, y - 1, z)) || blockIntersectsPlayerHitbox(x, y, z, player)) {
+            return false;
+        }
+        int facing = player == null ? 2 : facingFromYaw(player.yaw);
+        setBlockState(x, y, z, Blocks.gateState(false, facing));
+        refreshDynamicCellsAround(x, y, z);
+        markDirtyBlock(x, y, z);
         refreshSurfaceHeight(x, z);
         return true;
     }
@@ -1632,6 +1783,16 @@ final class VoxelWorld implements StructureTemplates.Target {
         refreshDynamicCellsAround(x, lowerY + 1, z);
         markDirtyBlock(x, lowerY, z);
         markDirtyBlock(x, lowerY + 1, z);
+    }
+
+    private void toggleFenceGateAt(int x, int y, int z) {
+        BlockState state = getBlockState(x, y, z);
+        if (state.type.numericId != (GameConfig.OAK_FENCE_GATE & 0xFF)) {
+            return;
+        }
+        setBlockState(x, y, z, Blocks.gateState(!Blocks.isGateOpen(state), Blocks.gateFacing(state)));
+        refreshDynamicCellsAround(x, y, z);
+        markDirtyBlock(x, y, z);
     }
 
     private void removeDoorAt(int x, int y, int z) {
@@ -1760,6 +1921,8 @@ final class VoxelWorld implements StructureTemplates.Target {
                 return new double[]{0.40, 0.0, 0.40, 0.60, 0.82, 0.60};
             case GameConfig.OAK_FENCE:
                 return new double[]{0.375, 0.0, 0.375, 0.625, 1.5, 0.625};
+            case GameConfig.OAK_FENCE_GATE:
+                return fenceGateSelectionBounds(state);
             case GameConfig.CHEST:
                 return new double[]{0.0625, 0.0, 0.0625, 0.9375, 0.875, 0.9375};
             case GameConfig.RED_BED:
@@ -1964,6 +2127,17 @@ final class VoxelWorld implements StructureTemplates.Target {
                     if (!isCollisionSolid(state)) {
                         continue;
                     }
+                    if (state.type.numericId == (GameConfig.OAK_FENCE & 0xFF)) {
+                        double[] fenceBounds = fenceCollisionBounds(blockX, blockY, blockZ);
+                        if (intersectsAabb(
+                            x - radius, y, z - radius,
+                            x + radius, y + height, z + radius,
+                            blockX + fenceBounds[0], blockY + fenceBounds[1], blockZ + fenceBounds[2],
+                            blockX + fenceBounds[3], blockY + fenceBounds[4], blockZ + fenceBounds[5])) {
+                            return true;
+                        }
+                        continue;
+                    }
                     double[] bounds = selectionBounds((byte) state.type.numericId, state);
                     if (intersectsAabb(
                         x - radius, y, z - radius,
@@ -1976,6 +2150,33 @@ final class VoxelWorld implements StructureTemplates.Target {
             }
         }
         return false;
+    }
+
+    private double[] fenceCollisionBounds(int x, int y, int z) {
+        double minX = 0.375;
+        double maxX = 0.625;
+        double minZ = 0.375;
+        double maxZ = 0.625;
+        if (fenceConnectsTo(x - 1, y, z)) {
+            minX = 0.0;
+        }
+        if (fenceConnectsTo(x + 1, y, z)) {
+            maxX = 1.0;
+        }
+        if (fenceConnectsTo(x, y, z - 1)) {
+            minZ = 0.0;
+        }
+        if (fenceConnectsTo(x, y, z + 1)) {
+            maxZ = 1.0;
+        }
+        return new double[]{minX, 0.0, minZ, maxX, 1.5, maxZ};
+    }
+
+    private boolean fenceConnectsTo(int x, int y, int z) {
+        byte block = getBlock(x, y, z);
+        return block == GameConfig.OAK_FENCE
+            || block == GameConfig.OAK_FENCE_GATE
+            || (isSolidBlock(block) && isCubeBlock(block) && !isTransparentBlock(block));
     }
 
     boolean touchesBlock(double x, double y, double z, double radius, double height, byte targetBlock) {
@@ -2330,6 +2531,7 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     void cleanup() {
         flushLoadedColumns();
+        backgroundSaveService.flush();
         saveContainers();
         for (Future<ChunkColumn> future : pendingColumns.values()) {
             future.cancel(true);
@@ -2341,6 +2543,18 @@ final class VoxelWorld implements StructureTemplates.Target {
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
+        backgroundSaveService.shutdown();
+    }
+
+    private double[] fenceGateSelectionBounds(BlockState state) {
+        if (Blocks.isGateOpen(state)) {
+            return new double[]{0.375, 0.0, 0.375, 0.625, 1.5, 0.625};
+        }
+        int facing = Blocks.gateFacing(state);
+        if (facing == 0 || facing == 2) {
+            return new double[]{0.0, 0.0, 0.375, 1.0, 1.5, 0.625};
+        }
+        return new double[]{0.375, 0.0, 0.0, 0.625, 1.5, 1.0};
     }
 
     boolean isTransparentBlock(byte block) {
@@ -2357,6 +2571,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         if (state.type.numericId == (GameConfig.OAK_DOOR & 0xFF)) {
             return !Blocks.isDoorOpen(state);
+        }
+        if (state.type.numericId == (GameConfig.OAK_FENCE_GATE & 0xFF)) {
+            return !Blocks.isGateOpen(state);
         }
         return state.type.isSolid();
     }
@@ -2388,7 +2605,12 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     boolean isCubeBlock(byte block) {
-        return block != GameConfig.AIR && !isCrossPlant(block);
+        return block != GameConfig.AIR
+            && block != GameConfig.OAK_FENCE
+            && block != GameConfig.OAK_FENCE_GATE
+            && block != GameConfig.RED_BED
+            && block != GameConfig.OAK_DOOR
+            && !isCrossPlant(block);
     }
 
     int getFluidDistance(int x, int y, int z) {
@@ -2459,6 +2681,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             dynamicCellPriority(right, playerChunkX, playerChunkZ)
         ));
         HashMap<Long, PendingBlockChange> pendingChanges = new HashMap<>();
+        ArrayList<Long> processedKeys = new ArrayList<>();
         int processed = 0;
         for (long blockKey : snapshot) {
             int x = unpackBlockX(blockKey);
@@ -2479,10 +2702,12 @@ final class VoxelWorld implements StructureTemplates.Target {
                 break;
             }
             processed++;
+            processedKeys.add(blockKey);
             simulateFluidCell(x, y, z, fluidItem, pendingChanges);
         }
 
         if (pendingChanges.isEmpty()) {
+            refreshProcessedFluidActiveStates(processedKeys);
             return;
         }
 
@@ -2498,6 +2723,10 @@ final class VoxelWorld implements StructureTemplates.Target {
         });
         for (PendingBlockChange change : orderedChanges) {
             byte current = getBlock(change.x, change.y, change.z);
+            if (current == change.block
+                && (!GameConfig.isLiquidBlock(change.block) || getFluidDistance(change.x, change.y, change.z) == change.distance)) {
+                continue;
+            }
             if (change.block == GameConfig.AIR) {
                 if (GameConfig.fluidItemForBlock(current) != fluidItem) {
                     continue;
@@ -2511,6 +2740,13 @@ final class VoxelWorld implements StructureTemplates.Target {
             markDirtyBlock(change.x, change.y, change.z);
             reactionCandidates.add(packBlock(change.x, change.y, change.z));
         }
+        refreshProcessedFluidActiveStates(processedKeys);
+    }
+
+    private void refreshProcessedFluidActiveStates(ArrayList<Long> processedKeys) {
+        for (long blockKey : processedKeys) {
+            updateActiveStateAt(unpackBlockX(blockKey), unpackBlockY(blockKey), unpackBlockZ(blockKey));
+        }
     }
 
     private void simulateFluidCell(int x, int y, int z, byte fluidItem, HashMap<Long, PendingBlockChange> pendingChanges) {
@@ -2518,43 +2754,80 @@ final class VoxelWorld implements StructureTemplates.Target {
         byte sourceBlock = GameConfig.sourceBlockForFluid(fluidItem);
         byte flowingBlock = GameConfig.flowingBlockForFluid(fluidItem);
         int maxDistance = GameConfig.fluidSpreadDistance(fluidItem);
-        boolean hasFluidAbove = GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem;
 
-        if (fluidItem == GameConfig.WATER && countCurrentAdjacentWaterSources(x, y, z) >= 2) {
-            scheduleBlockChange(pendingChanges, x, y, z, sourceBlock, 0);
-        } else if (block != sourceBlock) {
-            int desiredDistance = hasFluidAbove ? 0 : findDesiredFluidDistance(x, y, z, fluidItem);
-            if (desiredDistance < 0 || desiredDistance > maxDistance) {
-                if (hasAdjacentFluidConnection(x, y, z, fluidItem)) {
-                    return;
-                }
-                scheduleBlockChange(pendingChanges, x, y, z, GameConfig.AIR, -1);
-                return;
-            }
-            scheduleBlockChange(pendingChanges, x, y, z, flowingBlock, desiredDistance);
+        if (block != sourceBlock && block != flowingBlock) {
+            return;
         }
 
-        if (y > GameConfig.WORLD_MIN_Y && canIntroduceFluidNow(x, y - 1, z, fluidItem, 0)) {
+        boolean fallingColumn = GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem;
+        int currentDistance = block == sourceBlock || fallingColumn ? 0 : getFluidDistance(x, y, z);
+        if (currentDistance < 0) {
+            currentDistance = block == sourceBlock ? 0 : 1;
+        }
+
+        if (block == flowingBlock && !fallingColumn && !hasSimpleFluidSupport(x, y, z, fluidItem, currentDistance)) {
+            scheduleBlockChange(pendingChanges, x, y, z, GameConfig.AIR, -1);
+            return;
+        }
+
+        if (y > GameConfig.WORLD_MIN_Y && canIntroduceSimpleFluid(x, y - 1, z, fluidItem, 0)) {
             scheduleBlockChange(pendingChanges, x, y - 1, z, flowingBlock, 0);
+            return;
         }
 
-        int currentDistance = currentHorizontalFluidDistance(x, y, z, fluidItem);
-        int nextDistance = block == sourceBlock || hasFluidAbove ? 1 : currentDistance + 1;
+        int nextDistance = block == sourceBlock || fallingColumn ? 1 : currentDistance + 1;
         if (nextDistance > maxDistance) {
             return;
         }
 
-        tryScheduleHorizontalFlow(pendingChanges, x + 1, y, z, fluidItem, nextDistance);
-        tryScheduleHorizontalFlow(pendingChanges, x - 1, y, z, fluidItem, nextDistance);
-        tryScheduleHorizontalFlow(pendingChanges, x, y, z + 1, fluidItem, nextDistance);
-        tryScheduleHorizontalFlow(pendingChanges, x, y, z - 1, fluidItem, nextDistance);
+        tryScheduleSimpleHorizontalFlow(pendingChanges, x + 1, y, z, fluidItem, nextDistance);
+        tryScheduleSimpleHorizontalFlow(pendingChanges, x - 1, y, z, fluidItem, nextDistance);
+        tryScheduleSimpleHorizontalFlow(pendingChanges, x, y, z + 1, fluidItem, nextDistance);
+        tryScheduleSimpleHorizontalFlow(pendingChanges, x, y, z - 1, fluidItem, nextDistance);
     }
 
-    private void tryScheduleHorizontalFlow(HashMap<Long, PendingBlockChange> pendingChanges, int x, int y, int z, byte fluidItem, int distance) {
-        if (!isInside(x, y, z) || !canIntroduceFluidNow(x, y, z, fluidItem, distance)) {
+    private void tryScheduleSimpleHorizontalFlow(HashMap<Long, PendingBlockChange> pendingChanges, int x, int y, int z, byte fluidItem, int distance) {
+        if (!canIntroduceSimpleFluid(x, y, z, fluidItem, distance)) {
             return;
         }
         scheduleBlockChange(pendingChanges, x, y, z, GameConfig.flowingBlockForFluid(fluidItem), distance);
+    }
+
+    private boolean canIntroduceSimpleFluid(int x, int y, int z, byte fluidItem, int distance) {
+        if (!isInside(x, y, z)) {
+            return false;
+        }
+        byte current = getBlock(x, y, z);
+        if (current == GameConfig.sourceBlockForFluid(fluidItem)) {
+            return false;
+        }
+        if (GameConfig.fluidItemForBlock(current) == fluidItem) {
+            int currentDistance = getFluidDistance(x, y, z);
+            return currentDistance < 0 || distance < currentDistance;
+        }
+        return isReplaceableForFluid(current);
+    }
+
+    private boolean hasSimpleFluidSupport(int x, int y, int z, byte fluidItem, int currentDistance) {
+        if (GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem) {
+            return true;
+        }
+        return hasSimpleFluidNeighborSupport(x + 1, y, z, fluidItem, currentDistance)
+            || hasSimpleFluidNeighborSupport(x - 1, y, z, fluidItem, currentDistance)
+            || hasSimpleFluidNeighborSupport(x, y, z + 1, fluidItem, currentDistance)
+            || hasSimpleFluidNeighborSupport(x, y, z - 1, fluidItem, currentDistance);
+    }
+
+    private boolean hasSimpleFluidNeighborSupport(int x, int y, int z, byte fluidItem, int currentDistance) {
+        byte neighbor = getBlock(x, y, z);
+        if (neighbor == GameConfig.sourceBlockForFluid(fluidItem)) {
+            return true;
+        }
+        if (GameConfig.fluidItemForBlock(neighbor) != fluidItem) {
+            return false;
+        }
+        int neighborDistance = getFluidDistance(x, y, z);
+        return neighborDistance >= 0 && neighborDistance < currentDistance;
     }
 
     private void tickSand(int playerChunkX, int playerChunkZ) {
@@ -2774,35 +3047,6 @@ final class VoxelWorld implements StructureTemplates.Target {
         pendingChanges.put(key, new PendingBlockChange(x, y, z, block, distance));
     }
 
-    private int findDesiredFluidDistance(int x, int y, int z, byte fluidItem) {
-        if (GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem) {
-            return 0;
-        }
-
-        int bestDistance = Integer.MAX_VALUE;
-        bestDistance = findBestNeighborDistance(bestDistance, x + 1, y, z, fluidItem);
-        bestDistance = findBestNeighborDistance(bestDistance, x - 1, y, z, fluidItem);
-        bestDistance = findBestNeighborDistance(bestDistance, x, y, z + 1, fluidItem);
-        bestDistance = findBestNeighborDistance(bestDistance, x, y, z - 1, fluidItem);
-        return bestDistance == Integer.MAX_VALUE ? -1 : bestDistance;
-    }
-
-    private boolean hasAdjacentFluidConnection(int x, int y, int z, byte fluidItem) {
-        return GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem
-            || GameConfig.fluidItemForBlock(getBlock(x + 1, y, z)) == fluidItem
-            || GameConfig.fluidItemForBlock(getBlock(x - 1, y, z)) == fluidItem
-            || GameConfig.fluidItemForBlock(getBlock(x, y, z + 1)) == fluidItem
-            || GameConfig.fluidItemForBlock(getBlock(x, y, z - 1)) == fluidItem;
-    }
-
-    private int findBestNeighborDistance(int currentBest, int x, int y, int z, byte fluidItem) {
-        int distance = currentHorizontalFluidDistance(x, y, z, fluidItem);
-        if (distance < 0) {
-            return currentBest;
-        }
-        return Math.min(currentBest, distance + 1);
-    }
-
     private int countCurrentAdjacentWaterSources(int x, int y, int z) {
         int neighboringSources = 0;
         if (getBlock(x + 1, y, z) == GameConfig.WATER_SOURCE) {
@@ -2818,50 +3062,6 @@ final class VoxelWorld implements StructureTemplates.Target {
             neighboringSources++;
         }
         return neighboringSources;
-    }
-
-    private boolean canIntroduceFluidNow(int x, int y, int z, byte fluidItem, int desiredDistance) {
-        byte currentBlock = getBlock(x, y, z);
-        if (currentBlock == GameConfig.SEAGRASS) {
-            return false;
-        }
-        if (currentBlock == GameConfig.sourceBlockForFluid(fluidItem)) {
-            return false;
-        }
-        if (!isReplaceableForFluid(currentBlock) && GameConfig.fluidItemForBlock(currentBlock) != fluidItem) {
-            return false;
-        }
-        if (desiredDistance <= 0) {
-            return true;
-        }
-        return hasCurrentHorizontalFluidSupport(x, y, z, fluidItem, desiredDistance);
-    }
-
-    private boolean hasCurrentHorizontalFluidSupport(int x, int y, int z, byte fluidItem, int desiredDistance) {
-        return hasNeighborDistance(x + 1, y, z, fluidItem, desiredDistance)
-            || hasNeighborDistance(x - 1, y, z, fluidItem, desiredDistance)
-            || hasNeighborDistance(x, y, z + 1, fluidItem, desiredDistance)
-            || hasNeighborDistance(x, y, z - 1, fluidItem, desiredDistance);
-    }
-
-    private boolean hasNeighborDistance(int x, int y, int z, byte fluidItem, int desiredDistance) {
-        int neighborDistance = currentHorizontalFluidDistance(x, y, z, fluidItem);
-        return neighborDistance >= 0 && neighborDistance + 1 == desiredDistance;
-    }
-
-    private int currentHorizontalFluidDistance(int x, int y, int z, byte fluidItem) {
-        byte block = getBlock(x, y, z);
-        if (GameConfig.fluidItemForBlock(block) != fluidItem) {
-            return -1;
-        }
-        if (GameConfig.isFluidSourceBlock(block)) {
-            return 0;
-        }
-        if (GameConfig.fluidItemForBlock(getBlock(x, y + 1, z)) == fluidItem) {
-            return 0;
-        }
-        int distance = getFluidDistance(x, y, z);
-        return distance < 0 ? -1 : distance;
     }
 
     private void getFluidFlowVector(int x, int y, int z, MutableVec3 output) {
@@ -3705,7 +3905,41 @@ final class VoxelWorld implements StructureTemplates.Target {
         ChunkColumn previous = loadedColumns.putIfAbsent(columnKey(column.chunkX, column.chunkZ), column);
         if (previous == null) {
             registerColumnDynamicBlocks(column);
+            markColumnAndLoadedNeighborsDirty(column.chunkX, column.chunkZ);
         }
+    }
+
+    private void markColumnAndLoadedNeighborsDirty(int chunkX, int chunkZ) {
+        markLoadedNeighborColumnDirty(chunkX - 1, chunkZ);
+        markLoadedNeighborColumnDirty(chunkX + 1, chunkZ);
+        markLoadedNeighborColumnDirty(chunkX, chunkZ - 1);
+        markLoadedNeighborColumnDirty(chunkX, chunkZ + 1);
+    }
+
+    private void markLoadedNeighborColumnDirty(int chunkX, int chunkZ) {
+        if (!loadedColumns.containsKey(columnKey(chunkX, chunkZ))) {
+            return;
+        }
+        for (int chunkY = 0; chunkY < GameConfig.SECTION_COUNT; chunkY++) {
+            markPendingMeshDirtySection(chunkX, chunkY, chunkZ);
+        }
+    }
+
+    private void markPendingMeshDirtySection(int chunkX, int chunkY, int chunkZ) {
+        if (chunkY < 0 || chunkY >= GameConfig.WORLD_CHUNKS_Y) {
+            return;
+        }
+        pendingMeshDirtySections.add(chunkSectionKey(chunkX, chunkY, chunkZ));
+    }
+
+    private void drainPendingMeshDirtySections() {
+        if (pendingMeshDirtySections.isEmpty()) {
+            return;
+        }
+        for (long sectionKey : pendingMeshDirtySections) {
+            markDirtySection(unpackChunkSectionX(sectionKey), unpackChunkSectionY(sectionKey), unpackChunkSectionZ(sectionKey));
+        }
+        pendingMeshDirtySections.clear();
     }
 
     private ChunkColumn loadOrGenerateColumn(int chunkX, int chunkZ) {
@@ -3731,7 +3965,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private ChunkColumn loadColumnFromDisk(Path chunkPath, int chunkX, int chunkZ) {
         try (DataInputStream input = new DataInputStream(new BufferedInputStream(Files.newInputStream(chunkPath)))) {
             int version = input.readInt();
-            if (version != SAVE_FORMAT_VERSION) {
+            if (version != SAVE_FORMAT_VERSION && version != LEGACY_BYTE_BLOCK_SAVE_FORMAT_VERSION) {
                 return null;
             }
             int storedChunkX = input.readInt();
@@ -3750,10 +3984,15 @@ final class VoxelWorld implements StructureTemplates.Target {
                 int index = 0;
                 while (index < Chunk.VOLUME) {
                     int runLength = input.readUnsignedShort();
-                    byte block = input.readByte();
+                    BlockState state;
+                    if (version >= SAVE_FORMAT_VERSION) {
+                        state = Blocks.stateFromNamespacedId(input.readUTF());
+                    } else {
+                        state = Blocks.stateFromLegacyId(input.readByte());
+                    }
                     int distance = input.readByte();
                     for (int run = 0; run < runLength && index < Chunk.VOLUME; run++, index++) {
-                        chunk.setSerializedCell(index, block, distance);
+                        chunk.setSerializedCellState(index, state, distance);
                     }
                 }
             }
@@ -3954,19 +4193,19 @@ final class VoxelWorld implements StructureTemplates.Target {
             return y > GameConfig.WORLD_MIN_Y && canFluidOccupyBlock(getBlock(x, y - 1, z), fluidItem);
         }
         if (GameConfig.isFluidFlowingBlock(block)) {
-            return true;
+            int distance = getFluidDistance(x, y, z);
+            if (distance < 0) {
+                return true;
+            }
+            if (!hasSimpleFluidSupport(x, y, z, fluidItem, distance)) {
+                return true;
+            }
+            return hasSimpleFluidExpansionOpportunity(x, y, z, fluidItem, distance);
         }
         if (fluidItem == GameConfig.WATER && isStableNaturalWaterSource(x, y, z)) {
             return hasFluidExpansionOpportunity(x, y, z);
         }
-        if (y > GameConfig.WORLD_MIN_Y && canFluidOccupyBlock(getBlock(x, y - 1, z), fluidItem)) {
-            return true;
-        }
-        return canFluidOccupyBlock(getBlock(x + 1, y, z), fluidItem)
-            || canFluidOccupyBlock(getBlock(x - 1, y, z), fluidItem)
-            || canFluidOccupyBlock(getBlock(x, y, z + 1), fluidItem)
-            || canFluidOccupyBlock(getBlock(x, y, z - 1), fluidItem)
-            || (fluidItem == GameConfig.WATER && countCurrentAdjacentWaterSources(x, y, z) >= 1);
+        return hasSimpleFluidExpansionOpportunity(x, y, z, fluidItem, 0);
     }
 
     private boolean hasFluidExpansionOpportunity(int x, int y, int z) {
@@ -3975,6 +4214,20 @@ final class VoxelWorld implements StructureTemplates.Target {
             || isReplaceableForFluid(getBlock(x - 1, y, z))
             || isReplaceableForFluid(getBlock(x, y, z + 1))
             || isReplaceableForFluid(getBlock(x, y, z - 1));
+    }
+
+    private boolean hasSimpleFluidExpansionOpportunity(int x, int y, int z, byte fluidItem, int currentDistance) {
+        if (y > GameConfig.WORLD_MIN_Y && canIntroduceSimpleFluid(x, y - 1, z, fluidItem, 0)) {
+            return true;
+        }
+        int nextDistance = currentDistance + 1;
+        if (nextDistance > GameConfig.fluidSpreadDistance(fluidItem)) {
+            return false;
+        }
+        return canIntroduceSimpleFluid(x + 1, y, z, fluidItem, nextDistance)
+            || canIntroduceSimpleFluid(x - 1, y, z, fluidItem, nextDistance)
+            || canIntroduceSimpleFluid(x, y, z + 1, fluidItem, nextDistance)
+            || canIntroduceSimpleFluid(x, y, z - 1, fluidItem, nextDistance);
     }
 
     private boolean isStableNaturalWaterSource(int x, int y, int z) {
@@ -4039,6 +4292,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         column.dirty = true;
         invalidateFluidFlowCacheAround(x, y, z);
+        markDirtyBlock(x, y, z);
     }
 
     void setBlockState(int x, int y, int z, BlockState state) {
@@ -4065,6 +4319,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         column.dirty = true;
         invalidateFluidFlowCacheAround(x, y, z);
+        markDirtyBlock(x, y, z);
     }
 
     private void invalidateFluidFlowCacheAround(int x, int y, int z) {
@@ -4218,6 +4473,12 @@ final class VoxelWorld implements StructureTemplates.Target {
         int chunkY = GameConfig.sectionIndexForY(y);
         int chunkZ = worldToChunk(z);
         markDirtySection(chunkX, chunkY, chunkZ);
+        markDirtySection(chunkX + 1, chunkY, chunkZ);
+        markDirtySection(chunkX - 1, chunkY, chunkZ);
+        markDirtySection(chunkX, chunkY, chunkZ + 1);
+        markDirtySection(chunkX, chunkY, chunkZ - 1);
+        markDirtySection(chunkX, chunkY + 1, chunkZ);
+        markDirtySection(chunkX, chunkY - 1, chunkZ);
 
         int localX = localBlockCoordinate(x);
         int localY = GameConfig.localYForWorldY(y);
@@ -4257,6 +4518,20 @@ final class VoxelWorld implements StructureTemplates.Target {
         long packedZ = ((long) chunkZ) & 0x3FFFFFFL;
         long packedY = chunkY & 0xFFFL;
         return (packedX << 38) | (packedZ << 12) | packedY;
+    }
+
+    private int unpackChunkSectionX(long sectionKey) {
+        int value = (int) ((sectionKey >>> 38) & 0x3FFFFFFL);
+        return value >= 0x2000000 ? value - 0x4000000 : value;
+    }
+
+    private int unpackChunkSectionY(long sectionKey) {
+        return (int) (sectionKey & 0xFFFL);
+    }
+
+    private int unpackChunkSectionZ(long sectionKey) {
+        int value = (int) ((sectionKey >>> 12) & 0x3FFFFFFL);
+        return value >= 0x2000000 ? value - 0x4000000 : value;
     }
 
     private void updateDroppedItemPhysics(DroppedItem droppedItem, double deltaTime) {
@@ -4339,15 +4614,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         if (regionStorage != null) {
-            try {
-                regionStorage.saveColumn(column);
-                column.dirty = false;
-                return;
-            } catch (IOException exception) {
-                if (GameConfig.ENABLE_DEBUG_LOGS) {
-                    System.out.println("VoxelWorld: failed to save region column " + column.chunkX + "," + column.chunkZ + ": " + exception.getMessage());
-                }
-            }
+            backgroundSaveService.enqueue(regionStorage, snapshotColumnForSave(column));
+            column.dirty = false;
+            return;
         }
 
         if (saveDirectory == null) {
@@ -4381,16 +4650,16 @@ final class VoxelWorld implements StructureTemplates.Target {
                     }
                     int index = 0;
                     while (index < Chunk.VOLUME) {
-                        byte block = chunk.getBlockAtIndex(index);
+                        BlockState state = chunk.getBlockStateAtIndex(index);
                         int distance = chunk.getFluidDistanceAtIndex(index);
                         int runLength = 1;
                         while (index + runLength < Chunk.VOLUME && runLength < 0xFFFF
-                            && chunk.getBlockAtIndex(index + runLength) == block
+                            && sameBlockState(chunk.getBlockStateAtIndex(index + runLength), state)
                             && chunk.getFluidDistanceAtIndex(index + runLength) == distance) {
                             runLength++;
                         }
                         output.writeShort(runLength);
-                        output.writeByte(block);
+                        output.writeUTF(Blocks.serializedId(state));
                         output.writeByte(distance);
                         index += runLength;
                     }
@@ -4409,6 +4678,47 @@ final class VoxelWorld implements StructureTemplates.Target {
         for (ChunkColumn column : loadedColumns.values()) {
             saveColumnIfDirty(column);
         }
+    }
+
+    private ChunkColumn snapshotColumnForSave(ChunkColumn source) {
+        ChunkColumn copy = new ChunkColumn(source.chunkX, source.chunkZ, false);
+        copy.status = source.status;
+        copy.generated = source.generated;
+        copy.naturalTerrain = source.naturalTerrain;
+        copy.dirty = false;
+        System.arraycopy(source.surfaceHeights, 0, copy.surfaceHeights, 0, source.surfaceHeights.length);
+        for (int chunkY = 0; chunkY < GameConfig.SECTION_COUNT; chunkY++) {
+            Chunk chunk = source.section(chunkY);
+            if (chunk == null || chunk.isEmpty()) {
+                continue;
+            }
+            ChunkSectionSnapshot snapshot = chunk.snapshot();
+            Chunk copyChunk = new Chunk(source.chunkX, chunkY, source.chunkZ);
+            int index = 0;
+            for (int localY = 0; localY < GameConfig.CHUNK_SIZE; localY++) {
+                for (int localZ = 0; localZ < GameConfig.CHUNK_SIZE; localZ++) {
+                    for (int localX = 0; localX < GameConfig.CHUNK_SIZE; localX++) {
+                        copyChunk.setSerializedCellState(
+                            index++,
+                            snapshot.getBlockStateLocal(localX, localY, localZ),
+                            snapshot.getFluidDistanceLocal(localX, localY, localZ)
+                        );
+                    }
+                }
+            }
+            copy.sections[chunkY] = copyChunk;
+        }
+        return copy;
+    }
+
+    private boolean sameBlockState(BlockState left, BlockState right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        return left.type.numericId == right.type.numericId && left.data == right.data;
     }
 
     private Path chunkFilePath(int chunkX, int chunkZ) {

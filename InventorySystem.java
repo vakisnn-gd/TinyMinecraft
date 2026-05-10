@@ -103,6 +103,7 @@ final class InventoryItems {
         GameConfig.OBSIDIAN,
         OAK_PLANKS,
         GameConfig.OAK_FENCE,
+        GameConfig.OAK_FENCE_GATE,
         GameConfig.CHEST,
         GameConfig.CRAFTING_TABLE,
         GameConfig.FURNACE,
@@ -204,6 +205,7 @@ final class InventoryItems {
                 GameConfig.OAK_LOG,
                 InventoryItems.OAK_PLANKS,
                 GameConfig.OAK_FENCE,
+                GameConfig.OAK_FENCE_GATE,
                 GameConfig.CHEST,
                 GameConfig.CRAFTING_TABLE,
                 GameConfig.FURNACE,
@@ -407,6 +409,8 @@ final class InventoryItems {
                 return "Oak Planks";
             case GameConfig.OAK_FENCE:
                 return "Oak Fence";
+            case GameConfig.OAK_FENCE_GATE:
+                return "Дубовая калитка";
             case GameConfig.CHEST:
                 return "Chest";
             case GameConfig.CRAFTING_TABLE:
@@ -1060,6 +1064,9 @@ final class CraftingRecipes {
         CraftingRecipe.shaped(3, 2, GameConfig.OAK_FENCE, 6,
             InventoryItems.OAK_PLANKS, InventoryItems.STICK, InventoryItems.OAK_PLANKS,
             InventoryItems.OAK_PLANKS, InventoryItems.STICK, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(3, 2, GameConfig.OAK_FENCE_GATE, 1,
+            InventoryItems.STICK, InventoryItems.OAK_PLANKS, InventoryItems.STICK,
+            InventoryItems.STICK, InventoryItems.OAK_PLANKS, InventoryItems.STICK),
         CraftingRecipe.shapeless(GameConfig.GRAVEL, 1, GameConfig.COBBLESTONE, GameConfig.DIRT),
         CraftingRecipe.shapeless(GameConfig.CLAY, 1, GameConfig.SAND, GameConfig.DIRT),
         CraftingRecipe.shaped(3, 3, InventoryItems.WOODEN_PICKAXE, 1,

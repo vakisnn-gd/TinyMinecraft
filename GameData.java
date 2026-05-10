@@ -86,6 +86,7 @@ final class GameConfig {
     static final byte DEEPSLATE_DIAMOND_ORE = 61;
     static final byte DEEPSLATE_COAL_ORE = 62;
     static final byte RED_BED = 71;
+    static final byte OAK_FENCE_GATE = 117;
 
     static final double PLAYER_RADIUS = 0.30;
     static final double PLAYER_HEIGHT = 1.80;
@@ -161,7 +162,7 @@ final class GameConfig {
     static final double FIRE_DAMAGE_INTERVAL = 1.0;
     static final int FIRE_DAMAGE = 1;
     // Вода может растекаться по горизонтали до 7 блоков от источника.
-    static final int WATER_SPREAD_DISTANCE = 7;
+    static final int WATER_SPREAD_DISTANCE = 8;
     // Лава растекается медленнее и ближе: только до 4 блоков.
     static final int LAVA_SPREAD_DISTANCE = 4;
     static final int WATER_FLOW_TICKS = 25;
@@ -637,6 +638,9 @@ final class Chunk {
     private final int[] blockStateIndices = new int[VOLUME];
     private final byte[] fluidDistance = new byte[VOLUME];
     private int nonAirBlockCount;
+    private int version;
+    private int cachedSnapshotVersion = -1;
+    private ChunkSectionSnapshot cachedSnapshot;
 
     Chunk(int chunkX, int chunkY, int chunkZ) {
         this.chunkX = chunkX;
@@ -646,85 +650,111 @@ final class Chunk {
         Arrays.fill(fluidDistance, (byte) -1);
     }
 
-    byte getBlockLocal(int localX, int localY, int localZ) {
+    synchronized ChunkSectionSnapshot snapshot() {
+        if (cachedSnapshot != null && cachedSnapshotVersion == version) {
+            return cachedSnapshot;
+        }
+        BlockState[] states = new BlockState[VOLUME];
+        byte[] blocks = new byte[VOLUME];
+        byte[] distances = new byte[VOLUME];
+        for (int index = 0; index < VOLUME; index++) {
+            BlockState state = blockStateAtIndexUnchecked(index);
+            states[index] = state;
+            blocks[index] = Blocks.legacyIdFromState(state);
+            distances[index] = fluidDistance[index];
+        }
+        cachedSnapshot = new ChunkSectionSnapshot(chunkX, chunkY, chunkZ, blocks, states, distances, nonAirBlockCount, version);
+        cachedSnapshotVersion = version;
+        return cachedSnapshot;
+    }
+
+    synchronized byte getBlockLocal(int localX, int localY, int localZ) {
         return Blocks.legacyIdFromState(getBlockStateLocal(localX, localY, localZ));
     }
 
-    void setBlockLocal(int localX, int localY, int localZ, byte block) {
+    synchronized void setBlockLocal(int localX, int localY, int localZ, byte block) {
         if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
             return;
         }
         setBlockStateAtIndex(index(localX, localY, localZ), Blocks.stateFromLegacyId(block));
     }
 
-    BlockState getBlockStateLocal(int localX, int localY, int localZ) {
+    synchronized BlockState getBlockStateLocal(int localX, int localY, int localZ) {
         if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
             return Blocks.stateFromLegacyId(GameConfig.AIR);
         }
         return getBlockStateAtIndex(index(localX, localY, localZ));
     }
 
-    void setBlockStateLocal(int localX, int localY, int localZ, BlockState state) {
+    synchronized void setBlockStateLocal(int localX, int localY, int localZ, BlockState state) {
         if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
             return;
         }
         setBlockStateAtIndex(index(localX, localY, localZ), state);
     }
 
-    int getFluidDistanceLocal(int localX, int localY, int localZ) {
+    synchronized int getFluidDistanceLocal(int localX, int localY, int localZ) {
         if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
             return -1;
         }
         return fluidDistance[index(localX, localY, localZ)];
     }
 
-    void setFluidDistanceLocal(int localX, int localY, int localZ, int distance) {
+    synchronized void setFluidDistanceLocal(int localX, int localY, int localZ, int distance) {
         if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
             return;
         }
-        fluidDistance[index(localX, localY, localZ)] = (byte) distance;
+        int index = index(localX, localY, localZ);
+        byte next = (byte) distance;
+        if (fluidDistance[index] != next) {
+            fluidDistance[index] = next;
+            version++;
+        }
     }
 
-    boolean isEmpty() {
+    synchronized boolean isEmpty() {
         return nonAirBlockCount == 0;
     }
 
-    byte getBlockAtIndex(int index) {
+    synchronized byte getBlockAtIndex(int index) {
         return Blocks.legacyIdFromState(getBlockStateAtIndex(index));
     }
 
-    BlockState getBlockStateAtIndex(int index) {
+    synchronized BlockState getBlockStateAtIndex(int index) {
         if (index < 0 || index >= VOLUME) {
             return Blocks.stateFromLegacyId(GameConfig.AIR);
         }
-        int paletteIndex = blockStateIndices[index];
-        if (paletteIndex < 0 || paletteIndex >= palette.size()) {
-            return Blocks.stateFromLegacyId(GameConfig.AIR);
-        }
-        return palette.get(paletteIndex);
+        return blockStateAtIndexUnchecked(index);
     }
 
-    int getFluidDistanceAtIndex(int index) {
+    synchronized int getFluidDistanceAtIndex(int index) {
         if (index < 0 || index >= VOLUME) {
             return -1;
         }
         return fluidDistance[index];
     }
 
-    void setSerializedCell(int index, byte block, int distance) {
+    synchronized void setSerializedCell(int index, byte block, int distance) {
         setSerializedCellState(index, Blocks.stateFromLegacyId(block), distance);
     }
 
-    void setSerializedCellState(int index, BlockState state, int distance) {
+    synchronized void setSerializedCellState(int index, BlockState state, int distance) {
         if (index < 0 || index >= VOLUME) {
             return;
         }
 
+        int previousVersion = version;
         setBlockStateAtIndex(index, state);
-        fluidDistance[index] = state.type.isLiquid() ? (byte) distance : (byte) -1;
+        byte nextDistance = state.type.isLiquid() ? (byte) distance : (byte) -1;
+        if (fluidDistance[index] != nextDistance) {
+            fluidDistance[index] = nextDistance;
+            if (version == previousVersion) {
+                version++;
+            }
+        }
     }
 
-    void setBlockStateAtIndex(int index, BlockState state) {
+    synchronized void setBlockStateAtIndex(int index, BlockState state) {
         if (index < 0 || index >= VOLUME) {
             return;
         }
@@ -746,6 +776,15 @@ final class Chunk {
         if (!normalized.type.isLiquid()) {
             fluidDistance[index] = -1;
         }
+        version++;
+    }
+
+    private BlockState blockStateAtIndexUnchecked(int index) {
+        int paletteIndex = blockStateIndices[index];
+        if (paletteIndex < 0 || paletteIndex >= palette.size()) {
+            return Blocks.stateFromLegacyId(GameConfig.AIR);
+        }
+        return palette.get(paletteIndex);
     }
 
     static boolean validatePaletteForDebug() {
@@ -791,6 +830,58 @@ final class Chunk {
 
     private int index(int localX, int localY, int localZ) {
         return (localY * SIZE + localZ) * SIZE + localX;
+    }
+}
+
+final class ChunkSectionSnapshot {
+    final int chunkX;
+    final int chunkY;
+    final int chunkZ;
+    private final byte[] blocks;
+    private final BlockState[] states;
+    private final byte[] fluidDistance;
+    private final int nonAirBlockCount;
+    final int version;
+
+    ChunkSectionSnapshot(int chunkX, int chunkY, int chunkZ, byte[] blocks, BlockState[] states, byte[] fluidDistance, int nonAirBlockCount, int version) {
+        this.chunkX = chunkX;
+        this.chunkY = chunkY;
+        this.chunkZ = chunkZ;
+        this.blocks = blocks;
+        this.states = states;
+        this.fluidDistance = fluidDistance;
+        this.nonAirBlockCount = nonAirBlockCount;
+        this.version = version;
+    }
+
+    boolean isEmpty() {
+        return nonAirBlockCount == 0;
+    }
+
+    byte getBlockLocal(int localX, int localY, int localZ) {
+        if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
+            return GameConfig.AIR;
+        }
+        return blocks[index(localX, localY, localZ)];
+    }
+
+    BlockState getBlockStateLocal(int localX, int localY, int localZ) {
+        if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
+            return Blocks.stateFromLegacyId(GameConfig.AIR);
+        }
+        BlockState state = states[index(localX, localY, localZ)];
+        return state == null ? Blocks.stateFromLegacyId(GameConfig.AIR) : state;
+    }
+
+    int getFluidDistanceLocal(int localX, int localY, int localZ) {
+        if (!GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)) {
+            return -1;
+        }
+        return fluidDistance[index(localX, localY, localZ)];
+    }
+
+    private int index(int localX, int localY, int localZ) {
+        return (localY * Chunk.SIZE + localZ) * Chunk.SIZE + localX;
     }
 }
 

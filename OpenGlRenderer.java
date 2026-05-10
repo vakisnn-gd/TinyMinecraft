@@ -10,10 +10,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -23,15 +25,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import javax.imageio.ImageIO;
 
 import static org.lwjgl.opengl.GL11.GL_BLEND;
-import static org.lwjgl.opengl.GL11.GL_COLOR_ARRAY;
 import static org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT;
 import static org.lwjgl.opengl.GL11.GL_CULL_FACE;
 import static org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT;
 import static org.lwjgl.opengl.GL11.GL_DEPTH_TEST;
-import static org.lwjgl.opengl.GL11.GL_FLOAT;
 import static org.lwjgl.opengl.GL11.GL_FOG;
 import static org.lwjgl.opengl.GL11.GL_FOG_COLOR;
 import static org.lwjgl.opengl.GL11.GL_FOG_END;
@@ -42,9 +47,11 @@ import static org.lwjgl.opengl.GL11.GL_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_LINES;
 import static org.lwjgl.opengl.GL11.GL_LINE_LOOP;
 import static org.lwjgl.opengl.GL11.GL_MODELVIEW;
+import static org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX;
 import static org.lwjgl.opengl.GL11.GL_NO_ERROR;
 import static org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.opengl.GL11.GL_PROJECTION;
+import static org.lwjgl.opengl.GL11.GL_PROJECTION_MATRIX;
 import static org.lwjgl.opengl.GL11.GL_QUADS;
 import static org.lwjgl.opengl.GL11.GL_REPEAT;
 import static org.lwjgl.opengl.GL11.GL_RGBA;
@@ -55,9 +62,10 @@ import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T;
+import static org.lwjgl.opengl.GL11.GL_TRIANGLES;
 import static org.lwjgl.opengl.GL11.GL_UNPACK_ALIGNMENT;
 import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
-import static org.lwjgl.opengl.GL11.GL_VERTEX_ARRAY;
+import static org.lwjgl.opengl.GL11.GL_UNSIGNED_INT;
 import static org.lwjgl.opengl.GL11.glBegin;
 import static org.lwjgl.opengl.GL11.glBindTexture;
 import static org.lwjgl.opengl.GL11.glBlendFunc;
@@ -65,14 +73,11 @@ import static org.lwjgl.opengl.GL11.glClear;
 import static org.lwjgl.opengl.GL11.glClearDepth;
 import static org.lwjgl.opengl.GL11.glClearColor;
 import static org.lwjgl.opengl.GL11.glColor3f;
-import static org.lwjgl.opengl.GL11.glColorPointer;
 import static org.lwjgl.opengl.GL11.glColor4f;
 import static org.lwjgl.opengl.GL11.glDepthFunc;
 import static org.lwjgl.opengl.GL11.glDepthMask;
 import static org.lwjgl.opengl.GL11.glDisable;
-import static org.lwjgl.opengl.GL11.glDisableClientState;
 import static org.lwjgl.opengl.GL11.glEnable;
-import static org.lwjgl.opengl.GL11.glEnableClientState;
 import static org.lwjgl.opengl.GL11.glEnd;
 import static org.lwjgl.opengl.GL11.glFrustum;
 import static org.lwjgl.opengl.GL11.glFogf;
@@ -95,28 +100,65 @@ import static org.lwjgl.opengl.GL11.glTexParameteri;
 import static org.lwjgl.opengl.GL11.glTexCoord2f;
 import static org.lwjgl.opengl.GL11.glTranslated;
 import static org.lwjgl.opengl.GL11.glVertex3d;
-import static org.lwjgl.opengl.GL11.glVertexPointer;
 import static org.lwjgl.opengl.GL11.glViewport;
 import static org.lwjgl.opengl.GL11.glDrawArrays;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
 import static org.lwjgl.opengl.GL11.glDeleteTextures;
 import static org.lwjgl.opengl.GL11.glGetError;
+import static org.lwjgl.opengl.GL11.glGetFloatv;
 import static org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER;
 import static org.lwjgl.opengl.GL15.GL_STATIC_DRAW;
 import static org.lwjgl.opengl.GL15.glBindBuffer;
 import static org.lwjgl.opengl.GL15.glBufferData;
 import static org.lwjgl.opengl.GL15.glDeleteBuffers;
 import static org.lwjgl.opengl.GL15.glGenBuffers;
+import static org.lwjgl.opengl.GL20.GL_COMPILE_STATUS;
+import static org.lwjgl.opengl.GL20.GL_FRAGMENT_SHADER;
+import static org.lwjgl.opengl.GL20.GL_LINK_STATUS;
+import static org.lwjgl.opengl.GL20.GL_VERTEX_SHADER;
+import static org.lwjgl.opengl.GL20.glAttachShader;
+import static org.lwjgl.opengl.GL20.glCompileShader;
+import static org.lwjgl.opengl.GL20.glCreateProgram;
+import static org.lwjgl.opengl.GL20.glCreateShader;
+import static org.lwjgl.opengl.GL20.glDeleteProgram;
+import static org.lwjgl.opengl.GL20.glDeleteShader;
+import static org.lwjgl.opengl.GL20.glDisableVertexAttribArray;
+import static org.lwjgl.opengl.GL20.glEnableVertexAttribArray;
+import static org.lwjgl.opengl.GL20.glGetProgramInfoLog;
+import static org.lwjgl.opengl.GL20.glGetProgrami;
+import static org.lwjgl.opengl.GL20.glGetShaderInfoLog;
+import static org.lwjgl.opengl.GL20.glGetShaderi;
+import static org.lwjgl.opengl.GL20.glGetUniformLocation;
+import static org.lwjgl.opengl.GL20.glLinkProgram;
+import static org.lwjgl.opengl.GL20.glShaderSource;
+import static org.lwjgl.opengl.GL20.glUniform1f;
+import static org.lwjgl.opengl.GL20.glUniform1i;
+import static org.lwjgl.opengl.GL20.glUniform3f;
+import static org.lwjgl.opengl.GL20.glUniformMatrix4fv;
+import static org.lwjgl.opengl.GL20.glUseProgram;
+import static org.lwjgl.opengl.GL30.glVertexAttribIPointer;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 
 final class OpenGlRenderer {
-    private static final int FLOATS_PER_VERTEX = 7;
-    private static final int BYTES_PER_VERTEX = FLOATS_PER_VERTEX * Float.BYTES;
-    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 2;
-    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 10;
-    private static final long MIN_MESH_BUILD_BUDGET_NS = 3_000_000L;
-    private static final long MAX_MESH_BUILD_BUDGET_NS = 10_000_000L;
+    private static final int INTS_PER_VERTEX = 2;
+    private static final int BYTES_PER_VERTEX = INTS_PER_VERTEX * Integer.BYTES;
+    private static final int VERTICES_PER_QUAD = 6;
+    private static final int AO_FULL_BRIGHT_PACKED = 0xFF;
+    private static final int AO_FLIP_DIAGONAL = 1 << 8;
+    private static final int VERTEX_FLAG_FOLIAGE = 1;
+    private static final int VERTEX_FLAG_UPPER = 2;
+    private static final int TRANSLUCENT_SHADER_ALPHA_BASE = 0xF8;
+    private static final int OPAQUE_SHADER_ALPHA_BASE = 0xFC;
+    private static final long CHUNK_MESH_REBUILD_COOLDOWN_NANOS = 50_000_000L;
+    private static final double PACKED_VERTEX_BIAS = 0.25;
+    private static final double PACKED_VERTEX_SCALE = 32.0;
+    private static final int PACKED_VERTEX_MAX = 1023;
+    private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 1;
+    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 1;
+    private static final int MAX_IMMEDIATE_CHUNK_UPLOADS_PER_FRAME = 4;
+    private static final int MAX_BACKLOG_CHUNK_UPLOADS_PER_FRAME = 6;
+    private static final int MAX_PENDING_MESH_BACKLOG = 1536;
     private static final double LIQUID_SURFACE_Z_OFFSET = 0.01;
     private static final double CAMERA_NEAR_PLANE = 0.08;
     private static final double CAMERA_FAR_PADDING = 64.0;
@@ -133,25 +175,51 @@ final class OpenGlRenderer {
     private final UiRenderer uiRenderer;
     private final HashMap<Long, ChunkMesh> chunkMeshes = new HashMap<>();
     private final HashSet<Long> dirtyChunkMeshes = new HashSet<>();
-    private final ArrayDeque<FloatArrayBuilder> meshBuilderPool = new ArrayDeque<>();
+    private final HashSet<Long> immediateChunkMeshes = new HashSet<>();
     private final ArrayList<ChunkMesh> transparentChunkPass = new ArrayList<>();
     private final ArrayList<Long> staleMeshKeys = new ArrayList<>();
     private final ArrayList<Chunk> loadedChunkSnapshot = new ArrayList<>();
     private final PriorityQueue<MeshBuildCandidate> meshBuildQueue = new PriorityQueue<>();
     private final HashSet<Long> queuedMeshBuildKeys = new HashSet<>();
+    private final ConcurrentHashMap<Long, Boolean> meshBuildsInFlight = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Boolean> meshBuildsReady = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Long> meshBuildCooldownUntilNanos = new ConcurrentHashMap<>();
+    private final ConcurrentLinkedQueue<MeshBuildResult> completedImmediateMeshBuilds = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<MeshBuildResult> completedMeshBuilds = new ConcurrentLinkedQueue<>();
+    private final ExecutorService meshExecutor = createMeshExecutor();
     private final LinkedHashMap<String, TextTexture> textTextures = new LinkedHashMap<>(128, 0.75f, true);
+    private final Frustum chunkFrustum = new Frustum();
 
     private int framebufferWidth = GameConfig.WINDOW_WIDTH;
     private int framebufferHeight = GameConfig.WINDOW_HEIGHT;
     private int terrainTextureId;
     private int uploadProbeVboId;
+    private int chunkShaderProgram;
+    private int chunkShaderViewProjectionLocation = -1;
+    private int chunkShaderOriginLocation = -1;
+    private int chunkShaderCameraPositionLocation = -1;
+    private int chunkShaderTimeLocation = -1;
+    private int chunkShaderTransparentPassLocation = -1;
+    private int chunkShaderDaylightLocation = -1;
+    private int chunkShaderFancyGraphicsLocation = -1;
+    private int chunkShaderFogColorLocation = -1;
+    private int chunkShaderFogDensityLocation = -1;
+    private final FloatBuffer matrixScratch = BufferUtils.createFloatBuffer(16);
+    private final float[] modelViewMatrix = new float[16];
+    private final float[] projectionMatrix = new float[16];
+    private final float[] viewProjectionMatrix = new float[16];
     private double currentFovDegrees = GameConfig.FOV_DEGREES;
     private int currentRenderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
     private float currentDaylight = 1.0f;
     private float currentSceneBrightness = 1.0f;
+    private float currentSkyRed = 0.50f;
+    private float currentSkyGreen = 0.68f;
+    private float currentSkyBlue = 0.92f;
     private boolean resourcesReady;
     private boolean vaoSupported;
     private double debugFps;
+    private int debugUploadedMeshesLastFrame;
+    private int debugRejectedMeshVersionsLastFrame;
     private double fpsSampleTime;
     private int fpsSampleFrames;
     private double renderCameraX;
@@ -171,13 +239,25 @@ final class OpenGlRenderer {
     private boolean lastSpectatorInsideBlock;
     private boolean chunkBordersEnabled;
     private long lastMeshProfileLogNanos;
+    private volatile int meshBuildEpoch;
     private double menuPanoramaYaw;
+    private double currentPartialTicks = 1.0;
 
     OpenGlRenderer(VoxelWorld world) {
         this.world = world;
         this.skyRenderer = new SkyRenderer();
         this.waterRenderer = new WaterRenderer(world);
         this.uiRenderer = new UiRenderer();
+    }
+
+    private static ExecutorService createMeshExecutor() {
+        int threads = Math.max(1, Math.min(GameConfig.CHUNK_GENERATION_THREADS, Runtime.getRuntime().availableProcessors() - 1));
+        ThreadFactory factory = runnable -> {
+            Thread thread = new Thread(runnable, "tinycraft-mesh-worker");
+            thread.setDaemon(true);
+            return thread;
+        };
+        return Executors.newFixedThreadPool(threads, factory);
     }
 
     void init() {
@@ -195,7 +275,8 @@ final class OpenGlRenderer {
 
         terrainTextureId = loadTerrainTexture();
         uploadProbeVboId = createUploadProbeVbo();
-        resourcesReady = terrainTextureId != 0 && uploadProbeVboId != 0;
+        chunkShaderProgram = createChunkShaderProgram();
+        resourcesReady = terrainTextureId != 0 && uploadProbeVboId != 0 && chunkShaderProgram != 0;
         if (!resourcesReady) {
             throw new IllegalStateException("Renderer resources were not created.");
         }
@@ -463,13 +544,20 @@ final class OpenGlRenderer {
     }
 
     void clearWorldMeshes() {
+        meshBuildEpoch++;
         for (ChunkMesh mesh : chunkMeshes.values()) {
             unloadChunkMesh(mesh);
         }
         chunkMeshes.clear();
         dirtyChunkMeshes.clear();
+        immediateChunkMeshes.clear();
         meshBuildQueue.clear();
         queuedMeshBuildKeys.clear();
+        meshBuildsInFlight.clear();
+        meshBuildsReady.clear();
+        meshBuildCooldownUntilNanos.clear();
+        completedImmediateMeshBuilds.clear();
+        completedMeshBuilds.clear();
         staleMeshKeys.clear();
         transparentChunkPass.clear();
     }
@@ -494,6 +582,18 @@ final class OpenGlRenderer {
     }
 
     void rebuildChunkSectionAroundBlock(int blockX, int blockY, int blockZ) {
+        forceRebuildBlockEdit(blockX, blockY, blockZ);
+    }
+
+    void forceRebuildBlockEdit(int blockX, int blockY, int blockZ) {
+        rebuildChunkSectionAroundBlock(blockX, blockY, blockZ, true);
+    }
+
+    void rebuildChunkSectionAroundBlockThrottled(int blockX, int blockY, int blockZ) {
+        rebuildChunkSectionAroundBlock(blockX, blockY, blockZ, false);
+    }
+
+    private void rebuildChunkSectionAroundBlock(int blockX, int blockY, int blockZ, boolean immediate) {
         if (!GameConfig.isWorldYInside(blockY)) {
             rebuildChunksAroundBlock(blockX, blockZ);
             return;
@@ -501,24 +601,24 @@ final class OpenGlRenderer {
         int chunkX = Math.floorDiv(blockX, GameConfig.CHUNK_SIZE);
         int chunkY = GameConfig.sectionIndexForY(blockY);
         int chunkZ = Math.floorDiv(blockZ, GameConfig.CHUNK_SIZE);
-        markChunkDirty(chunkX, chunkY, chunkZ);
+        markChunkDirty(chunkX, chunkY, chunkZ, immediate);
         int localX = Math.floorMod(blockX, GameConfig.CHUNK_SIZE);
         int localY = GameConfig.localYForWorldY(blockY);
         int localZ = Math.floorMod(blockZ, GameConfig.CHUNK_SIZE);
         if (localX == 0) {
-            markChunkDirty(chunkX - 1, chunkY, chunkZ);
+            markChunkDirty(chunkX - 1, chunkY, chunkZ, immediate);
         } else if (localX == GameConfig.CHUNK_SIZE - 1) {
-            markChunkDirty(chunkX + 1, chunkY, chunkZ);
+            markChunkDirty(chunkX + 1, chunkY, chunkZ, immediate);
         }
         if (localZ == 0) {
-            markChunkDirty(chunkX, chunkY, chunkZ - 1);
+            markChunkDirty(chunkX, chunkY, chunkZ - 1, immediate);
         } else if (localZ == GameConfig.CHUNK_SIZE - 1) {
-            markChunkDirty(chunkX, chunkY, chunkZ + 1);
+            markChunkDirty(chunkX, chunkY, chunkZ + 1, immediate);
         }
         if (localY == 0 && chunkY > 0) {
-            markChunkDirty(chunkX, chunkY - 1, chunkZ);
+            markChunkDirty(chunkX, chunkY - 1, chunkZ, immediate);
         } else if (localY == GameConfig.CHUNK_SIZE - 1 && chunkY + 1 < GameConfig.WORLD_CHUNKS_Y) {
-            markChunkDirty(chunkX, chunkY + 1, chunkZ);
+            markChunkDirty(chunkX, chunkY + 1, chunkZ, immediate);
         }
     }
 
@@ -534,12 +634,13 @@ final class OpenGlRenderer {
         }
     }
 
-    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, ChatSystem chat) {
+    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, double partialTicks, ChatSystem chat) {
         if (!resourcesReady || framebufferWidth <= 0 || framebufferHeight <= 0) {
             return;
         }
 
         currentRenderDistanceChunks = clamp(renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
+        currentPartialTicks = clamp(partialTicks, 0.0, 1.0);
         updateFpsCounter(deltaTime);
         world.fillLoadedChunksSnapshot(loadedChunkSnapshot);
         updateSkyColor(timeOfDay);
@@ -555,6 +656,7 @@ final class OpenGlRenderer {
         } else {
             setupCamera(player, thirdPersonView, frontThirdPersonView);
         }
+        updateChunkFrustum();
         if (!paused && (!mainMenuActive || menuPanorama)) {
             ensureChunkMeshesAroundPlayer(player.x, player.y, player.z, getChunkRenderRadius(player));
         }
@@ -590,9 +692,15 @@ final class OpenGlRenderer {
         }
         chunkMeshes.clear();
         dirtyChunkMeshes.clear();
+        immediateChunkMeshes.clear();
         meshBuildQueue.clear();
         queuedMeshBuildKeys.clear();
-        meshBuilderPool.clear();
+        meshBuildsInFlight.clear();
+        meshBuildsReady.clear();
+        meshBuildCooldownUntilNanos.clear();
+        completedImmediateMeshBuilds.clear();
+        completedMeshBuilds.clear();
+        meshExecutor.shutdownNow();
         if (terrainTextureId != 0) {
             glDeleteTextures(terrainTextureId);
             terrainTextureId = 0;
@@ -605,7 +713,59 @@ final class OpenGlRenderer {
             glDeleteBuffers(uploadProbeVboId);
             uploadProbeVboId = 0;
         }
+        if (chunkShaderProgram != 0) {
+            glDeleteProgram(chunkShaderProgram);
+            chunkShaderProgram = 0;
+        }
         resourcesReady = false;
+    }
+
+    private int createChunkShaderProgram() {
+        int vertexShader = compileShader(GL_VERTEX_SHADER, readShaderSource("ChunkShader.vsh"));
+        int fragmentShader = compileShader(GL_FRAGMENT_SHADER, readShaderSource("ChunkShader.fsh"));
+        int program = glCreateProgram();
+        glAttachShader(program, vertexShader);
+        glAttachShader(program, fragmentShader);
+        glLinkProgram(program);
+        if (glGetProgrami(program, GL_LINK_STATUS) == 0) {
+            String log = glGetProgramInfoLog(program);
+            glDeleteShader(vertexShader);
+            glDeleteShader(fragmentShader);
+            glDeleteProgram(program);
+            throw new IllegalStateException("Failed to link chunk shader: " + log);
+        }
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+        chunkShaderViewProjectionLocation = glGetUniformLocation(program, "uViewProjection");
+        chunkShaderOriginLocation = glGetUniformLocation(program, "uChunkOrigin");
+        chunkShaderCameraPositionLocation = glGetUniformLocation(program, "uCameraPosition");
+        chunkShaderTimeLocation = glGetUniformLocation(program, "uTime");
+        chunkShaderTransparentPassLocation = glGetUniformLocation(program, "uTransparentPass");
+        chunkShaderDaylightLocation = glGetUniformLocation(program, "uDaylight");
+        chunkShaderFancyGraphicsLocation = glGetUniformLocation(program, "u_FancyGraphics");
+        chunkShaderFogColorLocation = glGetUniformLocation(program, "uFogColor");
+        chunkShaderFogDensityLocation = glGetUniformLocation(program, "uFogDensity");
+        return program;
+    }
+
+    private int compileShader(int type, String source) {
+        int shader = glCreateShader(type);
+        glShaderSource(shader, source);
+        glCompileShader(shader);
+        if (glGetShaderi(shader, GL_COMPILE_STATUS) == 0) {
+            String log = glGetShaderInfoLog(shader);
+            glDeleteShader(shader);
+            throw new IllegalStateException("Failed to compile chunk shader: " + log);
+        }
+        return shader;
+    }
+
+    private String readShaderSource(String filename) {
+        try {
+            return Files.readString(Path.of(filename), StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to read shader " + filename, exception);
+        }
     }
 
     private void updateSkyColor(double timeOfDay) {
@@ -620,6 +780,9 @@ final class OpenGlRenderer {
 
         currentDaylight = daylight;
         currentSceneBrightness = 0.55f + currentDaylight * 0.45f;
+        currentSkyRed = skyRed;
+        currentSkyGreen = skyGreen;
+        currentSkyBlue = skyBlue;
         glClearColor(skyRed, skyGreen, skyBlue, 1.0f);
     }
 
@@ -678,9 +841,11 @@ final class OpenGlRenderer {
         renderCameraX = cameraX;
         renderCameraY = cameraY;
         renderCameraZ = cameraZ;
-        cameraForwardX = Math.cos(player.yaw) * Math.cos(player.pitch);
-        cameraForwardY = Math.sin(player.pitch);
-        cameraForwardZ = Math.sin(player.yaw) * Math.cos(player.pitch);
+        double viewYaw = frontThirdPersonView ? player.yaw + Math.PI : player.yaw;
+        double viewPitch = frontThirdPersonView ? -player.pitch : player.pitch;
+        cameraForwardX = Math.cos(viewYaw) * Math.cos(viewPitch);
+        cameraForwardY = Math.sin(viewPitch);
+        cameraForwardZ = Math.sin(viewYaw) * Math.cos(viewPitch);
         cameraBlockX = (int) Math.floor(renderCameraX);
         cameraBlockY = (int) Math.floor(renderCameraY);
         cameraBlockZ = (int) Math.floor(renderCameraZ);
@@ -693,6 +858,22 @@ final class OpenGlRenderer {
         glRotatef((float) -viewPitchDegrees, 1.0f, 0.0f, 0.0f);
         glRotatef((float) (viewYawDegrees + 90.0), 0.0f, 1.0f, 0.0f);
         glRotatef((float) -bobRoll, 0.0f, 0.0f, 1.0f);
+    }
+
+    private void updateChunkFrustum() {
+        double aspect = (double) framebufferWidth / Math.max(1, framebufferHeight);
+        chunkFrustum.set(
+            renderCameraX,
+            renderCameraY,
+            renderCameraZ,
+            cameraForwardX,
+            cameraForwardY,
+            cameraForwardZ,
+            currentFovDegrees,
+            aspect,
+            CAMERA_NEAR_PLANE,
+            cameraFarPlane()
+        );
     }
 
     private double resolveThirdPersonCameraDistance(double targetX, double targetY, double targetZ,
@@ -803,6 +984,7 @@ final class OpenGlRenderer {
             transparentMeshes = transparentChunkPass;
         }
 
+        bindChunkShader(transparentPass);
         for (Chunk chunk : loadedChunkSnapshot) {
             int chunkX = chunk.chunkX;
             int chunkY = chunk.chunkY;
@@ -842,6 +1024,7 @@ final class OpenGlRenderer {
                 drawChunkBuffer(mesh, mesh.transparentVaoId, mesh.transparentVboId, mesh.transparentVertexCount);
             }
         }
+        glUseProgram(0);
 
         glDepthMask(true);
         if (transparentPass) {
@@ -859,6 +1042,45 @@ final class OpenGlRenderer {
         return dx * dx + dy * dy + dz * dz;
     }
 
+    private void bindChunkShader(boolean transparentPass) {
+        glUseProgram(chunkShaderProgram);
+        updateViewProjectionMatrixUniform();
+        glUniform1f(chunkShaderTimeLocation, (float) (System.nanoTime() * 1.0e-9));
+        glUniform1f(chunkShaderDaylightLocation, currentDaylight);
+        glUniform1i(chunkShaderTransparentPassLocation, transparentPass ? 1 : 0);
+        glUniform1i(chunkShaderFancyGraphicsLocation, 0);
+        glUniform3f(chunkShaderCameraPositionLocation, (float) renderCameraX, (float) renderCameraY, (float) renderCameraZ);
+        glUniform3f(chunkShaderFogColorLocation, currentSkyRed, currentSkyGreen, currentSkyBlue);
+        float visibleBlocks = Math.max(GameConfig.CHUNK_SIZE * GameConfig.MIN_RENDER_DISTANCE, currentRenderDistanceChunks * GameConfig.CHUNK_SIZE);
+        glUniform1f(chunkShaderFogDensityLocation, 1.25f / visibleBlocks);
+    }
+
+    private void updateViewProjectionMatrixUniform() {
+        matrixScratch.clear();
+        glGetFloatv(GL_MODELVIEW_MATRIX, matrixScratch);
+        matrixScratch.get(modelViewMatrix);
+        matrixScratch.clear();
+        glGetFloatv(GL_PROJECTION_MATRIX, matrixScratch);
+        matrixScratch.get(projectionMatrix);
+        multiplyColumnMajor(projectionMatrix, modelViewMatrix, viewProjectionMatrix);
+        matrixScratch.clear();
+        matrixScratch.put(viewProjectionMatrix);
+        matrixScratch.flip();
+        glUniformMatrix4fv(chunkShaderViewProjectionLocation, false, matrixScratch);
+    }
+
+    private void multiplyColumnMajor(float[] left, float[] right, float[] out) {
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) {
+                out[column * 4 + row] =
+                    left[0 * 4 + row] * right[column * 4 + 0]
+                    + left[1 * 4 + row] * right[column * 4 + 1]
+                    + left[2 * 4 + row] * right[column * 4 + 2]
+                    + left[3 * 4 + row] * right[column * 4 + 3];
+            }
+        }
+    }
+
     private double chunkDistanceSquaredToPoint(int chunkX, int chunkY, int chunkZ, double x, double y, double z) {
         double centerX = (chunkX + 0.5) * GameConfig.CHUNK_SIZE;
         double centerY = GameConfig.sectionYForIndex(chunkY) + GameConfig.CHUNK_SIZE * 0.5;
@@ -869,44 +1091,25 @@ final class OpenGlRenderer {
         return dx * dx + dy * dy + dz * dz;
     }
 
-    private boolean shouldRenderChunk(PlayerState player, int chunkX, int chunkY, int chunkZ) {
-        int playerChunkX = worldToChunk((int) Math.floor(player.x));
-        int playerChunkZ = worldToChunk((int) Math.floor(player.z));
-        if (world.isChunkEmpty(chunkX, chunkY, chunkZ)) {
-            return false;
-        }
-        return shouldRenderChunk(playerChunkX, playerChunkZ, getChunkRenderRadius(player), chunkX, chunkY, chunkZ);
-    }
-
     private boolean shouldRenderChunk(int playerChunkX, int playerChunkZ, int chunkRenderRadius, int chunkX, int chunkY, int chunkZ) {
         if (Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ)) > chunkRenderRadius) {
             return false;
         }
-        if (!isChunkInCameraCone(chunkX, chunkY, chunkZ)) {
+        if (!isChunkInFrustum(chunkX, chunkY, chunkZ)) {
             return false;
         }
 
         return true;
     }
 
-    private boolean isChunkInCameraCone(int chunkX, int chunkY, int chunkZ) {
-        double centerX = (chunkX + 0.5) * GameConfig.CHUNK_SIZE;
-        double centerY = GameConfig.sectionYForIndex(chunkY) + GameConfig.CHUNK_SIZE * 0.5;
-        double centerZ = (chunkZ + 0.5) * GameConfig.CHUNK_SIZE;
-        double dx = centerX - renderCameraX;
-        double dy = centerY - renderCameraY;
-        double dz = centerZ - renderCameraZ;
-        double distanceSquared = dx * dx + dy * dy + dz * dz;
-        double nearAlwaysVisible = GameConfig.CHUNK_SIZE * 3.0;
-        if (distanceSquared <= nearAlwaysVisible * nearAlwaysVisible) {
-            return true;
-        }
-        double distance = Math.sqrt(distanceSquared);
-        if (distance <= 0.0001) {
-            return true;
-        }
-        double dot = (dx * cameraForwardX + dy * cameraForwardY + dz * cameraForwardZ) / distance;
-        return dot > -0.18;
+    private boolean isChunkInFrustum(int chunkX, int chunkY, int chunkZ) {
+        double minX = chunkX * GameConfig.CHUNK_SIZE;
+        double minY = GameConfig.sectionYForIndex(chunkY);
+        double minZ = chunkZ * GameConfig.CHUNK_SIZE;
+        double maxX = minX + GameConfig.CHUNK_SIZE;
+        double maxY = minY + GameConfig.CHUNK_SIZE;
+        double maxZ = minZ + GameConfig.CHUNK_SIZE;
+        return chunkFrustum.intersectsAabb(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     private double cameraFarPlane() {
@@ -971,23 +1174,60 @@ final class OpenGlRenderer {
         return forwardProjection > 0.0 || distanceSquared <= (radius + 3.0) * (radius + 3.0) || lateralSquared <= lateralAllowance * lateralAllowance;
     }
 
-    private void rebuildChunkMesh(int chunkX, int chunkY, int chunkZ, double sortCameraX, double sortCameraY, double sortCameraZ) {
+    private boolean submitChunkMeshBuild(MeshBuildCandidate candidate, double sortCameraX, double sortCameraY, double sortCameraZ) {
+        if (meshBuildsReady.containsKey(candidate.meshKey)) {
+            return false;
+        }
+        boolean immediate = candidate.immediate || immediateChunkMeshes.contains(candidate.meshKey);
+        long now = System.nanoTime();
+        Long cooldownUntil = meshBuildCooldownUntilNanos.get(candidate.meshKey);
+        if (!immediate && cooldownUntil != null && now < cooldownUntil) {
+            return false;
+        }
+        if (meshBuildsInFlight.putIfAbsent(candidate.meshKey, Boolean.TRUE) != null) {
+            return false;
+        }
+        if (immediate) {
+            immediateChunkMeshes.remove(candidate.meshKey);
+        }
+        meshBuildCooldownUntilNanos.put(candidate.meshKey, now + CHUNK_MESH_REBUILD_COOLDOWN_NANOS);
+        MeshBuildContext context = new MeshBuildContext(
+            cameraBlockX,
+            cameraBlockY,
+            cameraBlockZ,
+            spectatorInsideBlock,
+            sortCameraX,
+            sortCameraY,
+            sortCameraZ,
+            meshBuildEpoch
+        );
+        meshExecutor.execute(() -> {
+            try {
+                MeshBuildResult result = buildChunkMeshResult(candidate.chunkX, candidate.chunkY, candidate.chunkZ, candidate.meshKey, context);
+                if (result.epoch == meshBuildEpoch) {
+                    meshBuildsReady.put(candidate.meshKey, Boolean.TRUE);
+                    if (immediate) {
+                        completedImmediateMeshBuilds.add(result);
+                    } else {
+                        completedMeshBuilds.add(result);
+                    }
+                }
+            } finally {
+                meshBuildsInFlight.remove(candidate.meshKey);
+            }
+        });
+        return true;
+    }
+
+    private MeshBuildResult buildChunkMeshResult(int chunkX, int chunkY, int chunkZ, long meshKey, MeshBuildContext context) {
         if (chunkY < 0 || chunkY >= GameConfig.WORLD_CHUNKS_Y) {
-            return;
+            return MeshBuildResult.empty(chunkX, chunkY, chunkZ, meshKey, -1, true, context.epoch);
         }
 
-        long meshKey = chunkKey(chunkX, chunkY, chunkZ);
-        ChunkMesh mesh = chunkMeshes.get(meshKey);
-        Chunk sourceChunk = world.getChunk(chunkX, chunkY, chunkZ);
+        ChunkSectionSnapshot sourceChunk = world.getChunkSnapshot(chunkX, chunkY, chunkZ);
         if (sourceChunk == null || sourceChunk.isEmpty()) {
-            if (mesh != null) {
-                unloadChunkMesh(mesh);
-            }
-            return;
-        }
-        if (mesh == null) {
-            mesh = new ChunkMesh(chunkX, chunkY, chunkZ);
-            chunkMeshes.put(meshKey, mesh);
+            int version = sourceChunk == null ? -1 : sourceChunk.version;
+            return MeshBuildResult.empty(chunkX, chunkY, chunkZ, meshKey, version, true, context.epoch);
         }
 
         int startX = chunkX * GameConfig.CHUNK_SIZE;
@@ -997,50 +1237,29 @@ final class OpenGlRenderer {
         int endY = startY + GameConfig.CHUNK_SIZE;
         int endZ = startZ + GameConfig.CHUNK_SIZE;
 
-        FloatArrayBuilder opaqueBuilder = acquireMeshBuilder(4096);
-        FloatArrayBuilder transparentBuilder = acquireMeshBuilder(2048);
-        try {
-            buildChunkDisplayList(sourceChunk, opaqueBuilder, transparentBuilder, startX, startY, startZ, endX, endY, endZ);
-            transparentBuilder.sortQuadsFarToNear(sortCameraX - startX, sortCameraY - startY, sortCameraZ - startZ);
-
-            deleteMeshBuffer(mesh.opaqueVaoId, mesh.opaqueVboId);
-            deleteMeshBuffer(mesh.transparentVaoId, mesh.transparentVboId);
-            mesh.opaqueVaoId = 0;
-            mesh.opaqueVboId = 0;
-            mesh.opaqueVertexCount = 0;
-            mesh.transparentVaoId = 0;
-            mesh.transparentVboId = 0;
-            mesh.transparentVertexCount = 0;
-
-            uploadChunkBuffer(mesh, false, opaqueBuilder);
-            uploadChunkBuffer(mesh, true, transparentBuilder);
-            mesh.hasOpaqueGeometry = mesh.opaqueVertexCount > 0;
-            mesh.hasTransparentGeometry = mesh.transparentVertexCount > 0;
-            mesh.resident = mesh.hasOpaqueGeometry || mesh.hasTransparentGeometry;
-        } finally {
-            releaseMeshBuilder(opaqueBuilder);
-            releaseMeshBuilder(transparentBuilder);
-        }
-        verifyOpenGl("rebuildChunkMesh(" + chunkX + "," + chunkY + "," + chunkZ + ")");
+        IntVertexBuilder opaqueBuilder = new IntVertexBuilder(4096);
+        IntVertexBuilder transparentBuilder = new IntVertexBuilder(2048);
+        long[] greedyMask = new long[GameConfig.CHUNK_SIZE * GameConfig.CHUNK_SIZE];
+        buildChunkDisplayList(sourceChunk, opaqueBuilder, transparentBuilder, startX, startY, startZ, endX, endY, endZ, context, greedyMask);
+        transparentBuilder.sortQuadsFarToNear(context.sortCameraX - startX, context.sortCameraY - startY, context.sortCameraZ - startZ);
+        return new MeshBuildResult(
+            chunkX,
+            chunkY,
+            chunkZ,
+            meshKey,
+            sourceChunk.version,
+            opaqueBuilder.toArray(),
+            opaqueBuilder.intCount(),
+            transparentBuilder.toArray(),
+            transparentBuilder.intCount(),
+            true,
+            context.epoch
+        );
     }
 
-    private FloatArrayBuilder acquireMeshBuilder(int initialCapacity) {
-        FloatArrayBuilder builder = meshBuilderPool.pollFirst();
-        if (builder == null) {
-            return new FloatArrayBuilder(initialCapacity);
-        }
-        builder.reset(initialCapacity);
-        return builder;
-    }
+    private void buildChunkDisplayList(ChunkSectionSnapshot sourceChunk, IntVertexBuilder opaqueBuilder, IntVertexBuilder transparentBuilder, int startX, int startY, int startZ, int endX, int endY, int endZ, MeshBuildContext context, long[] greedyMask) {
+        emitGreedyCubeFaces(sourceChunk, opaqueBuilder, startX, startY, startZ, context, greedyMask);
 
-    private void releaseMeshBuilder(FloatArrayBuilder builder) {
-        builder.clear();
-        if (meshBuilderPool.size() < GameConfig.CHUNK_GENERATION_THREADS * 4) {
-            meshBuilderPool.addFirst(builder);
-        }
-    }
-
-    private void buildChunkDisplayList(Chunk sourceChunk, FloatArrayBuilder opaqueBuilder, FloatArrayBuilder transparentBuilder, int startX, int startY, int startZ, int endX, int endY, int endZ) {
         for (int localX = 0, x = startX; x < endX; x++, localX++) {
             for (int localY = 0, y = startY; y < endY; y++, localY++) {
                 for (int localZ = 0, z = startZ; z < endZ; z++, localZ++) {
@@ -1048,26 +1267,45 @@ final class OpenGlRenderer {
                     if (block == GameConfig.AIR) {
                         continue;
                     }
-                    boolean cameraInsideSolidBlock = x == cameraBlockX
-                        && y == cameraBlockY
-                        && z == cameraBlockZ
-                        && world.isSolidBlock(block);
-                    if (cameraInsideSolidBlock && !spectatorInsideBlock) {
+                    BlockState blockState = sourceChunk.getBlockStateLocal(localX, localY, localZ);
+                    boolean cameraInsideSolidBlock = x == context.cameraBlockX
+                    && y == context.cameraBlockY
+                    && z == context.cameraBlockZ
+                    && world.isSolidBlock(block);
+                    if (cameraInsideSolidBlock && !context.spectatorInsideBlock) {
                         continue;
                     }
-                    if (spectatorInsideBlock && cameraInsideSolidBlock) {
+                    if (context.spectatorInsideBlock && cameraInsideSolidBlock) {
                         continue;
                     }
-                    if (spectatorInsideBlock && world.isSolidBlock(block) && isNearSpectatorCutoutBlock(x, y, z)) {
+                    if (context.spectatorInsideBlock && world.isSolidBlock(block) && isNearSpectatorCutoutBlock(x, y, z, context)) {
+                        continue;
+                    }
+
+                    if (isGreedyMeshBlock(block, blockState, x, y, z, context)) {
                         continue;
                     }
 
                     boolean stableOpaqueBlock = block == GameConfig.SNOW_LAYER
+                        || block == GameConfig.OAK_FENCE
+                        || block == GameConfig.OAK_FENCE_GATE
                         || block == GameConfig.OAK_LEAVES
                         || block == GameConfig.PINE_LEAVES;
-                    FloatArrayBuilder targetBuilder = (!stableOpaqueBlock && world.isTransparentBlock(block)) ? transparentBuilder : opaqueBuilder;
+                    IntVertexBuilder targetBuilder = (!stableOpaqueBlock && world.isTransparentBlock(block)) ? transparentBuilder : opaqueBuilder;
                     if (block == GameConfig.OAK_DOOR) {
-                        emitDoorBlock(targetBuilder, localX, localY, localZ, x, y, z);
+                        emitDoorBlock(targetBuilder, localX, localY, localZ, x, y, z, blockState);
+                        continue;
+                    }
+                    if (block == GameConfig.OAK_FENCE) {
+                        emitFenceBlock(targetBuilder, localX, localY, localZ, x, y, z);
+                        continue;
+                    }
+                    if (block == GameConfig.OAK_FENCE_GATE) {
+                        emitFenceGateBlock(targetBuilder, localX, localY, localZ, x, y, z, blockState);
+                        continue;
+                    }
+                    if (block == GameConfig.RED_BED) {
+                        emitBedBlock(targetBuilder, localX, localY, localZ, x, y, z, blockState);
                         continue;
                     }
                     if (world.isCrossPlant(block)) {
@@ -1079,33 +1317,36 @@ final class OpenGlRenderer {
                     }
 
                     if (waterRenderer.isRenderableBlockFace(block, x, y, z, Face.WEST)) {
-                        emitBlockFace(targetBuilder, localX, localY, localZ, x, y, z, Face.WEST, block);
+                        emitBlockFace(sourceChunk, targetBuilder, localX, localY, localZ, startX, startY, startZ, x, y, z, Face.WEST, block);
                     }
                     if (waterRenderer.isRenderableBlockFace(block, x, y, z, Face.EAST)) {
-                        emitBlockFace(targetBuilder, localX, localY, localZ, x, y, z, Face.EAST, block);
+                        emitBlockFace(sourceChunk, targetBuilder, localX, localY, localZ, startX, startY, startZ, x, y, z, Face.EAST, block);
                     }
                     if (waterRenderer.isRenderableBlockFace(block, x, y, z, Face.TOP)) {
-                        emitBlockFace(targetBuilder, localX, localY, localZ, x, y, z, Face.TOP, block);
+                        emitBlockFace(sourceChunk, targetBuilder, localX, localY, localZ, startX, startY, startZ, x, y, z, Face.TOP, block);
                     }
                     if (waterRenderer.isRenderableBlockFace(block, x, y, z, Face.BOTTOM)) {
-                        emitBlockFace(targetBuilder, localX, localY, localZ, x, y, z, Face.BOTTOM, block);
+                        emitBlockFace(sourceChunk, targetBuilder, localX, localY, localZ, startX, startY, startZ, x, y, z, Face.BOTTOM, block);
                     }
                     if (waterRenderer.isRenderableBlockFace(block, x, y, z, Face.NORTH)) {
-                        emitBlockFace(targetBuilder, localX, localY, localZ, x, y, z, Face.NORTH, block);
+                        emitBlockFace(sourceChunk, targetBuilder, localX, localY, localZ, startX, startY, startZ, x, y, z, Face.NORTH, block);
                     }
                     if (waterRenderer.isRenderableBlockFace(block, x, y, z, Face.SOUTH)) {
-                        emitBlockFace(targetBuilder, localX, localY, localZ, x, y, z, Face.SOUTH, block);
+                        emitBlockFace(sourceChunk, targetBuilder, localX, localY, localZ, startX, startY, startZ, x, y, z, Face.SOUTH, block);
                     }
                 }
             }
         }
     }
 
-    private void emitBlockFace(FloatArrayBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, Face face, byte block) {
-        emitBlockFace(builder, x, y, z, worldX, worldY, worldZ, face, block, -1.0f);
+    private void emitBlockFace(ChunkSectionSnapshot sourceChunk, IntVertexBuilder builder, int x, int y, int z,
+                               int startX, int startY, int startZ, int worldX, int worldY, int worldZ, Face face, byte block) {
+        emitBlockFace(sourceChunk, builder, x, y, z, startX, startY, startZ, worldX, worldY, worldZ, face, block, -1.0f);
     }
 
-    private void emitBlockFace(FloatArrayBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, Face face, byte block, float forcedAlpha) {
+    private void emitBlockFace(ChunkSectionSnapshot sourceChunk, IntVertexBuilder builder, int x, int y, int z,
+                               int startX, int startY, int startZ, int worldX, int worldY, int worldZ,
+                               Face face, byte block, float forcedAlpha) {
         double minX = x;
         double minY = y;
         double minZ = z;
@@ -1125,29 +1366,33 @@ final class OpenGlRenderer {
         double sideMinY = world.isLiquidBlock(block) ? waterRenderer.liquidSideMinY(minY, block, face, worldX, worldY, worldZ) : minY;
 
         float shade = Settings.goodGraphics() ? world.getAmbientShade(worldX, worldY, worldZ) : 1.0f;
-        float[] color = colorForFace(block, face, shade, worldX, worldY, worldZ);
+        int color = colorForFace(block, face, shade, worldX, worldY, worldZ);
         if (forcedAlpha >= 0.0f) {
-            color[3] = forcedAlpha;
+            color = withAlpha(color, forcedAlpha);
         }
+        int ao = (!transparent && !liquid && forcedAlpha < 0.0f)
+            ? packUnitFaceAo(sourceChunk, startX, startY, startZ, worldX, worldY, worldZ, face)
+            : AO_FULL_BRIGHT_PACKED;
+        int vertexFlags = isWavingFoliageFace(block, face) ? VERTEX_FLAG_FOLIAGE : 0;
 
         switch (face) {
             case WEST:
-                appendQuad(builder, minX - offset, sideMinY, minZ, minX - offset, maxY, minZ, minX - offset, maxY, maxZ, minX - offset, sideMinY, maxZ, color);
+                appendQuad(builder, minX - offset, sideMinY, minZ, minX - offset, maxY, minZ, minX - offset, maxY, maxZ, minX - offset, sideMinY, maxZ, color, ao, vertexFlags);
                 break;
             case EAST:
-                appendQuad(builder, maxX + offset, sideMinY, maxZ, maxX + offset, maxY, maxZ, maxX + offset, maxY, minZ, maxX + offset, sideMinY, minZ, color);
+                appendQuad(builder, maxX + offset, sideMinY, maxZ, maxX + offset, maxY, maxZ, maxX + offset, maxY, minZ, maxX + offset, sideMinY, minZ, color, ao, vertexFlags);
                 break;
             case TOP:
-                appendQuad(builder, minX, maxY + (liquid ? 0.0 : offset), maxZ, minX, maxY + (liquid ? 0.0 : offset), minZ, maxX, maxY + (liquid ? 0.0 : offset), minZ, maxX, maxY + (liquid ? 0.0 : offset), maxZ, color);
+                appendQuad(builder, minX, maxY + (liquid ? 0.0 : offset), maxZ, minX, maxY + (liquid ? 0.0 : offset), minZ, maxX, maxY + (liquid ? 0.0 : offset), minZ, maxX, maxY + (liquid ? 0.0 : offset), maxZ, color, ao, vertexFlags);
                 break;
             case BOTTOM:
-                appendQuad(builder, minX, minY - offset, minZ, minX, minY - offset, maxZ, maxX, minY - offset, maxZ, maxX, minY - offset, minZ, color);
+                appendQuad(builder, minX, minY - offset, minZ, minX, minY - offset, maxZ, maxX, minY - offset, maxZ, maxX, minY - offset, minZ, color, ao, vertexFlags);
                 break;
             case NORTH:
-                appendQuad(builder, maxX, sideMinY, minZ - offset, maxX, maxY, minZ - offset, minX, maxY, minZ - offset, minX, sideMinY, minZ - offset, color);
+                appendQuad(builder, maxX, sideMinY, minZ - offset, maxX, maxY, minZ - offset, minX, maxY, minZ - offset, minX, sideMinY, minZ - offset, color, ao, vertexFlags);
                 break;
             case SOUTH:
-                appendQuad(builder, minX, sideMinY, maxZ + offset, minX, maxY, maxZ + offset, maxX, maxY, maxZ + offset, maxX, sideMinY, maxZ + offset, color);
+                appendQuad(builder, minX, sideMinY, maxZ + offset, minX, maxY, maxZ + offset, maxX, maxY, maxZ + offset, maxX, sideMinY, maxZ + offset, color, ao, vertexFlags);
                 break;
             default:
                 break;
@@ -1157,26 +1402,18 @@ final class OpenGlRenderer {
         }
     }
 
-    private void emitOreFaceOverlay(FloatArrayBuilder builder, double minX, double minY, double minZ,
+    private void emitOreFaceOverlay(IntVertexBuilder builder, double minX, double minY, double minZ,
                                     double maxX, double maxY, double maxZ, Face face, byte block, float ambientShade) {
-        float[] color = oreAccentColor(block, face.brightness * ambientShade);
-        double[][] patches = {
-            {0.18, 0.20, 0.20},
-            {0.56, 0.16, 0.16},
-            {0.34, 0.48, 0.24}
-        };
+        int color = oreAccentColorPacked(block, face.brightness * ambientShade);
         double lift = 0.004;
-        for (double[] patch : patches) {
-            double a = patch[0];
-            double b = patch[1];
-            double size = patch[2];
-            appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, a, b, size, lift, color);
-        }
+        appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, 0.18, 0.20, 0.20, lift, color);
+        appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, 0.56, 0.16, 0.16, lift, color);
+        appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, 0.34, 0.48, 0.24, lift, color);
     }
 
-    private void appendOrePatch(FloatArrayBuilder builder, double minX, double minY, double minZ,
+    private void appendOrePatch(IntVertexBuilder builder, double minX, double minY, double minZ,
                                 double maxX, double maxY, double maxZ, Face face,
-                                double a, double b, double size, double lift, float[] color) {
+                                double a, double b, double size, double lift, int color) {
         double a2 = Math.min(0.92, a + size);
         double b2 = Math.min(0.92, b + size);
         switch (face) {
@@ -1215,8 +1452,7 @@ final class OpenGlRenderer {
         }
     }
 
-    private void emitDoorBlock(FloatArrayBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ) {
-        BlockState state = world.getBlockState(worldX, worldY, worldZ);
+    private void emitDoorBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, BlockState state) {
         int facing = Blocks.doorFacing(state);
         boolean open = Blocks.isDoorOpen(state);
         double thickness = 0.16;
@@ -1239,12 +1475,77 @@ final class OpenGlRenderer {
                 maxX = x + thickness;
                 break;
         }
-        float[] color = colorForFace(GameConfig.OAK_DOOR, Face.TOP, world.getAmbientShade(worldX, worldY, worldZ), worldX, worldY, worldZ);
+        int color = colorForFace(GameConfig.OAK_DOOR, Face.TOP, world.getAmbientShade(worldX, worldY, worldZ), worldX, worldY, worldZ);
         appendCuboid(builder, minX, y, minZ, maxX, y + 1.0, maxZ, color);
     }
 
-    private void appendCuboid(FloatArrayBuilder builder, double minX, double minY, double minZ,
-                              double maxX, double maxY, double maxZ, float[] color) {
+    private void emitBedBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, BlockState state) {
+        float ambient = world.getAmbientShade(worldX, worldY, worldZ);
+        int blanket = packColor(0.78f * ambient, 0.10f * ambient, 0.10f * ambient, 1.0f);
+        int pillow = packColor(0.92f, 0.90f, 0.82f, 1.0f);
+        appendCuboid(builder, x + 0.04, y + 0.06, z + 0.04, x + 0.96, y + 0.52, z + 0.96, blanket);
+        appendCuboid(builder, x + 0.16, y + 0.54, z + 0.16, x + 0.84, y + 0.66, z + 0.46, pillow);
+    }
+
+    private void emitFenceBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ) {
+        float ambient = world.getAmbientShade(worldX, worldY, worldZ);
+        int color = packColor(0.56f * ambient, 0.38f * ambient, 0.20f * ambient, 1.0f);
+        boolean west = shouldFenceConnect(worldX - 1, worldY, worldZ);
+        boolean east = shouldFenceConnect(worldX + 1, worldY, worldZ);
+        boolean north = shouldFenceConnect(worldX, worldY, worldZ - 1);
+        boolean south = shouldFenceConnect(worldX, worldY, worldZ + 1);
+        appendCuboid(builder, x + 0.36, y, z + 0.36, x + 0.64, y + 1.0, z + 0.64, color);
+        if (west) {
+            appendCuboid(builder, x, y + 0.58, z + 0.40, x + 0.40, y + 0.76, z + 0.60, color);
+            appendCuboid(builder, x, y + 0.26, z + 0.40, x + 0.40, y + 0.44, z + 0.60, color);
+        }
+        if (east) {
+            appendCuboid(builder, x + 0.60, y + 0.58, z + 0.40, x + 1.0, y + 0.76, z + 0.60, color);
+            appendCuboid(builder, x + 0.60, y + 0.26, z + 0.40, x + 1.0, y + 0.44, z + 0.60, color);
+        }
+        if (north) {
+            appendCuboid(builder, x + 0.40, y + 0.58, z, x + 0.60, y + 0.76, z + 0.40, color);
+            appendCuboid(builder, x + 0.40, y + 0.26, z, x + 0.60, y + 0.44, z + 0.40, color);
+        }
+        if (south) {
+            appendCuboid(builder, x + 0.40, y + 0.58, z + 0.60, x + 0.60, y + 0.76, z + 1.0, color);
+            appendCuboid(builder, x + 0.40, y + 0.26, z + 0.60, x + 0.60, y + 0.44, z + 1.0, color);
+        }
+    }
+
+    private boolean shouldFenceConnect(int worldX, int worldY, int worldZ) {
+        byte block = world.getBlock(worldX, worldY, worldZ);
+        return block == GameConfig.OAK_FENCE
+            || block == GameConfig.OAK_FENCE_GATE
+            || (world.isSolidBlock(block) && world.isCubeBlock(block) && !world.isTransparentBlock(block));
+    }
+
+    private void emitFenceGateBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, BlockState state) {
+        float ambient = world.getAmbientShade(worldX, worldY, worldZ);
+        int color = packColor(0.56f * ambient, 0.38f * ambient, 0.20f * ambient, 1.0f);
+        int facing = Blocks.gateFacing(state);
+        boolean open = Blocks.isGateOpen(state);
+        if (facing == 0 || facing == 2) {
+            appendCuboid(builder, x + 0.08, y, z + 0.36, x + 0.26, y + 1.0, z + 0.64, color);
+            appendCuboid(builder, x + 0.74, y, z + 0.36, x + 0.92, y + 1.0, z + 0.64, color);
+            if (open) {
+                return;
+            }
+            appendCuboid(builder, x + 0.20, y + 0.58, z + 0.42, x + 0.80, y + 0.76, z + 0.58, color);
+            appendCuboid(builder, x + 0.20, y + 0.26, z + 0.42, x + 0.80, y + 0.44, z + 0.58, color);
+        } else {
+            appendCuboid(builder, x + 0.36, y, z + 0.08, x + 0.64, y + 1.0, z + 0.26, color);
+            appendCuboid(builder, x + 0.36, y, z + 0.74, x + 0.64, y + 1.0, z + 0.92, color);
+            if (open) {
+                return;
+            }
+            appendCuboid(builder, x + 0.42, y + 0.58, z + 0.20, x + 0.58, y + 0.76, z + 0.80, color);
+            appendCuboid(builder, x + 0.42, y + 0.26, z + 0.20, x + 0.58, y + 0.44, z + 0.80, color);
+        }
+    }
+
+    private void appendCuboid(IntVertexBuilder builder, double minX, double minY, double minZ,
+                              double maxX, double maxY, double maxZ, int color) {
         appendQuad(builder, minX, minY, minZ, minX, maxY, minZ, minX, maxY, maxZ, minX, minY, maxZ, color);
         appendQuad(builder, maxX, minY, maxZ, maxX, maxY, maxZ, maxX, maxY, minZ, maxX, minY, minZ, color);
         appendQuad(builder, minX, maxY, maxZ, minX, maxY, minZ, maxX, maxY, minZ, maxX, maxY, maxZ, color);
@@ -1253,34 +1554,36 @@ final class OpenGlRenderer {
         appendQuad(builder, minX, minY, maxZ, minX, maxY, maxZ, maxX, maxY, maxZ, maxX, minY, maxZ, color);
     }
 
-    private boolean isNearSpectatorCutoutBlock(int worldX, int worldY, int worldZ) {
-        int dx = worldX - cameraBlockX;
-        int dy = worldY - cameraBlockY;
-        int dz = worldZ - cameraBlockZ;
+    private boolean isNearSpectatorCutoutBlock(int worldX, int worldY, int worldZ, MeshBuildContext context) {
+        int dx = worldX - context.cameraBlockX;
+        int dy = worldY - context.cameraBlockY;
+        int dz = worldZ - context.cameraBlockZ;
         return dx * dx + dy * dy + dz * dz <= 5;
     }
 
-    private void emitCrossPlant(FloatArrayBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, byte block) {
+    private void emitCrossPlant(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, byte block) {
         if (block == GameConfig.TORCH) {
             emitTorchBlock(builder, x, y, z, worldX, worldY, worldZ);
             return;
         }
-        float[] color = getBlockFaceColor(block, Face.TOP);
+        int color = baseColorPacked(block, Face.TOP);
+        float red = red(color);
+        float green = green(color);
+        float blue = blue(color);
         if (block == GameConfig.TALL_GRASS) {
-            color = applyColdGrassTint(color, world.getColdSurfaceTint(worldX, worldY, worldZ));
+            float amount = Math.min(0.82f, world.getColdSurfaceTint(worldX, worldY, worldZ));
+            red = lerp(red, 0.48f, amount);
+            green = lerp(green, 0.62f, amount);
+            blue = lerp(blue, 0.54f, amount);
         }
         float ambient = world.getAmbientShade(worldX, worldY, worldZ);
         float alpha = block == GameConfig.SEAGRASS ? 0.72f : (block == GameConfig.TALL_GRASS ? 0.92f : 0.96f);
-        float[] tintedColor = new float[]{
-            clampColor(color[0] * ambient),
-            clampColor(color[1] * ambient),
-            clampColor(color[2] * ambient),
-            alpha
-        };
+        int tintedColor = packColor(red * ambient, green * ambient, blue * ambient, alpha);
 
         boolean smallFlower = block == GameConfig.RED_FLOWER || block == GameConfig.YELLOW_FLOWER;
         boolean crop = block == GameConfig.WHEAT_CROP;
         boolean torch = block == GameConfig.TORCH;
+        int vertexFlags = block == GameConfig.TALL_GRASS ? VERTEX_FLAG_FOLIAGE : 0;
         double halfWidth = torch ? 0.12 : (smallFlower ? 0.21 : (crop ? 0.30 : 0.42));
         double height = torch ? 0.76 : (block == GameConfig.SEAGRASS ? 0.72 : (smallFlower ? 0.49 : (crop ? 0.78 : 0.98)));
         double minX = x + 0.5 - halfWidth;
@@ -1290,49 +1593,283 @@ final class OpenGlRenderer {
         double maxY = y + height;
         double maxZ = z + 0.5 + halfWidth;
 
-        appendQuad(builder, minX, minY, minZ, minX, maxY, minZ, maxX, maxY, maxZ, maxX, minY, maxZ, tintedColor);
-        appendQuad(builder, maxX, minY, maxZ, maxX, maxY, maxZ, minX, maxY, minZ, minX, minY, minZ, tintedColor);
-        appendQuad(builder, maxX, minY, minZ, maxX, maxY, minZ, minX, maxY, maxZ, minX, minY, maxZ, tintedColor);
-        appendQuad(builder, minX, minY, maxZ, minX, maxY, maxZ, maxX, maxY, minZ, maxX, minY, minZ, tintedColor);
+        appendQuad(builder, minX, minY, minZ, minX, maxY, minZ, maxX, maxY, maxZ, maxX, minY, maxZ, tintedColor, AO_FULL_BRIGHT_PACKED, vertexFlags);
+        appendQuad(builder, maxX, minY, maxZ, maxX, maxY, maxZ, minX, maxY, minZ, minX, minY, minZ, tintedColor, AO_FULL_BRIGHT_PACKED, vertexFlags);
+        appendQuad(builder, maxX, minY, minZ, maxX, maxY, minZ, minX, maxY, maxZ, minX, minY, maxZ, tintedColor, AO_FULL_BRIGHT_PACKED, vertexFlags);
+        appendQuad(builder, minX, minY, maxZ, minX, maxY, maxZ, maxX, maxY, minZ, maxX, minY, minZ, tintedColor, AO_FULL_BRIGHT_PACKED, vertexFlags);
     }
 
-    private void emitTorchBlock(FloatArrayBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ) {
+    private void emitTorchBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ) {
         float ambient = Math.max(0.82f, world.getAmbientShade(worldX, worldY, worldZ));
-        float[] wood = new float[]{0.50f * ambient, 0.32f * ambient, 0.16f * ambient, 1.0f};
-        float[] flame = new float[]{1.0f, 0.72f, 0.18f, 1.0f};
+        int wood = packColor(0.50f * ambient, 0.32f * ambient, 0.16f * ambient, 1.0f);
+        int flame = packColor(1.0f, 0.72f, 0.18f, 1.0f);
         double cx = x + 0.5;
         double cz = z + 0.5;
         appendCuboid(builder, cx - 0.055, y, cz - 0.055, cx + 0.055, y + 0.62, cz + 0.055, wood);
         appendCuboid(builder, cx - 0.105, y + 0.58, cz - 0.105, cx + 0.105, y + 0.82, cz + 0.105, flame);
     }
 
-    private void appendQuad(FloatArrayBuilder builder,
+    private void appendQuad(IntVertexBuilder builder,
                             double x1, double y1, double z1,
                             double x2, double y2, double z2,
                             double x3, double y3, double z3,
                             double x4, double y4, double z4,
-                            float[] color) {
-        appendVertex(builder, x1, y1, z1, color);
-        appendVertex(builder, x2, y2, z2, color);
-        appendVertex(builder, x3, y3, z3, color);
-        appendVertex(builder, x4, y4, z4, color);
+                            int color) {
+        appendQuad(builder, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, color, AO_FULL_BRIGHT_PACKED);
     }
 
-    private void appendVertex(FloatArrayBuilder builder, double x, double y, double z, float[] color) {
-        builder.put((float) x);
-        builder.put((float) y);
-        builder.put((float) z);
-        builder.put(color[0]);
-        builder.put(color[1]);
-        builder.put(color[2]);
-        builder.put(color[3]);
+    private void appendQuad(IntVertexBuilder builder,
+                            double x1, double y1, double z1,
+                            double x2, double y2, double z2,
+                            double x3, double y3, double z3,
+                            double x4, double y4, double z4,
+                            int color, int ao) {
+        appendQuad(builder, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, color, ao, 0);
     }
 
-    private float[] colorForFace(byte block, Face face, float ambientShade, int worldX, int worldY, int worldZ) {
-        float[] color = getBlockFaceColor(block, face);
+    private void appendQuad(IntVertexBuilder builder,
+                            double x1, double y1, double z1,
+                            double x2, double y2, double z2,
+                            double x3, double y3, double z3,
+                            double x4, double y4, double z4,
+                            int color, int ao, int vertexFlags) {
+        int ao0 = ao & 3;
+        int ao1 = (ao >>> 2) & 3;
+        int ao2 = (ao >>> 4) & 3;
+        int ao3 = (ao >>> 6) & 3;
+        double upperY = Math.max(Math.max(y1, y2), Math.max(y3, y4));
+        int flags1 = vertexShaderFlags(vertexFlags, y1, upperY);
+        int flags2 = vertexShaderFlags(vertexFlags, y2, upperY);
+        int flags3 = vertexShaderFlags(vertexFlags, y3, upperY);
+        int flags4 = vertexShaderFlags(vertexFlags, y4, upperY);
+        if ((ao & AO_FLIP_DIAGONAL) == 0) {
+            appendVertex(builder, x1, y1, z1, color, ao0, flags1);
+            appendVertex(builder, x2, y2, z2, color, ao1, flags2);
+            appendVertex(builder, x3, y3, z3, color, ao2, flags3);
+            appendVertex(builder, x1, y1, z1, color, ao0, flags1);
+            appendVertex(builder, x3, y3, z3, color, ao2, flags3);
+            appendVertex(builder, x4, y4, z4, color, ao3, flags4);
+        } else {
+            appendVertex(builder, x2, y2, z2, color, ao1, flags2);
+            appendVertex(builder, x3, y3, z3, color, ao2, flags3);
+            appendVertex(builder, x4, y4, z4, color, ao3, flags4);
+            appendVertex(builder, x1, y1, z1, color, ao0, flags1);
+            appendVertex(builder, x2, y2, z2, color, ao1, flags2);
+            appendVertex(builder, x4, y4, z4, color, ao3, flags4);
+        }
+    }
+
+    private int vertexShaderFlags(int baseFlags, double y, double upperY) {
+        if ((baseFlags & VERTEX_FLAG_FOLIAGE) == 0) {
+            return 0;
+        }
+        return Math.abs(y - upperY) < 0.0001 ? baseFlags | VERTEX_FLAG_UPPER : baseFlags;
+    }
+
+    private void appendVertex(IntVertexBuilder builder, double x, double y, double z, int color, int ao, int vertexFlags) {
+        builder.putPacked(x, y, z, encodeVertexShaderFlags(color, vertexFlags), ao);
+    }
+
+    private int encodeVertexShaderFlags(int color, int vertexFlags) {
+        if ((vertexFlags & VERTEX_FLAG_FOLIAGE) == 0) {
+            return color;
+        }
+        int encodedFlags = (vertexFlags & VERTEX_FLAG_UPPER) != 0 ? 1 : 0;
+        int alpha = color & 0xFF;
+        if (alpha >= 252) {
+            return (color & 0xFFFFFF00) | OPAQUE_SHADER_ALPHA_BASE | encodedFlags;
+        }
+        if (alpha >= 220) {
+            return (color & 0xFFFFFF00) | TRANSLUCENT_SHADER_ALPHA_BASE | encodedFlags;
+        }
+        return color;
+    }
+
+    private int packUnitFaceAo(ChunkSectionSnapshot chunk, int startX, int startY, int startZ,
+                               int worldX, int worldY, int worldZ, Face face) {
+        switch (face) {
+            case WEST:
+                return packAo(
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, 1)
+                );
+            case EAST:
+                return packAo(
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, -1)
+                );
+            case TOP:
+                return packAo(
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, 1)
+                );
+            case BOTTOM:
+                return packAo(
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, -1)
+                );
+            case NORTH:
+                return packAo(
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, -1)
+                );
+            case SOUTH:
+                return packAo(
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, -1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, -1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, 1),
+                    vertexAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face, 1, -1)
+                );
+            default:
+                return AO_FULL_BRIGHT_PACKED;
+        }
+    }
+
+    private int packGreedyFaceAo(ChunkSectionSnapshot chunk, int startX, int startY, int startZ,
+                                 Face face, int layer, int u, int v, int height, int width) {
+        int uMax = u + height - 1;
+        int vMax = v + width - 1;
+        switch (face) {
+            case WEST:
+                return packAo(
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, u, v, -1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, uMax, v, 1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, uMax, vMax, 1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, u, vMax, -1, 1)
+                );
+            case EAST:
+                return packAo(
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, u, vMax, -1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, uMax, vMax, 1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, uMax, v, 1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, layer, u, v, -1, -1)
+                );
+            case TOP:
+                return packAo(
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, layer, vMax, -1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, layer, v, -1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, layer, v, 1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, layer, vMax, 1, 1)
+                );
+            case BOTTOM:
+                return packAo(
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, layer, v, -1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, layer, vMax, -1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, layer, vMax, 1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, layer, v, 1, -1)
+                );
+            case NORTH:
+                return packAo(
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, v, layer, 1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, vMax, layer, 1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, vMax, layer, -1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, v, layer, -1, -1)
+                );
+            case SOUTH:
+                return packAo(
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, v, layer, -1, -1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, u, vMax, layer, -1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, vMax, layer, 1, 1),
+                    vertexAoLocal(chunk, startX, startY, startZ, face, uMax, v, layer, 1, -1)
+                );
+            default:
+                return AO_FULL_BRIGHT_PACKED;
+        }
+    }
+
+    private int vertexAoLocal(ChunkSectionSnapshot chunk, int startX, int startY, int startZ,
+                              Face face, int localX, int localY, int localZ, int signU, int signV) {
+        return vertexAo(chunk, startX, startY, startZ, startX + localX, startY + localY, startZ + localZ, face, signU, signV);
+    }
+
+    private int vertexAo(ChunkSectionSnapshot chunk, int startX, int startY, int startZ,
+                         int worldX, int worldY, int worldZ, Face face, int signU, int signV) {
+        int nx = 0;
+        int ny = 0;
+        int nz = 0;
+        int ux = 0;
+        int uy = 0;
+        int uz = 0;
+        int vx = 0;
+        int vy = 0;
+        int vz = 0;
+        switch (face) {
+            case WEST:
+                nx = -1; uy = 1; vz = 1;
+                break;
+            case EAST:
+                nx = 1; uy = 1; vz = 1;
+                break;
+            case TOP:
+                ny = 1; ux = 1; vz = 1;
+                break;
+            case BOTTOM:
+                ny = -1; ux = 1; vz = 1;
+                break;
+            case NORTH:
+                nz = -1; ux = 1; vy = 1;
+                break;
+            case SOUTH:
+                nz = 1; ux = 1; vy = 1;
+                break;
+            default:
+                return 3;
+        }
+
+        int bx = worldX + nx;
+        int by = worldY + ny;
+        int bz = worldZ + nz;
+        int side1 = isAoOccluder(chunk, startX, startY, startZ, bx + ux * signU, by + uy * signU, bz + uz * signU) ? 1 : 0;
+        int side2 = isAoOccluder(chunk, startX, startY, startZ, bx + vx * signV, by + vy * signV, bz + vz * signV) ? 1 : 0;
+        if ((side1 & side2) != 0) {
+            return 0;
+        }
+        int corner = isAoOccluder(chunk, startX, startY, startZ,
+            bx + ux * signU + vx * signV,
+            by + uy * signU + vy * signV,
+            bz + uz * signU + vz * signV) ? 1 : 0;
+        return 3 - side1 - side2 - corner;
+    }
+
+    private boolean isAoOccluder(ChunkSectionSnapshot chunk, int startX, int startY, int startZ, int worldX, int worldY, int worldZ) {
+        int localX = worldX - startX;
+        int localY = worldY - startY;
+        int localZ = worldZ - startZ;
+        byte block = GameConfig.isChunkLocalCoordinateInside(localX, localY, localZ)
+            ? chunk.getBlockLocal(localX, localY, localZ)
+            : world.getBlock(worldX, worldY, worldZ);
+        return block != GameConfig.AIR && Blocks.isOpaque(block) && world.isCubeBlock(block);
+    }
+
+    private int packAo(int ao0, int ao1, int ao2, int ao3) {
+        int packed = (ao0 & 3) | ((ao1 & 3) << 2) | ((ao2 & 3) << 4) | ((ao3 & 3) << 6);
+        return ao0 + ao2 > ao1 + ao3 ? packed | AO_FLIP_DIAGONAL : packed;
+    }
+
+    private int colorForFace(byte block, Face face, float ambientShade, int worldX, int worldY, int worldZ) {
+        int color = baseColorPacked(block, face);
+        float red = red(color);
+        float green = green(color);
+        float blue = blue(color);
         if (block == GameConfig.GRASS && face == Face.TOP) {
-            color = applyColdGrassTint(color, world.getColdSurfaceTint(worldX, worldY, worldZ));
-            color = applyTaigaGrassTint(color, world.getTaigaSurfaceTint(worldX, worldZ));
+            float cold = Math.min(0.82f, world.getColdSurfaceTint(worldX, worldY, worldZ));
+            red = lerp(red, 0.48f, cold);
+            green = lerp(green, 0.62f, cold);
+            blue = lerp(blue, 0.54f, cold);
+            float taiga = Math.min(0.75f, world.getTaigaSurfaceTint(worldX, worldZ));
+            red = lerp(red, 0.22f, taiga);
+            green = lerp(green, 0.46f, taiga);
+            blue = lerp(blue, 0.24f, taiga);
         }
         float brightness = face.brightness * ambientShade;
         if (block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES) {
@@ -1350,40 +1887,134 @@ final class OpenGlRenderer {
         } else if (GameConfig.isLavaBlock(block)) {
             alpha = 0.85f;
         }
-        return new float[]{
-            clampColor(color[0] * brightness),
-            clampColor(color[1] * brightness),
-            clampColor(color[2] * brightness),
-            alpha
-        };
+        return packColor(red * brightness, green * brightness, blue * brightness, alpha);
     }
 
-    private float[] applyColdGrassTint(float[] color, float coldTint) {
-        if (coldTint <= 0.01f) {
-            return color;
+    private int baseColorPacked(byte block, Face face) {
+        switch (block) {
+            case GameConfig.GRASS:
+                return face == Face.TOP ? packColor(0.37f, 0.76f, 0.34f, 1.0f) : packColor(0.50f, 0.36f, 0.24f, 1.0f);
+            case GameConfig.DIRT:
+                return packColor(0.50f, 0.36f, 0.24f, 1.0f);
+            case GameConfig.SAND:
+                return packColor(0.84f, 0.77f, 0.51f, 1.0f);
+            case GameConfig.GRAVEL:
+                return packColor(0.44f, 0.45f, 0.43f, 1.0f);
+            case GameConfig.CLAY:
+                return packColor(0.58f, 0.66f, 0.68f, 1.0f);
+            case GameConfig.STONE:
+                return packColor(0.58f, 0.58f, 0.60f, 1.0f);
+            case GameConfig.DEEPSLATE:
+                return packColor(0.28f, 0.29f, 0.32f, 1.0f);
+            case GameConfig.COBBLESTONE:
+                return packColor(0.48f, 0.48f, 0.48f, 1.0f);
+            case GameConfig.OBSIDIAN:
+                return packColor(0.12f, 0.08f, 0.18f, 1.0f);
+            case GameConfig.BEDROCK:
+                return packColor(0.17f, 0.17f, 0.17f, 1.0f);
+            case GameConfig.IRON_ORE:
+            case GameConfig.DIAMOND_ORE:
+            case GameConfig.COAL_ORE:
+                return packColor(0.58f, 0.58f, 0.60f, 1.0f);
+            case GameConfig.DEEPSLATE_IRON_ORE:
+            case GameConfig.DEEPSLATE_DIAMOND_ORE:
+            case GameConfig.DEEPSLATE_COAL_ORE:
+                return packColor(0.28f, 0.29f, 0.32f, 1.0f);
+            case GameConfig.OAK_LOG:
+                return face == Face.TOP || face == Face.BOTTOM ? packColor(0.66f, 0.54f, 0.31f, 1.0f) : packColor(0.54f, 0.38f, 0.20f, 1.0f);
+            case GameConfig.OAK_LEAVES:
+                return packColor(0.30f, 0.58f, 0.24f, 1.0f);
+            case GameConfig.PINE_LOG:
+                return face == Face.TOP || face == Face.BOTTOM ? packColor(0.58f, 0.48f, 0.30f, 1.0f) : packColor(0.38f, 0.27f, 0.16f, 1.0f);
+            case GameConfig.PINE_LEAVES:
+                return packColor(0.14f, 0.38f, 0.18f, 1.0f);
+            case GameConfig.SNOW_LAYER:
+                return packColor(0.78f, 0.86f, 0.92f, 1.0f);
+            case GameConfig.CACTUS:
+                return face == Face.TOP || face == Face.BOTTOM ? packColor(0.38f, 0.62f, 0.25f, 1.0f) : packColor(0.22f, 0.54f, 0.20f, 1.0f);
+            case GameConfig.TALL_GRASS:
+                return packColor(0.42f, 0.77f, 0.31f, 1.0f);
+            case GameConfig.SEAGRASS:
+                return packColor(0.18f, 0.55f, 0.36f, 1.0f);
+            case GameConfig.RED_FLOWER:
+                return packColor(0.91f, 0.18f, 0.22f, 1.0f);
+            case GameConfig.YELLOW_FLOWER:
+                return packColor(0.95f, 0.82f, 0.20f, 1.0f);
+            case InventoryItems.OAK_PLANKS:
+                return packColor(0.73f, 0.58f, 0.34f, 1.0f);
+            case GameConfig.OAK_FENCE:
+            case GameConfig.OAK_FENCE_GATE:
+                return packColor(0.56f, 0.38f, 0.20f, 1.0f);
+            case GameConfig.CHEST:
+                return packColor(0.62f, 0.39f, 0.17f, 1.0f);
+            case GameConfig.CRAFTING_TABLE:
+                return face == Face.TOP ? packColor(0.63f, 0.46f, 0.25f, 1.0f) : packColor(0.48f, 0.31f, 0.16f, 1.0f);
+            case GameConfig.FURNACE:
+                return face == Face.NORTH ? packColor(0.40f, 0.40f, 0.38f, 1.0f) : packColor(0.33f, 0.33f, 0.32f, 1.0f);
+            case GameConfig.GLASS:
+                return packColor(0.72f, 0.90f, 0.95f, 1.0f);
+            case GameConfig.WHEAT_CROP:
+                return packColor(0.86f, 0.72f, 0.26f, 1.0f);
+            case GameConfig.RAIL:
+                return packColor(0.58f, 0.50f, 0.42f, 1.0f);
+            case GameConfig.OAK_DOOR:
+                return packColor(0.50f, 0.30f, 0.13f, 1.0f);
+            case GameConfig.FARMLAND:
+                return face == Face.TOP ? packColor(0.36f, 0.24f, 0.14f, 1.0f) : packColor(0.44f, 0.31f, 0.20f, 1.0f);
+            case GameConfig.TORCH:
+                return packColor(0.96f, 0.72f, 0.24f, 1.0f);
+            case GameConfig.RED_BED:
+                return face == Face.TOP ? packColor(0.78f, 0.12f, 0.12f, 1.0f) : packColor(0.76f, 0.62f, 0.38f, 1.0f);
+            case GameConfig.STRUCTURE_BLOCK:
+                return face == Face.TOP ? packColor(0.70f, 0.55f, 0.86f, 1.0f) : packColor(0.44f, 0.34f, 0.58f, 1.0f);
+            case GameConfig.WATER:
+            case GameConfig.WATER_SOURCE:
+            case GameConfig.WATER_FLOWING:
+                return packColor(0.35f, 0.55f, 0.90f, 1.0f);
+            case GameConfig.LAVA:
+            case GameConfig.LAVA_SOURCE:
+            case GameConfig.LAVA_FLOWING:
+                return packColor(0.92f, 0.42f, 0.12f, 1.0f);
+            case GameConfig.ZOMBIE_SKIN:
+                return packColor(0.38f, 0.69f, 0.33f, 1.0f);
+            case GameConfig.ZOMBIE_SHIRT:
+                return packColor(0.23f, 0.51f, 0.57f, 1.0f);
+            case GameConfig.ZOMBIE_PANTS:
+                return packColor(0.25f, 0.27f, 0.53f, 1.0f);
+            case GameConfig.ZOMBIE_EYE:
+                return packColor(0.08f, 0.08f, 0.08f, 1.0f);
+            default:
+                return packColor(1.0f, 0.0f, 1.0f, 1.0f);
         }
-        float amount = Math.min(0.82f, coldTint);
-        return new float[]{
-            lerp(color[0], 0.48f, amount),
-            lerp(color[1], 0.62f, amount),
-            lerp(color[2], 0.54f, amount)
-        };
     }
 
-    private float[] applyTaigaGrassTint(float[] color, float taigaTint) {
-        if (taigaTint <= 0.01f) {
-            return color;
-        }
-        float amount = Math.min(0.75f, taigaTint);
-        return new float[]{
-            lerp(color[0], 0.22f, amount),
-            lerp(color[1], 0.46f, amount),
-            lerp(color[2], 0.24f, amount)
-        };
+    private int packColor(float red, float green, float blue, float alpha) {
+        int r = Math.max(0, Math.min(255, Math.round(clampColor(red) * 255.0f)));
+        int g = Math.max(0, Math.min(255, Math.round(clampColor(green) * 255.0f)));
+        int b = Math.max(0, Math.min(255, Math.round(clampColor(blue) * 255.0f)));
+        int a = Math.max(0, Math.min(255, Math.round(clampColor(alpha) * 255.0f)));
+        return (r << 24) | (g << 16) | (b << 8) | a;
     }
 
-    private void uploadChunkBuffer(ChunkMesh mesh, boolean transparentPass, FloatArrayBuilder builder) {
-        if (builder.isEmpty()) {
+    private int withAlpha(int color, float alpha) {
+        int a = Math.max(0, Math.min(255, Math.round(clampColor(alpha) * 255.0f)));
+        return (color & 0xFFFFFF00) | a;
+    }
+
+    private float red(int color) {
+        return ((color >>> 24) & 0xFF) / 255.0f;
+    }
+
+    private float green(int color) {
+        return ((color >>> 16) & 0xFF) / 255.0f;
+    }
+
+    private float blue(int color) {
+        return ((color >>> 8) & 0xFF) / 255.0f;
+    }
+
+    private void uploadChunkBuffer(ChunkMesh mesh, boolean transparentPass, int[] vertices, int intCount) {
+        if (intCount == 0) {
             return;
         }
 
@@ -1392,7 +2023,9 @@ final class OpenGlRenderer {
             throw new IllegalStateException("Failed to allocate chunk VBO");
         }
 
-        FloatBuffer buffer = builder.toFloatBuffer();
+        IntBuffer buffer = BufferUtils.createIntBuffer(intCount);
+        buffer.put(vertices, 0, intCount);
+        buffer.flip();
         glBindBuffer(GL_ARRAY_BUFFER, vboId);
         glBufferData(GL_ARRAY_BUFFER, buffer, GL_STATIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1401,15 +2034,13 @@ final class OpenGlRenderer {
         if (vaoId != 0) {
             bindVertexArrayObject(vaoId);
             glBindBuffer(GL_ARRAY_BUFFER, vboId);
-            glEnableClientState(GL_VERTEX_ARRAY);
-            glEnableClientState(GL_COLOR_ARRAY);
-            glVertexPointer(3, GL_FLOAT, BYTES_PER_VERTEX, 0L);
-            glColorPointer(4, GL_FLOAT, BYTES_PER_VERTEX, 3L * Float.BYTES);
+            glEnableVertexAttribArray(0);
+            glVertexAttribIPointer(0, 2, GL_UNSIGNED_INT, BYTES_PER_VERTEX, 0L);
             bindVertexArrayObject(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
 
-        int vertexCount = builder.vertexCount();
+        int vertexCount = intCount / INTS_PER_VERTEX;
         if (transparentPass) {
             mesh.transparentVaoId = vaoId;
             mesh.transparentVboId = vboId;
@@ -1422,30 +2053,25 @@ final class OpenGlRenderer {
     }
 
     private void drawChunkBuffer(ChunkMesh mesh, int vaoId, int vboId, int vertexCount) {
-        glPushMatrix();
-        glTranslated(
-            mesh.chunkX * GameConfig.CHUNK_SIZE - renderCameraX,
-            GameConfig.sectionYForIndex(mesh.chunkY) - renderCameraY,
-            mesh.chunkZ * GameConfig.CHUNK_SIZE - renderCameraZ
+        glUniform3f(
+            chunkShaderOriginLocation,
+            (float) (mesh.chunkX * GameConfig.CHUNK_SIZE - renderCameraX),
+            (float) (GameConfig.sectionYForIndex(mesh.chunkY) - renderCameraY),
+            (float) (mesh.chunkZ * GameConfig.CHUNK_SIZE - renderCameraZ)
         );
 
         if (vaoId != 0) {
             bindVertexArrayObject(vaoId);
-            glDrawArrays(GL_QUADS, 0, vertexCount);
+            glDrawArrays(GL_TRIANGLES, 0, vertexCount);
             bindVertexArrayObject(0);
         } else {
             glBindBuffer(GL_ARRAY_BUFFER, vboId);
-            glEnableClientState(GL_VERTEX_ARRAY);
-            glEnableClientState(GL_COLOR_ARRAY);
-            glVertexPointer(3, GL_FLOAT, BYTES_PER_VERTEX, 0L);
-            glColorPointer(4, GL_FLOAT, BYTES_PER_VERTEX, 3L * Float.BYTES);
-            glDrawArrays(GL_QUADS, 0, vertexCount);
-            glDisableClientState(GL_COLOR_ARRAY);
-            glDisableClientState(GL_VERTEX_ARRAY);
+            glEnableVertexAttribArray(0);
+            glVertexAttribIPointer(0, 2, GL_UNSIGNED_INT, BYTES_PER_VERTEX, 0L);
+            glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+            glDisableVertexAttribArray(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
-
-        glPopMatrix();
     }
 
     private void unloadChunkMesh(ChunkMesh mesh) {
@@ -1460,6 +2086,17 @@ final class OpenGlRenderer {
         mesh.hasOpaqueGeometry = false;
         mesh.hasTransparentGeometry = false;
         mesh.resident = false;
+    }
+
+    private void dropChunkMesh(long meshKey) {
+        ChunkMesh mesh = chunkMeshes.remove(meshKey);
+        if (mesh != null) {
+            unloadChunkMesh(mesh);
+        }
+        dirtyChunkMeshes.remove(meshKey);
+        immediateChunkMeshes.remove(meshKey);
+        meshBuildCooldownUntilNanos.remove(meshKey);
+        meshBuildsReady.remove(meshKey);
     }
 
     private void deleteMeshBuffer(int vaoId, int vboId) {
@@ -1503,16 +2140,95 @@ final class OpenGlRenderer {
         }
     }
 
+    private int uploadReadyChunkMeshes(int uploadBudget, int playerChunkX, int playerChunkZ, int unloadChunkRadius) {
+        debugRejectedMeshVersionsLastFrame = 0;
+        int immediateBudget = completedImmediateMeshBuilds.isEmpty() ? 0 : MAX_IMMEDIATE_CHUNK_UPLOADS_PER_FRAME;
+        int immediateUploaded = uploadReadyChunkMeshQueue(completedImmediateMeshBuilds, immediateBudget, playerChunkX, playerChunkZ, unloadChunkRadius);
+        int regularUploaded = uploadReadyChunkMeshQueue(completedMeshBuilds, Math.max(0, uploadBudget - immediateUploaded), playerChunkX, playerChunkZ, unloadChunkRadius);
+        int uploaded = immediateUploaded + regularUploaded;
+        debugUploadedMeshesLastFrame = uploaded;
+        if (uploaded > 0) {
+            verifyOpenGl("uploadReadyChunkMeshes");
+        }
+        return uploaded;
+    }
+
+    private int uploadReadyChunkMeshQueue(ConcurrentLinkedQueue<MeshBuildResult> queue, int uploadBudget, int playerChunkX, int playerChunkZ, int unloadChunkRadius) {
+        int uploaded = 0;
+        while (uploaded < uploadBudget) {
+            MeshBuildResult result = queue.poll();
+            if (result == null) {
+                break;
+            }
+            meshBuildsReady.remove(result.meshKey);
+            if (result.epoch != meshBuildEpoch) {
+                continue;
+            }
+            if (!result.readyForUpload) {
+                continue;
+            }
+            int horizontalDistance = Math.max(Math.abs(result.chunkX - playerChunkX), Math.abs(result.chunkZ - playerChunkZ));
+            if (!world.isChunkLoaded(result.chunkX, result.chunkZ) || horizontalDistance > unloadChunkRadius) {
+                dropChunkMesh(result.meshKey);
+                continue;
+            }
+            ChunkSectionSnapshot current = world.getChunkSnapshot(result.chunkX, result.chunkY, result.chunkZ);
+            if (current == null) {
+                dropChunkMesh(result.meshKey);
+                continue;
+            }
+            int currentVersion = current == null ? -1 : current.version;
+            if (currentVersion != result.version) {
+                debugRejectedMeshVersionsLastFrame++;
+                dirtyChunkMeshes.add(result.meshKey);
+                immediateChunkMeshes.add(result.meshKey);
+                meshBuildCooldownUntilNanos.remove(result.meshKey);
+                continue;
+            }
+
+            ChunkMesh mesh = chunkMeshes.get(result.meshKey);
+            if (result.empty) {
+                dropChunkMesh(result.meshKey);
+                uploaded++;
+                continue;
+            }
+            if (mesh == null) {
+                mesh = new ChunkMesh(result.chunkX, result.chunkY, result.chunkZ);
+                chunkMeshes.put(result.meshKey, mesh);
+            }
+
+            deleteMeshBuffer(mesh.opaqueVaoId, mesh.opaqueVboId);
+            deleteMeshBuffer(mesh.transparentVaoId, mesh.transparentVboId);
+            mesh.opaqueVaoId = 0;
+            mesh.opaqueVboId = 0;
+            mesh.opaqueVertexCount = 0;
+            mesh.transparentVaoId = 0;
+            mesh.transparentVboId = 0;
+            mesh.transparentVertexCount = 0;
+
+            uploadChunkBuffer(mesh, false, result.opaqueVertices, result.opaqueIntCount);
+            uploadChunkBuffer(mesh, true, result.transparentVertices, result.transparentIntCount);
+            mesh.hasOpaqueGeometry = mesh.opaqueVertexCount > 0;
+            mesh.hasTransparentGeometry = mesh.transparentVertexCount > 0;
+            mesh.resident = mesh.hasOpaqueGeometry || mesh.hasTransparentGeometry;
+            dirtyChunkMeshes.remove(result.meshKey);
+            immediateChunkMeshes.remove(result.meshKey);
+            uploaded++;
+        }
+        return uploaded;
+    }
+
     private void ensureChunkMeshesAroundPlayer(double playerX, double playerY, double playerZ, int activeChunkRadius) {
         int playerChunkX = worldToChunk((int) Math.floor(playerX));
         int playerChunkZ = worldToChunk((int) Math.floor(playerZ));
         int unloadChunkRadius = activeChunkRadius + GameConfig.RENDER_CHUNK_UNLOAD_PADDING;
-        int uploadBudget = dynamicChunkUploadBudget();
-        long buildBudgetNs = dynamicMeshBuildBudgetNs();
-        long buildStartNs = System.nanoTime();
-        long meshProfileStartNs = buildStartNs;
+        int uploadBudget = dynamicMeshUploadBudget();
+        int meshSubmissionBudget = dynamicChunkUploadBudget();
+        long meshProfileStartNs = System.nanoTime();
         int visibleChunkCount = 0;
-        int rebuiltMeshCount = 0;
+        int uploadedMeshCount = uploadReadyChunkMeshes(uploadBudget, playerChunkX, playerChunkZ, unloadChunkRadius);
+        int submittedMeshCount = 0;
+        int pendingBuildBacklog = completedImmediateMeshBuilds.size() + completedMeshBuilds.size() + meshBuildsInFlight.size();
         meshBuildQueue.clear();
         queuedMeshBuildKeys.clear();
 
@@ -1521,9 +2237,7 @@ final class OpenGlRenderer {
             long meshKey = chunkKey(chunk.chunkX, chunk.chunkY, chunk.chunkZ);
             ChunkMesh mesh = chunkMeshes.get(meshKey);
             if (chunk.isEmpty()) {
-                if (mesh != null && mesh.resident) {
-                    unloadChunkMesh(mesh);
-                }
+                dropChunkMesh(meshKey);
                 continue;
             }
 
@@ -1535,24 +2249,25 @@ final class OpenGlRenderer {
                 boolean needsUpload = mesh == null || !mesh.resident || dirtyChunkMeshes.contains(meshKey);
                 if (needsUpload) {
                     double distanceSquared = chunkDistanceSquaredToPoint(chunk.chunkX, chunk.chunkY, chunk.chunkZ, playerX, playerY, playerZ);
-                    queueMeshBuildCandidate(new MeshBuildCandidate(chunk.chunkX, chunk.chunkY, chunk.chunkZ, meshKey, visible, distanceSquared));
+                    queueMeshBuildCandidate(new MeshBuildCandidate(chunk.chunkX, chunk.chunkY, chunk.chunkZ, meshKey, visible, distanceSquared, immediateChunkMeshes.contains(meshKey)));
                 }
-            } else if (horizontalDistance > unloadChunkRadius && mesh != null && mesh.resident) {
-                unloadChunkMesh(mesh);
+            } else if (horizontalDistance > unloadChunkRadius && mesh != null) {
+                dropChunkMesh(meshKey);
             }
         }
 
-        while (uploadBudget > 0 && !meshBuildQueue.isEmpty()) {
+        while (meshSubmissionBudget > 0 && !meshBuildQueue.isEmpty()) {
             MeshBuildCandidate candidate = meshBuildQueue.poll();
-            rebuildChunkMesh(candidate.chunkX, candidate.chunkY, candidate.chunkZ, playerX, playerY, playerZ);
-            dirtyChunkMeshes.remove(candidate.meshKey);
-            rebuiltMeshCount++;
-            uploadBudget--;
-            if (System.nanoTime() - buildStartNs >= buildBudgetNs) {
+            if (!candidate.immediate && pendingBuildBacklog > MAX_PENDING_MESH_BACKLOG) {
                 break;
             }
+            if (submitChunkMeshBuild(candidate, playerX, playerY, playerZ)) {
+                submittedMeshCount++;
+                pendingBuildBacklog++;
+                meshSubmissionBudget--;
+            }
         }
-        logMeshProfile(rebuiltMeshCount, visibleChunkCount, System.nanoTime() - meshProfileStartNs);
+        logMeshProfile(uploadedMeshCount + submittedMeshCount, visibleChunkCount, System.nanoTime() - meshProfileStartNs);
         meshBuildQueue.clear();
         queuedMeshBuildKeys.clear();
 
@@ -1565,8 +2280,7 @@ final class OpenGlRenderer {
             }
         }
         for (long meshKey : staleMeshKeys) {
-            chunkMeshes.remove(meshKey);
-            dirtyChunkMeshes.remove(meshKey);
+            dropChunkMesh(meshKey);
         }
         staleMeshKeys.clear();
     }
@@ -1574,6 +2288,194 @@ final class OpenGlRenderer {
     private void queueMeshBuildCandidate(MeshBuildCandidate candidate) {
         if (queuedMeshBuildKeys.add(candidate.meshKey)) {
             meshBuildQueue.add(candidate);
+        }
+    }
+
+    private void emitGreedyCubeFaces(ChunkSectionSnapshot sourceChunk, IntVertexBuilder builder, int startX, int startY, int startZ, MeshBuildContext context, long[] greedyMask) {
+        emitGreedyFace(sourceChunk, builder, startX, startY, startZ, Face.WEST, context, greedyMask);
+        emitGreedyFace(sourceChunk, builder, startX, startY, startZ, Face.EAST, context, greedyMask);
+        emitGreedyFace(sourceChunk, builder, startX, startY, startZ, Face.BOTTOM, context, greedyMask);
+        emitGreedyFace(sourceChunk, builder, startX, startY, startZ, Face.TOP, context, greedyMask);
+        emitGreedyFace(sourceChunk, builder, startX, startY, startZ, Face.NORTH, context, greedyMask);
+        emitGreedyFace(sourceChunk, builder, startX, startY, startZ, Face.SOUTH, context, greedyMask);
+    }
+
+    private void emitGreedyFace(ChunkSectionSnapshot chunk, IntVertexBuilder builder, int startX, int startY, int startZ, Face face, MeshBuildContext context, long[] greedyFaceMask) {
+        final int size = GameConfig.CHUNK_SIZE;
+        for (int layer = 0; layer < size; layer++) {
+            for (int i = 0; i < greedyFaceMask.length; i++) {
+                greedyFaceMask[i] = 0L;
+            }
+
+            for (int u = 0; u < size; u++) {
+                for (int v = 0; v < size; v++) {
+                    int localX;
+                    int localY;
+                    int localZ;
+                    switch (face) {
+                        case WEST:
+                        case EAST:
+                            localX = layer;
+                            localY = u;
+                            localZ = v;
+                            break;
+                        case TOP:
+                        case BOTTOM:
+                            localX = u;
+                            localY = layer;
+                            localZ = v;
+                            break;
+                        case NORTH:
+                        case SOUTH:
+                            localX = u;
+                            localY = v;
+                            localZ = layer;
+                            break;
+                        default:
+                            localX = u;
+                            localY = v;
+                            localZ = layer;
+                            break;
+                    }
+
+                    int worldX = startX + localX;
+                    int worldY = startY + localY;
+                    int worldZ = startZ + localZ;
+                    byte block = chunk.getBlockLocal(localX, localY, localZ);
+                    BlockState state = chunk.getBlockStateLocal(localX, localY, localZ);
+                    if (!isGreedyMeshBlock(block, state, worldX, worldY, worldZ, context)) {
+                        continue;
+                    }
+                    if (!waterRenderer.isRenderableBlockFace(block, worldX, worldY, worldZ, face)) {
+                        continue;
+                    }
+                    int color = colorForFace(block, face, Settings.goodGraphics() ? world.getAmbientShade(worldX, worldY, worldZ) : 1.0f, worldX, worldY, worldZ);
+                    int ao = packUnitFaceAo(chunk, startX, startY, startZ, worldX, worldY, worldZ, face);
+                    greedyFaceMask[u * size + v] = greedyKey(state, color, ao);
+                }
+            }
+
+            for (int u = 0; u < size; u++) {
+                for (int v = 0; v < size; ) {
+                    long key = greedyFaceMask[u * size + v];
+                    if (key == 0L) {
+                        v++;
+                        continue;
+                    }
+                    int width = 1;
+                    while (v + width < size && greedyFaceMask[u * size + v + width] == key) {
+                        width++;
+                    }
+                    int height = 1;
+                    boolean expand = true;
+                    while (u + height < size && expand) {
+                        for (int offset = 0; offset < width; offset++) {
+                            if (greedyFaceMask[(u + height) * size + v + offset] != key) {
+                                expand = false;
+                                break;
+                            }
+                        }
+                        if (expand) {
+                            height++;
+                        }
+                    }
+                    for (int du = 0; du < height; du++) {
+                        for (int dv = 0; dv < width; dv++) {
+                            greedyFaceMask[(u + du) * size + v + dv] = 0L;
+                        }
+                    }
+                    appendGreedyQuad(chunk, builder, startX, startY, startZ, face, layer, u, v, height, width, (int) (key >>> 32));
+                    v += width;
+                }
+            }
+        }
+    }
+
+    private boolean isGreedyMeshBlock(byte block, BlockState state, int worldX, int worldY, int worldZ, MeshBuildContext context) {
+        if (block == GameConfig.AIR
+            || block == GameConfig.OAK_DOOR
+            || block == GameConfig.OAK_FENCE
+            || block == GameConfig.SNOW_LAYER
+            || block == GameConfig.RED_BED
+            || isOreBlock(block)
+            || world.isCrossPlant(block)
+            || !world.isCubeBlock(block)
+            || world.isTransparentBlock(block)
+            || world.isLiquidBlock(block)) {
+            return false;
+        }
+        boolean cameraInsideSolidBlock = worldX == context.cameraBlockX
+            && worldY == context.cameraBlockY
+            && worldZ == context.cameraBlockZ
+            && world.isSolidBlock(block);
+        if (cameraInsideSolidBlock) {
+            return false;
+        }
+        return !context.spectatorInsideBlock || !world.isSolidBlock(block) || !isNearSpectatorCutoutBlock(worldX, worldY, worldZ, context);
+    }
+
+    private boolean isWavingFoliageFace(byte block, Face face) {
+        return block == GameConfig.OAK_LEAVES
+            || block == GameConfig.PINE_LEAVES;
+    }
+
+    private long greedyKey(BlockState state, int color, int ao) {
+        int numericId = state == null || state.type == null ? GameConfig.AIR & 0xFF : state.type.numericId & 0xFF;
+        int data = state == null ? 0 : state.data & 0x7FFF;
+        return ((long) color << 32) | ((long) (ao & 0x1FF) << 23) | ((long) numericId << 15) | data;
+    }
+
+    private byte greedyFaceBlock(ChunkSectionSnapshot chunk, Face face, int layer, int u, int v) {
+        switch (face) {
+            case WEST:
+            case EAST:
+                return chunk.getBlockLocal(layer, u, v);
+            case TOP:
+            case BOTTOM:
+                return chunk.getBlockLocal(u, layer, v);
+            case NORTH:
+            case SOUTH:
+                return chunk.getBlockLocal(u, v, layer);
+            default:
+                return GameConfig.AIR;
+        }
+    }
+
+    private void appendGreedyQuad(ChunkSectionSnapshot chunk, IntVertexBuilder builder, int startX, int startY, int startZ,
+                                  Face face, int layer, int u, int v, int height, int width, int color) {
+        double x;
+        double y;
+        double z;
+        int ao = packGreedyFaceAo(chunk, startX, startY, startZ, face, layer, u, v, height, width);
+        byte block = greedyFaceBlock(chunk, face, layer, u, v);
+        int vertexFlags = isWavingFoliageFace(block, face) ? VERTEX_FLAG_FOLIAGE : 0;
+        switch (face) {
+            case WEST:
+                x = layer;
+                appendQuad(builder, x, u, v, x, u + height, v, x, u + height, v + width, x, u, v + width, color, ao, vertexFlags);
+                break;
+            case EAST:
+                x = layer + 1.0;
+                appendQuad(builder, x, u, v + width, x, u + height, v + width, x, u + height, v, x, u, v, color, ao, vertexFlags);
+                break;
+            case BOTTOM:
+                y = layer;
+                appendQuad(builder, u, y, v, u, y, v + width, u + height, y, v + width, u + height, y, v, color, ao, vertexFlags);
+                break;
+            case TOP:
+                y = layer + 1.0;
+                appendQuad(builder, u, y, v + width, u, y, v, u + height, y, v, u + height, y, v + width, color, ao, vertexFlags);
+                break;
+            case NORTH:
+                z = layer;
+                appendQuad(builder, u + height, v, z, u + height, v + width, z, u, v + width, z, u, v, z, color, ao, vertexFlags);
+                break;
+            case SOUTH:
+                z = layer + 1.0;
+                appendQuad(builder, u, v, z, u, v + width, z, u + height, v + width, z, u + height, v, z, color, ao, vertexFlags);
+                break;
+            default:
+                break;
         }
     }
 
@@ -1611,6 +2513,18 @@ final class OpenGlRenderer {
     }
 
     private int dynamicChunkUploadBudget() {
+        if (currentRenderDistanceChunks > 16) {
+            return Settings.goodGraphics() ? 96 : 64;
+        }
+        if (debugFps > 0.0) {
+            double frameTimeMs = 1000.0 / debugFps;
+            if (frameTimeMs > 14.0) {
+                return 8;
+            }
+            if (frameTimeMs < 8.0) {
+                return 48;
+            }
+        }
         if (!Settings.goodGraphics()) {
             if (debugFps >= 55.0 || debugFps <= 0.0) {
                 return currentRenderDistanceChunks >= 24 ? 7 : 5;
@@ -1635,26 +2549,33 @@ final class OpenGlRenderer {
         return MIN_CHUNK_UPLOADS_PER_FRAME;
     }
 
-    private long dynamicMeshBuildBudgetNs() {
-        if (!Settings.goodGraphics()) {
+    private int dynamicMeshUploadBudget() {
+        int backlog = completedImmediateMeshBuilds.size() + completedMeshBuilds.size();
+        if (!completedImmediateMeshBuilds.isEmpty()) {
+            return MAX_IMMEDIATE_CHUNK_UPLOADS_PER_FRAME;
+        }
+        if (backlog > 4096) {
             if (debugFps >= 55.0 || debugFps <= 0.0) {
-                return currentRenderDistanceChunks >= 24 ? 7_000_000L : 5_000_000L;
+                return MAX_BACKLOG_CHUNK_UPLOADS_PER_FRAME;
             }
-            if (debugFps >= 35.0) {
-                return currentRenderDistanceChunks >= 24 ? 5_000_000L : 4_000_000L;
+            return 1;
+        }
+        if (backlog > 1024) {
+            if (debugFps >= 55.0 || debugFps <= 0.0) {
+                return 3;
             }
-            return MIN_MESH_BUILD_BUDGET_NS;
+            return 1;
         }
-        if (debugFps >= 58.0 || debugFps <= 0.0) {
-            return MAX_MESH_BUILD_BUDGET_NS;
+        if (backlog > 512) {
+            return debugFps >= 45.0 || debugFps <= 0.0 ? 2 : 1;
         }
-        if (debugFps >= 42.0) {
-            return 9_000_000L;
+        if (debugFps >= 55.0 || debugFps <= 0.0) {
+            return 2;
         }
-        if (debugFps >= 30.0) {
-            return 6_000_000L;
+        if (debugFps >= 45.0) {
+            return 1;
         }
-        return MIN_MESH_BUILD_BUDGET_NS;
+        return MAX_CHUNK_UPLOADS_PER_FRAME;
     }
 
     private void updateFpsCounter(double deltaTime) {
@@ -1684,7 +2605,11 @@ final class OpenGlRenderer {
                 continue;
             }
             glPushMatrix();
-            glTranslated(zombie.x - renderCameraX, zombie.y - renderCameraY, zombie.z - renderCameraZ);
+            glTranslated(
+                interpolatedX(zombie) - renderCameraX,
+                interpolatedY(zombie) - renderCameraY,
+                interpolatedZ(zombie) - renderCameraZ
+            );
             glRotated(-Math.toDegrees(zombie.bodyYaw) - 90.0, 0.0, 1.0, 0.0);
 
             double armSwing = Math.sin(zombie.walkCycle) * 28.0;
@@ -1814,8 +2739,7 @@ final class OpenGlRenderer {
             drawCuboid(-0.33, -0.10, -0.06, -0.21, 0.06, 0.10, 0.28f, 0.18f, 0.10f);
             drawCuboid(0.21, -0.10, -0.06, 0.33, 0.06, 0.10, 0.28f, 0.18f, 0.10f);
         }
-        drawCuboid(-0.11, 0.00, -0.225, -0.04, 0.07, -0.205, 0.03f, 0.03f, 0.03f);
-        drawCuboid(0.04, 0.00, -0.225, 0.11, 0.07, -0.205, 0.03f, 0.03f, 0.03f);
+        renderQuadrupedEyes(zombie.kind);
         glPopMatrix();
 
         renderQuadrupedLeg(-0.21, 0.58, -0.38, -legSwing, legColor);
@@ -1830,6 +2754,18 @@ final class OpenGlRenderer {
         glRotated(swing, 1.0, 0.0, 0.0);
         drawCuboid(-0.075, -0.54, -0.075, 0.075, 0.0, 0.075, color[0], color[1], color[2]);
         glPopMatrix();
+    }
+
+    private void renderQuadrupedEyes(MobKind kind) {
+        double eyeMinY = kind == MobKind.SHEEP ? 0.025 : 0.020;
+        double eyeMaxY = kind == MobKind.SHEEP ? 0.075 : 0.085;
+        double eyeMinZ = kind == MobKind.PIG ? -0.215 : -0.235;
+        double eyeMaxZ = kind == MobKind.PIG ? -0.195 : -0.215;
+        double inner = kind == MobKind.SHEEP ? 0.050 : 0.060;
+        double outer = kind == MobKind.SHEEP ? 0.090 : 0.115;
+        float eye = kind == MobKind.SHEEP ? 0.10f : 0.02f;
+        drawCuboid(-outer, eyeMinY, eyeMinZ, -inner, eyeMaxY, eyeMaxZ, eye, eye, eye);
+        drawCuboid(inner, eyeMinY, eyeMinZ, outer, eyeMaxY, eyeMaxZ, eye, eye, eye);
     }
 
     private float[] mobSkinColor(MobKind kind) {
@@ -1899,8 +2835,11 @@ final class OpenGlRenderer {
 
     private void renderDroppedItems(PlayerState player, double timeOfDay) {
         for (DroppedItem droppedItem : world.getDroppedItems()) {
-            double dx = droppedItem.x - player.x;
-            double dz = droppedItem.z - player.z;
+            double renderX = interpolatedX(droppedItem);
+            double renderY = interpolatedY(droppedItem);
+            double renderZ = interpolatedZ(droppedItem);
+            double dx = renderX - player.x;
+            double dz = renderZ - player.z;
             if (dx * dx + dz * dz > GameConfig.MAX_RENDER_DISTANCE * GameConfig.MAX_RENDER_DISTANCE) {
                 continue;
             }
@@ -1908,9 +2847,9 @@ final class OpenGlRenderer {
             double bob = Math.sin(timeOfDay * Math.PI * 12.0 + droppedItem.spinDegrees * 0.04) * 0.04;
             glPushMatrix();
             glTranslated(
-                droppedItem.x - renderCameraX,
-                droppedItem.y - renderCameraY + 0.14 + bob,
-                droppedItem.z - renderCameraZ
+                renderX - renderCameraX,
+                renderY - renderCameraY + 0.14 + bob,
+                renderZ - renderCameraZ
             );
             glRotated(droppedItem.spinDegrees, 0.0, 1.0, 0.0);
             drawCuboid(-0.12, -0.12, -0.12, 0.12, 0.12, 0.12, color[0], color[1], color[2]);
@@ -1920,11 +2859,14 @@ final class OpenGlRenderer {
 
     private void renderFallingBlocks(PlayerState player) {
         for (FallingBlock fallingBlock : world.getFallingBlocks()) {
+            double renderX = interpolatedX(fallingBlock);
+            double renderY = interpolatedY(fallingBlock);
+            double renderZ = interpolatedZ(fallingBlock);
             if (!isSphereVisible(
                 player,
-                fallingBlock.x,
-                fallingBlock.y + 0.5,
-                fallingBlock.z,
+                renderX,
+                renderY + 0.5,
+                renderZ,
                 0.9,
                 GameConfig.MAX_RENDER_DISTANCE
             )) {
@@ -1934,13 +2876,25 @@ final class OpenGlRenderer {
             float[] color = getHeldBlockColor(fallingBlock.blockId);
             glPushMatrix();
             glTranslated(
-                fallingBlock.x - renderCameraX,
-                fallingBlock.y - renderCameraY,
-                fallingBlock.z - renderCameraZ
+                renderX - renderCameraX,
+                renderY - renderCameraY,
+                renderZ - renderCameraZ
             );
             drawCuboid(-0.49, 0.0, -0.49, 0.49, 0.98, 0.49, color[0], color[1], color[2]);
             glPopMatrix();
         }
+    }
+
+    private double interpolatedX(Entity entity) {
+        return lerpDouble(entity.previousX, entity.x, currentPartialTicks);
+    }
+
+    private double interpolatedY(Entity entity) {
+        return lerpDouble(entity.previousY, entity.y, currentPartialTicks);
+    }
+
+    private double interpolatedZ(Entity entity) {
+        return lerpDouble(entity.previousZ, entity.z, currentPartialTicks);
     }
 
     private void renderPlayerModel(PlayerState player, PlayerInventory inventory, byte selectedBlock, boolean thirdPersonView, boolean frontThirdPersonView) {
@@ -1957,21 +2911,6 @@ final class OpenGlRenderer {
         drawPlayerModelParts(inventory, selectedBlock, walkSwing, attackSwing, player.pitch, !player.spectatorMode, player.sneaking);
         if (player.fireTimer > 0.0) {
             drawCuboid(-0.30, 0.02, -0.30, 0.30, 1.65, 0.30, 1.0f, 0.34f, 0.06f);
-        }
-        glPopMatrix();
-    }
-
-    private void drawPlayerHeadOnly(PlayerInventory inventory, double pitch, boolean sneakingPose) {
-        float[] helmet = inventory == null ? null : armorColor(inventory.getArmorStack(0));
-        double crouch = sneakingPose ? -0.23 : 0.0;
-        double bodyTopY = 1.36 + crouch;
-        glPushMatrix();
-        glTranslated(0.0, bodyTopY + 0.23, sneakingPose ? -0.04 : 0.0);
-        glRotated(Math.toDegrees(pitch), 1.0, 0.0, 0.0);
-        drawCuboid(-0.23, -0.23, -0.23, 0.23, 0.23, 0.23, 0.91f, 0.78f, 0.63f);
-        drawPlayerEyes();
-        if (helmet != null) {
-            drawCuboid(-0.255, -0.255, -0.255, 0.255, 0.07, 0.255, helmet[0], helmet[1], helmet[2]);
         }
         glPopMatrix();
     }
@@ -2010,8 +2949,8 @@ final class OpenGlRenderer {
 
         glPushMatrix();
         glTranslated(0.30, 1.23 + crouch, 0.0);
-        glRotated(-swing - attackSwing, 1.0, 0.0, 0.0);
-        glRotated(attackSwing * 0.16, 0.0, 0.0, 1.0);
+        glRotated(-swing + attackSwing, 1.0, 0.0, 0.0);
+        glRotated(-attackSwing * 0.16, 0.0, 0.0, 1.0);
         drawCuboid(-0.08, -0.50, -0.08, 0.08, 0.16, 0.08, bodyR, bodyG, bodyB);
         if (showHeldItem && selectedBlock != GameConfig.AIR) {
             float[] heldColor = getHeldBlockColor(selectedBlock);
@@ -2719,7 +3658,7 @@ final class OpenGlRenderer {
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
-        glTranslated(0.64 + bob * 0.45 - swing * 0.07, -0.66 + (player.sneaking ? -0.05 : 0.0) + swing * 0.02 + swingDip * 0.025, -1.08 - swing * 0.06);
+        glTranslated(0.76 + bob * 0.45 - swing * 0.05, -0.66 + (player.sneaking ? -0.05 : 0.0) + swing * 0.02 + swingDip * 0.025, -1.08 - swing * 0.06);
         glRotated(-8.0 - swing * 22.0, 1.0, 0.0, 0.0);
         glRotated(11.0 + swing * 12.0, 0.0, 1.0, 0.0);
         glRotated(2.0 + swingDip * 5.0, 0.0, 0.0, 1.0);
@@ -2882,6 +3821,15 @@ final class OpenGlRenderer {
         drawText(20.0f * uiScale, 226.0f * uiScale, uiScale, "Region: " + world.getRegionFileName(chunkX, chunkZ), 1.0f, 1.0f, 1.0f);
         drawText(20.0f * uiScale, 248.0f * uiScale, uiScale, "Under: " + underType.namespacedId + " y=" + underY, 1.0f, 1.0f, 1.0f);
         drawText(20.0f * uiScale, 270.0f * uiScale, uiScale, world.getDensityDebugInfo(blockX, blockY, blockZ), 1.0f, 1.0f, 1.0f);
+        drawText(20.0f * uiScale, 292.0f * uiScale, uiScale,
+            "Mesh: dirty=" + dirtyChunkMeshes.size()
+                + " immediate=" + immediateChunkMeshes.size()
+                + " inFlight=" + meshBuildsInFlight.size()
+                + " ready=" + (completedImmediateMeshBuilds.size() + completedMeshBuilds.size())
+                + " readyKeys=" + meshBuildsReady.size()
+                + " uploaded=" + debugUploadedMeshesLastFrame
+                + " rejected=" + debugRejectedMeshVersionsLastFrame,
+            1.0f, 1.0f, 1.0f);
     }
 
     private String facingName(double yaw) {
@@ -4103,6 +5051,7 @@ final class OpenGlRenderer {
             case InventoryItems.OAK_PLANKS:
                 return new float[]{0.73f, 0.58f, 0.34f};
             case GameConfig.OAK_FENCE:
+            case GameConfig.OAK_FENCE_GATE:
                 return new float[]{0.56f, 0.38f, 0.20f};
             case GameConfig.CHEST:
                 return new float[]{0.62f, 0.39f, 0.17f};
@@ -4294,6 +5243,38 @@ final class OpenGlRenderer {
         };
     }
 
+    private int oreAccentColorPacked(byte block, float brightness) {
+        float red;
+        float green;
+        float blue;
+        switch (block) {
+            case GameConfig.IRON_ORE:
+            case GameConfig.DEEPSLATE_IRON_ORE:
+                red = 0.86f;
+                green = 0.70f;
+                blue = 0.54f;
+                break;
+            case GameConfig.DIAMOND_ORE:
+            case GameConfig.DEEPSLATE_DIAMOND_ORE:
+                red = 0.28f;
+                green = 0.92f;
+                blue = 0.96f;
+                break;
+            case GameConfig.COAL_ORE:
+            case GameConfig.DEEPSLATE_COAL_ORE:
+                red = 0.06f;
+                green = 0.06f;
+                blue = 0.06f;
+                break;
+            default:
+                red = 1.0f;
+                green = 0.0f;
+                blue = 1.0f;
+                break;
+        }
+        return packColor(red * brightness, green * brightness, blue * brightness, 1.0f);
+    }
+
     private void shadeColor(float red, float green, float blue, float brightness) {
         glColor3f(
             clampColor(red * brightness * currentSceneBrightness),
@@ -4308,6 +5289,10 @@ final class OpenGlRenderer {
 
     private float lerp(float start, float end, float amount) {
         return start + (end - start) * Math.max(0.0f, Math.min(1.0f, amount));
+    }
+
+    private double lerpDouble(double start, double end, double amount) {
+        return start + (end - start) * Math.max(0.0, Math.min(1.0, amount));
     }
 
     private void updateCameraEffects(boolean sprinting, int fovDegrees, double deltaTime) {
@@ -4379,10 +5364,23 @@ final class OpenGlRenderer {
     }
 
     private void markChunkDirty(int chunkX, int chunkY, int chunkZ) {
+        markChunkDirty(chunkX, chunkY, chunkZ, false);
+    }
+
+    private void markChunkDirty(int chunkX, int chunkY, int chunkZ, boolean immediate) {
         if (chunkY < 0 || chunkY >= GameConfig.WORLD_CHUNKS_Y) {
             return;
         }
-        dirtyChunkMeshes.add(chunkKey(chunkX, chunkY, chunkZ));
+        long key = chunkKey(chunkX, chunkY, chunkZ);
+        if (!immediate && (meshBuildsInFlight.containsKey(key) || meshBuildsReady.containsKey(key))) {
+            return;
+        }
+        dirtyChunkMeshes.add(key);
+        if (immediate) {
+            immediateChunkMeshes.add(key);
+            meshBuildCooldownUntilNanos.remove(key);
+        }
+        meshBuildsReady.remove(key);
     }
 
     private UiRenderer.InventoryUiLayout buildInventoryLayout(boolean creativeMode, int creativeTab) {
@@ -4444,83 +5442,245 @@ final class OpenGlRenderer {
         final long meshKey;
         final boolean visible;
         final double distanceSquared;
+        final boolean immediate;
 
-        MeshBuildCandidate(int chunkX, int chunkY, int chunkZ, long meshKey, boolean visible, double distanceSquared) {
+        MeshBuildCandidate(int chunkX, int chunkY, int chunkZ, long meshKey, boolean visible, double distanceSquared, boolean immediate) {
             this.chunkX = chunkX;
             this.chunkY = chunkY;
             this.chunkZ = chunkZ;
             this.meshKey = meshKey;
             this.visible = visible;
             this.distanceSquared = distanceSquared;
+            this.immediate = immediate;
         }
 
         @Override
         public int compareTo(MeshBuildCandidate other) {
+            if (immediate != other.immediate) {
+                return immediate ? -1 : 1;
+            }
             if (visible != other.visible) {
                 return visible ? -1 : 1;
             }
-            return Double.compare(distanceSquared, other.distanceSquared);
+            int distanceCompare = Double.compare(distanceSquared, other.distanceSquared);
+            if (distanceCompare != 0) {
+                return distanceCompare;
+            }
+            return Long.compare(meshKey, other.meshKey);
         }
     }
 
-    private static final class FloatArrayBuilder {
-        private float[] values;
-        private float[] sortScratch;
-        private FloatBuffer uploadBuffer;
-        private int size;
+    private static final class MeshBuildContext {
+        final int cameraBlockX;
+        final int cameraBlockY;
+        final int cameraBlockZ;
+        final boolean spectatorInsideBlock;
+        final double sortCameraX;
+        final double sortCameraY;
+        final double sortCameraZ;
+        final int epoch;
 
-        private FloatArrayBuilder(int initialCapacity) {
-            values = new float[Math.max(FLOATS_PER_VERTEX * 4, initialCapacity)];
+        MeshBuildContext(int cameraBlockX, int cameraBlockY, int cameraBlockZ, boolean spectatorInsideBlock,
+                         double sortCameraX, double sortCameraY, double sortCameraZ, int epoch) {
+            this.cameraBlockX = cameraBlockX;
+            this.cameraBlockY = cameraBlockY;
+            this.cameraBlockZ = cameraBlockZ;
+            this.spectatorInsideBlock = spectatorInsideBlock;
+            this.sortCameraX = sortCameraX;
+            this.sortCameraY = sortCameraY;
+            this.sortCameraZ = sortCameraZ;
+            this.epoch = epoch;
+        }
+    }
+
+    private static final class MeshBuildResult {
+        final int chunkX;
+        final int chunkY;
+        final int chunkZ;
+        final long meshKey;
+        final int version;
+        final int[] opaqueVertices;
+        final int opaqueIntCount;
+        final int[] transparentVertices;
+        final int transparentIntCount;
+        final boolean empty;
+        final boolean readyForUpload;
+        final int epoch;
+
+        MeshBuildResult(int chunkX, int chunkY, int chunkZ, long meshKey, int version,
+                        int[] opaqueVertices, int opaqueIntCount,
+                        int[] transparentVertices, int transparentIntCount,
+                        boolean readyForUpload, int epoch) {
+            this.chunkX = chunkX;
+            this.chunkY = chunkY;
+            this.chunkZ = chunkZ;
+            this.meshKey = meshKey;
+            this.version = version;
+            this.opaqueVertices = opaqueVertices;
+            this.opaqueIntCount = opaqueIntCount;
+            this.transparentVertices = transparentVertices;
+            this.transparentIntCount = transparentIntCount;
+            this.empty = opaqueIntCount == 0 && transparentIntCount == 0;
+            this.readyForUpload = readyForUpload;
+            this.epoch = epoch;
         }
 
-        void put(float value) {
-            if (size >= values.length) {
-                float[] next = new float[values.length * 2];
+        static MeshBuildResult empty(int chunkX, int chunkY, int chunkZ, long meshKey, int version, boolean readyForUpload, int epoch) {
+            return new MeshBuildResult(chunkX, chunkY, chunkZ, meshKey, version, new int[0], 0, new int[0], 0, readyForUpload, epoch);
+        }
+    }
+
+    private static final class Frustum {
+        private final Plane[] planes = {
+            new Plane(), new Plane(), new Plane(), new Plane(), new Plane(), new Plane()
+        };
+
+        void set(double cameraX, double cameraY, double cameraZ,
+                 double forwardX, double forwardY, double forwardZ,
+                 double fovDegrees, double aspect, double near, double far) {
+            double forwardLength = Math.sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ);
+            if (forwardLength <= 1e-8) {
+                forwardX = 1.0;
+                forwardY = 0.0;
+                forwardZ = 0.0;
+                forwardLength = 1.0;
+            }
+            forwardX /= forwardLength;
+            forwardY /= forwardLength;
+            forwardZ /= forwardLength;
+
+            double rightX = -forwardZ;
+            double rightZ = forwardX;
+            double rightLength = Math.sqrt(rightX * rightX + rightZ * rightZ);
+            if (rightLength <= 1e-8) {
+                rightX = 1.0;
+                rightZ = 0.0;
+                rightLength = 1.0;
+            }
+            rightX /= rightLength;
+            rightZ /= rightLength;
+            double upX = -rightZ * forwardY;
+            double upY = rightZ * forwardX - rightX * forwardZ;
+            double upZ = rightX * forwardY;
+            double upLength = Math.sqrt(upX * upX + upY * upY + upZ * upZ);
+            if (upLength <= 1e-8) {
+                upX = 0.0;
+                upY = 1.0;
+                upZ = 0.0;
+                upLength = 1.0;
+            }
+            upX /= upLength;
+            upY /= upLength;
+            upZ /= upLength;
+
+            double tanY = Math.tan(Math.toRadians(fovDegrees) * 0.5);
+            double tanX = tanY * aspect;
+            planes[0].set(forwardX, forwardY, forwardZ,
+                cameraX + forwardX * near, cameraY + forwardY * near, cameraZ + forwardZ * near);
+            planes[1].set(-forwardX, -forwardY, -forwardZ,
+                cameraX + forwardX * far, cameraY + forwardY * far, cameraZ + forwardZ * far);
+            planes[2].set(rightX + forwardX * tanX, forwardY * tanX, rightZ + forwardZ * tanX, cameraX, cameraY, cameraZ);
+            planes[3].set(-rightX + forwardX * tanX, forwardY * tanX, -rightZ + forwardZ * tanX, cameraX, cameraY, cameraZ);
+            planes[4].set(upX + forwardX * tanY, upY + forwardY * tanY, upZ + forwardZ * tanY, cameraX, cameraY, cameraZ);
+            planes[5].set(-upX + forwardX * tanY, -upY + forwardY * tanY, -upZ + forwardZ * tanY, cameraX, cameraY, cameraZ);
+        }
+
+        boolean intersectsAabb(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+            for (Plane plane : planes) {
+                double x = plane.x >= 0.0 ? maxX : minX;
+                double y = plane.y >= 0.0 ? maxY : minY;
+                double z = plane.z >= 0.0 ? maxZ : minZ;
+                if (plane.distance(x, y, z) < 0.0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static final class Plane {
+        double x;
+        double y;
+        double z;
+        double d;
+
+        void set(double normalX, double normalY, double normalZ, double pointX, double pointY, double pointZ) {
+            double length = Math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
+            if (length <= 1e-8) {
+                x = 1.0;
+                y = 0.0;
+                z = 0.0;
+                d = -pointX;
+                return;
+            }
+            x = normalX / length;
+            y = normalY / length;
+            z = normalZ / length;
+            d = -(x * pointX + y * pointY + z * pointZ);
+        }
+
+        double distance(double pointX, double pointY, double pointZ) {
+            return x * pointX + y * pointY + z * pointZ + d;
+        }
+    }
+
+    private static final class IntVertexBuilder {
+        private int[] values;
+        private int[] sortScratch;
+        private long[] sortOrder;
+        private int size;
+
+        private IntVertexBuilder(int initialCapacity) {
+            values = new int[Math.max(INTS_PER_VERTEX * 4, initialCapacity)];
+        }
+
+        void putPacked(double x, double y, double z, int color, int ao) {
+            ensureCapacity(size + INTS_PER_VERTEX);
+            values[size++] = packPositionAndAo(x, y, z, ao);
+            values[size++] = color;
+        }
+
+        private void ensureCapacity(int required) {
+            if (required > values.length) {
+                int[] next = new int[Math.max(required, values.length * 2)];
                 System.arraycopy(values, 0, next, 0, values.length);
                 values = next;
             }
-            values[size++] = value;
         }
 
-        void reset(int initialCapacity) {
-            if (values.length < initialCapacity) {
-                values = new float[initialCapacity];
+        int intCount() {
+            return size;
+        }
+
+        int[] toArray() {
+            if (size == 0) {
+                return new int[0];
             }
-            size = 0;
-        }
-
-        void clear() {
-            size = 0;
-        }
-
-        boolean isEmpty() {
-            return size == 0;
-        }
-
-        int vertexCount() {
-            return size / FLOATS_PER_VERTEX;
+            int[] copy = new int[size];
+            System.arraycopy(values, 0, copy, 0, size);
+            return copy;
         }
 
         void sortQuadsFarToNear(double cameraX, double cameraY, double cameraZ) {
-            int floatsPerQuad = FLOATS_PER_VERTEX * 4;
-            int quadCount = size / floatsPerQuad;
+            int intsPerQuad = INTS_PER_VERTEX * VERTICES_PER_QUAD;
+            int quadCount = size / intsPerQuad;
             if (quadCount <= 1) {
                 return;
             }
 
-            Integer[] order = new Integer[quadCount];
-            double[] distances = new double[quadCount];
+            if (sortOrder == null || sortOrder.length < quadCount) {
+                sortOrder = new long[quadCount];
+            }
             for (int quad = 0; quad < quadCount; quad++) {
-                order[quad] = quad;
-                int base = quad * floatsPerQuad;
+                int base = quad * intsPerQuad;
                 double centerX = 0.0;
                 double centerY = 0.0;
                 double centerZ = 0.0;
                 for (int vertex = 0; vertex < 4; vertex++) {
-                    int offset = base + vertex * FLOATS_PER_VERTEX;
-                    centerX += values[offset];
-                    centerY += values[offset + 1];
-                    centerZ += values[offset + 2];
+                    int packed = values[base + vertex * INTS_PER_VERTEX];
+                    centerX += unpackPackedCoord(packed & 1023);
+                    centerY += unpackPackedCoord((packed >>> 10) & 1023);
+                    centerZ += unpackPackedCoord((packed >>> 20) & 1023);
                 }
                 centerX *= 0.25;
                 centerY *= 0.25;
@@ -4528,31 +5688,38 @@ final class OpenGlRenderer {
                 double dx = centerX - cameraX;
                 double dy = centerY - cameraY;
                 double dz = centerZ - cameraZ;
-                distances[quad] = dx * dx + dy * dy + dz * dz;
+                long distanceKey = Math.min(0x7FFFFFFFL, Math.max(0L, Math.round((dx * dx + dy * dy + dz * dz) * 1024.0)));
+                sortOrder[quad] = ((0x7FFFFFFFL - distanceKey) << 32) | (quad & 0xFFFFFFFFL);
             }
 
-            java.util.Arrays.sort(order, (a, b) -> Double.compare(distances[b], distances[a]));
+            java.util.Arrays.sort(sortOrder, 0, quadCount);
             if (sortScratch == null || sortScratch.length < size) {
-                sortScratch = new float[size];
+                sortScratch = new int[size];
             }
             for (int targetQuad = 0; targetQuad < quadCount; targetQuad++) {
-                int sourceOffset = order[targetQuad] * floatsPerQuad;
-                int targetOffset = targetQuad * floatsPerQuad;
-                System.arraycopy(values, sourceOffset, sortScratch, targetOffset, floatsPerQuad);
+                int sourceOffset = (int) sortOrder[targetQuad] * intsPerQuad;
+                int targetOffset = targetQuad * intsPerQuad;
+                System.arraycopy(values, sourceOffset, sortScratch, targetOffset, intsPerQuad);
             }
-            float[] previous = values;
+            int[] previous = values;
             values = sortScratch;
             sortScratch = previous;
         }
 
-        FloatBuffer toFloatBuffer() {
-            if (uploadBuffer == null || uploadBuffer.capacity() < size) {
-                uploadBuffer = BufferUtils.createFloatBuffer(size);
-            }
-            uploadBuffer.clear();
-            uploadBuffer.put(values, 0, size);
-            uploadBuffer.flip();
-            return uploadBuffer;
+        private static int packPositionAndAo(double x, double y, double z, int ao) {
+            int packedX = packCoord(x);
+            int packedY = packCoord(y);
+            int packedZ = packCoord(z);
+            return packedX | (packedY << 10) | (packedZ << 20) | ((ao & 3) << 30);
+        }
+
+        private static int packCoord(double value) {
+            int packed = (int) Math.round((value + PACKED_VERTEX_BIAS) * PACKED_VERTEX_SCALE);
+            return Math.max(0, Math.min(PACKED_VERTEX_MAX, packed));
+        }
+
+        private static double unpackPackedCoord(int packed) {
+            return packed / PACKED_VERTEX_SCALE - PACKED_VERTEX_BIAS;
         }
     }
 

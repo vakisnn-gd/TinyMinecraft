@@ -2,6 +2,9 @@ abstract class Entity {
     double x;
     double y;
     double z;
+    double previousX;
+    double previousY;
+    double previousZ;
     double velocityX;
     double velocityZ;
     double verticalVelocity;
@@ -27,6 +30,15 @@ abstract class Entity {
         this.x = x;
         this.y = y;
         this.z = z;
+        this.previousX = x;
+        this.previousY = y;
+        this.previousZ = z;
+    }
+
+    final void capturePreviousPosition() {
+        this.previousX = x;
+        this.previousY = y;
+        this.previousZ = z;
     }
 
     abstract double radius();

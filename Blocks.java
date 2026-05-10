@@ -121,7 +121,7 @@ final class BlockRegistry {
         register(GameConfig.SEAGRASS, "minecraft:seagrass", "Seagrass", false, false, false, true, true, false, 0);
         register(GameConfig.DEEPSLATE, "minecraft:deepslate", "Deepslate", true, true, false, false, false, false, 0);
         register(GameConfig.CLAY, "minecraft:clay", "Clay", true, true, false, false, false, false, 0);
-        register(GameConfig.OAK_FENCE, "minecraft:oak_fence", "Oak Fence", true, true, false, false, false, false, 0);
+        register(GameConfig.OAK_FENCE, "minecraft:oak_fence", "Oak Fence", true, false, false, false, false, false, 0);
         register(GameConfig.CHEST, "minecraft:chest", "Chest", true, true, false, false, false, false, 0);
         register(GameConfig.WHEAT_CROP, "minecraft:wheat", "Wheat", false, false, false, true, true, false, 0);
         register(GameConfig.RAIL, "minecraft:rail", "Rail", false, false, false, true, false, false, 0);
@@ -136,6 +136,7 @@ final class BlockRegistry {
         register(GameConfig.DEEPSLATE_DIAMOND_ORE, "minecraft:deepslate_diamond_ore", "Deepslate Diamond Ore", true, true, false, false, false, false, 0);
         register(GameConfig.DEEPSLATE_COAL_ORE, "minecraft:deepslate_coal_ore", "Deepslate Coal Ore", true, true, false, false, false, false, 0);
         register(GameConfig.RED_BED, "minecraft:red_bed", "Red Bed", true, false, false, false, false, false, 0);
+        register(GameConfig.OAK_FENCE_GATE, "minecraft:oak_fence_gate", "Oak Fence Gate", true, false, false, false, false, false, 0);
     }
 
     private BlockRegistry() {
@@ -283,6 +284,19 @@ final class Blocks {
 
     static int doorFacing(BlockState state) {
         return state == null ? 0 : ((state.data >>> 2) & 3);
+    }
+
+    static BlockState gateState(boolean open, int facing) {
+        int data = (open ? 1 : 0) | ((facing & 3) << 1);
+        return withData(GameConfig.OAK_FENCE_GATE, data);
+    }
+
+    static boolean isGateOpen(BlockState state) {
+        return state != null && state.type.numericId == (GameConfig.OAK_FENCE_GATE & 0xFF) && (state.data & 1) != 0;
+    }
+
+    static int gateFacing(BlockState state) {
+        return state == null ? 0 : ((state.data >>> 1) & 3);
     }
 
     static boolean isBedHead(BlockState state) {

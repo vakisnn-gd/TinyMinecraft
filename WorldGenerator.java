@@ -25,8 +25,6 @@ final class WorldGenerator {
     private static final double COASTLINE_WIDTH = 0.085;
     private static final int BEACH_MAX_HEIGHT_ABOVE_SEA = 1;
     private static final int OCEAN_SAND_DEPTH = 2;
-    private static final int SHORE_SAND_MIN_Y = GameConfig.SEA_LEVEL - 1;
-    private static final int SHORE_SAND_MAX_Y = GameConfig.SEA_LEVEL + 4;
     private static final double RIVER_MIN_WIDTH_BLOCKS = 2.6;
     private static final double RIVER_MAX_WIDTH_BLOCKS = 4.2;
     private static final double RIVER_MIN_BANK_BLOCKS = 4.8;
@@ -36,8 +34,8 @@ final class WorldGenerator {
     private static final double LAKE_BANK_WIDTH = 0.112;
     private static final int VILLAGE_CELL_SIZE_CHUNKS = 7;
     private static final double VILLAGE_CHANCE = 0.42;
-    private static final int VILLAGE_FOUNDATION_DEPTH = 8;
-    private static final int VILLAGE_ROAD_FOUNDATION_DEPTH = 6;
+    private static final int VILLAGE_FOUNDATION_DEPTH = 14;
+    private static final int VILLAGE_ROAD_FOUNDATION_DEPTH = 20;
     private static final int VILLAGE_STRUCTURE_PROTECTION_DEPTH = 36;
     private static final int WET_RIVER_CAVE_PROTECTION_DEPTH = 28;
     private static final int VILLAGE_ROAD_HALF_WIDTH = 2;
@@ -488,18 +486,50 @@ final class WorldGenerator {
             return;
         }
         int surfaceY = findSurface(column, x, z);
-        byte surface = column.getBlock(x, surfaceY, z);
-        if (!isBuildableSurface(surface) || Math.abs(surfaceY - baseY) > maxDelta) {
+        if (surfaceY <= GameConfig.WORLD_MIN_Y) {
             return;
         }
         int roadY = villageRoadY(x, z, surfaceY, baseY);
+        if (hasVillageStructureAboveRoad(column, x, z, roadY)) {
+            return;
+        }
         stabilizeVillageColumn(column, x, z, roadY, VILLAGE_ROAD_FOUNDATION_DEPTH, surfaceBlock, 3);
+    }
+
+    private boolean hasVillageStructureAboveRoad(GeneratedChunkColumn column, int x, int z, int roadY) {
+        if (column.getBlock(x, roadY, z) == InventoryItems.OAK_PLANKS) {
+            return true;
+        }
+        int top = Math.min(GameConfig.WORLD_MAX_Y, roadY + 6);
+        for (int y = roadY + 1; y <= top; y++) {
+            if (isVillageStructureBlock(column.getBlock(x, y, z))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isVillageStructureBlock(byte block) {
+        switch (block) {
+            case GameConfig.OAK_LOG:
+            case GameConfig.OAK_FENCE:
+            case GameConfig.OAK_DOOR:
+            case GameConfig.CHEST:
+            case GameConfig.CRAFTING_TABLE:
+            case GameConfig.FURNACE:
+            case GameConfig.GLASS:
+            case GameConfig.TORCH:
+            case GameConfig.RED_BED:
+                return true;
+            default:
+                return block == InventoryItems.OAK_PLANKS;
+        }
     }
 
     private int villageRoadY(int worldX, int worldZ, int surfaceY, int baseY) {
         double gradeNoise = fractalNoise((worldX + 910.0) * 0.035, (worldZ - 410.0) * 0.035, 2, 0.50) * 0.45;
-        int target = (int) Math.round(lerp(surfaceY, baseY + gradeNoise, 0.72));
-        return clamp(target, baseY - 2, baseY + 2);
+        int target = (int) Math.round(lerp(surfaceY, baseY + gradeNoise, 0.92));
+        return clamp(target, baseY - 1, baseY + 1);
     }
 
     private byte villageRoadSurfaceBlock(int worldX, int worldZ, int edgeDistance) {
@@ -522,49 +552,19 @@ final class WorldGenerator {
                     continue;
                 }
                 int surfaceY = findSurface(column, x, z);
-                if (Math.abs(surfaceY - groundY) > 6) {
+                if (surfaceY <= GameConfig.WORLD_MIN_Y) {
                     continue;
                 }
                 stabilizeVillageColumn(column, x, z, groundY, VILLAGE_FOUNDATION_DEPTH, GameConfig.GRASS, clearHeight);
             }
         }
-        featherVillageArea(column, originX, originZ, width, depth, groundY);
-    }
-
-    private void featherVillageArea(GeneratedChunkColumn column, int originX, int originZ, int width, int depth, int groundY) {
-        final int margin = 4;
-        for (int x = originX - margin; x < originX + width + margin; x++) {
-            for (int z = originZ - margin; z < originZ + depth + margin; z++) {
-                if (!isInColumn(column, x, z) || inRect(x, z, originX, originZ, width, depth)) {
-                    continue;
-                }
-                int outside = distanceOutsideRect(x, z, originX, originZ, width, depth);
-                if (outside <= 0 || outside > margin) {
-                    continue;
-                }
-                int surfaceY = findSurface(column, x, z);
-                if (surfaceY <= GameConfig.WORLD_MIN_Y || Math.abs(surfaceY - groundY) > 8) {
-                    continue;
-                }
-                double blend = outside / (double) (margin + 1);
-                int targetY = (int) Math.round(lerp(groundY, surfaceY, blend));
-                stabilizeVillageColumn(column, x, z, targetY, 5, GameConfig.GRASS, 1);
-            }
-        }
-    }
-
-    private int distanceOutsideRect(int x, int z, int originX, int originZ, int width, int depth) {
-        int dx = x < originX ? originX - x : (x >= originX + width ? x - (originX + width - 1) : 0);
-        int dz = z < originZ ? originZ - z : (z >= originZ + depth ? z - (originZ + depth - 1) : 0);
-        return Math.max(dx, dz);
     }
 
     private void stabilizeVillageColumn(GeneratedChunkColumn column, int x, int z, int groundY, int foundationDepth, byte surfaceBlock, int clearHeight) {
-        int bottomY = Math.max(GameConfig.WORLD_MIN_Y + 1, groundY - foundationDepth);
+        int bottomY = villagePlinthBottom(column, x, z, groundY, foundationDepth);
         int surfaceY = findSurface(column, x, z);
         for (int y = bottomY; y < groundY; y++) {
-            byte block = column.getBlock(x, y, z);
-            if (shouldReplaceVillageFoundation(block)) {
+            if (column.getBlock(x, y, z) != GameConfig.BEDROCK) {
                 setStructureBlock(column, x, y, z, villageFoundationBlock(y, groundY));
             }
         }
@@ -573,6 +573,22 @@ final class WorldGenerator {
         for (int y = groundY + 1; y <= Math.min(GameConfig.WORLD_MAX_Y, clearTop); y++) {
             setStructureBlock(column, x, y, z, GameConfig.AIR);
         }
+    }
+
+    private int villagePlinthBottom(GeneratedChunkColumn column, int x, int z, int groundY, int minimumDepth) {
+        int minimumBottom = Math.max(GameConfig.WORLD_MIN_Y + 1, groundY - minimumDepth);
+        int y = groundY - 1;
+        while (y > GameConfig.WORLD_MIN_Y + 1) {
+            byte block = column.getBlock(x, y, z);
+            if (block == GameConfig.BEDROCK) {
+                return y + 1;
+            }
+            if (y <= minimumBottom && !shouldReplaceVillageFoundation(block)) {
+                return y + 1;
+            }
+            y--;
+        }
+        return GameConfig.WORLD_MIN_Y + 1;
     }
 
     private boolean shouldReplaceVillageFoundation(byte block) {
@@ -734,10 +750,6 @@ final class WorldGenerator {
         if (randomUnit(mix64(seed ^ ((long) x * 31L) ^ ((long) z * 17L) ^ y)) < 0.45) {
             setStructureBlock(column, x + sideX, y, z + sideZ, GameConfig.OAK_FENCE);
         }
-    }
-
-    private boolean isBuildableSurface(byte block) {
-        return block == GameConfig.GRASS || block == GameConfig.DIRT || block == GameConfig.SAND || block == GameConfig.GRAVEL;
     }
 
     private boolean isInColumn(GeneratedChunkColumn column, int worldX, int worldZ) {
