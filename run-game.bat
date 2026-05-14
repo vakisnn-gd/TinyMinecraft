@@ -15,7 +15,7 @@ if not exist out\TinyCraft.class (
     )
 )
 
-set "JAVA_FLAGS=--enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
+set "JAVA_FLAGS=-Dfile.encoding=UTF-8"
 
 java %JAVA_FLAGS% -cp "out;lib/*" TinyCraft
 if errorlevel 1 (

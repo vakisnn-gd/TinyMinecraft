@@ -20,7 +20,6 @@
       "dependsOn": "compile TinyCraft",
       "command": "java",
       "args": [
-        "--enable-native-access=ALL-UNNAMED",
         "-Dfile.encoding=UTF-8",
         "-cp",
         "out;lib/*",
