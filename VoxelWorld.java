@@ -5,6 +5,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,20 +28,21 @@ final class VoxelWorld implements StructureTemplates.Target {
     private static final int CONTAINER_SAVE_MAGIC = 0x544D4354;
     private static final int CONTAINER_SAVE_VERSION = 3;
     private static final int MOB_SAVE_MAGIC = 0x544D4F42;
-    private static final int MOB_SAVE_VERSION = 1;
+    private static final int MOB_SAVE_VERSION = 3;
+    private static final double PASSIVE_BABY_GROW_SECONDS = 600.0;
     private static final int PLAYER_INVENTORY_SAVE_MAGIC = 0x544D5049;
     private static final int PLAYER_INVENTORY_SAVE_VERSION = 1;
     private static final double ZOMBIE_GROWL_DISTANCE_SQUARED = 11.0 * 11.0;
     private static final double COLLISION_EPSILON = 1.0e-7;
-    private static final int ZOMBIE_TARGET_COUNT = 18;
+    private static final int HOSTILE_MOB_TARGET_COUNT = 18;
     private static final int MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK = Math.max(192, GameConfig.CHUNK_GENERATION_THREADS * 48);
     private static final int MAX_INITIAL_COLUMN_SUBMISSIONS = Math.max(768, GameConfig.CHUNK_GENERATION_THREADS * 192);
     private static final int MAX_PENDING_COLUMN_TASKS = Math.max(8192, GameConfig.CHUNK_GENERATION_THREADS * 1024);
     private static final int MAX_COLUMN_INTEGRATIONS_PER_FRAME = Math.max(16, GameConfig.CHUNK_GENERATION_THREADS * 5);
     private static final long COLUMN_INTEGRATION_BUDGET_NS = 5_000_000L;
-    private static final int MAX_WATER_CELLS_PER_WORLD_TICK = 768;
-    private static final int MAX_LAVA_CELLS_PER_WORLD_TICK = 256;
-    private static final int MAX_SAND_CELLS_PER_WORLD_TICK = 256;
+    private static final int MAX_WATER_CELLS_PER_WORLD_TICK = 128;
+    private static final int MAX_LAVA_CELLS_PER_WORLD_TICK = 32;
+    private static final int MAX_SAND_CELLS_PER_WORLD_TICK = 96;
     private static final int MAX_MOB_AI_UPDATES_PER_FRAME = 32;
     private static final int SPAWN_LAND_SEARCH_RADIUS = 4096;
     private static final int SPAWN_LAND_SEARCH_STEP = 16;
@@ -118,6 +120,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private long seed;
+    private TerrainPreset terrainPreset = TerrainPreset.LEGACY;
     private Path worldDirectory;
     private Path saveDirectory;
     private RegionStorage regionStorage;
@@ -126,7 +129,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final ThreadPoolExecutor generationExecutor = createGenerationExecutor();
     private final BackgroundSaveService backgroundSaveService = new BackgroundSaveService();
     private final int[] permutation = new int[512];
-    private final ArrayList<Zombie> zombies = new ArrayList<>();
+    private final ArrayList<MobEntity> mobs = new ArrayList<>();
     private final HashSet<Long> populatedVillageCells = new HashSet<>();
     private final ArrayList<DroppedItem> droppedItems = new ArrayList<>();
     private final ArrayList<FallingBlock> fallingBlocks = new ArrayList<>();
@@ -135,13 +138,19 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final HashSet<Long> activeWaterCells = new HashSet<>();
     private final HashSet<Long> activeLavaCells = new HashSet<>();
     private final HashSet<Long> activeSandCells = new HashSet<>();
+    private final HashSet<Long> queuedWaterCells = new HashSet<>();
+    private final HashSet<Long> queuedLavaCells = new HashSet<>();
+    private final HashSet<Long> queuedSandCells = new HashSet<>();
+    private final ArrayDeque<Long> activeWaterQueue = new ArrayDeque<>();
+    private final ArrayDeque<Long> activeLavaQueue = new ArrayDeque<>();
+    private final ArrayDeque<Long> activeSandQueue = new ArrayDeque<>();
     private final HashMap<Long, Double> leafDecayTimers = new HashMap<>();
     private final HashSet<Long> fallingBlockSources = new HashSet<>();
     private final HashSet<Long> dirtyChunkSections = new HashSet<>();
     private final HashSet<Long> pendingMeshDirtySections = new HashSet<>();
     private final ColumnUpdateList simulationDirtyColumns = new ColumnUpdateList(64);
     private final ArrayList<Long> readyColumnKeys = new ArrayList<>();
-    private final MutableVec2 zombieSteering = new MutableVec2();
+    private final MutableVec2 mobSteering = new MutableVec2();
     private final MutableVec2 zombieSeparation = new MutableVec2();
     private final MutableVec3 sampledFluidFlow = new MutableVec3();
     private final MutableVec3 blockFluidFlow = new MutableVec3();
@@ -149,7 +158,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private Random worldRandom;
     private WorldGenerator worldGenerator;
     private double simulationAccumulator;
-    private double zombieSpawnCooldown;
+    private double hostileMobSpawnCooldown;
     private double worldTime = 0.30;
     private long worldTickCounter;
     private int renderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
@@ -207,6 +216,10 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     void configureWorld(Path worldDirectory, long seed) {
+        configureWorld(worldDirectory, seed, TerrainPreset.LEGACY);
+    }
+
+    void configureWorld(Path worldDirectory, long seed, TerrainPreset terrainPreset) {
         if (this.worldDirectory != null && !this.worldDirectory.equals(worldDirectory)) {
             flushLoadedColumns();
             saveMobs();
@@ -218,9 +231,10 @@ final class VoxelWorld implements StructureTemplates.Target {
             activeWaterCells.clear();
             activeLavaCells.clear();
             activeSandCells.clear();
+            clearDynamicBlockQueues();
             leafDecayTimers.clear();
             fallingBlockSources.clear();
-            zombies.clear();
+            mobs.clear();
             droppedItems.clear();
             fallingBlocks.clear();
             saveContainers();
@@ -228,11 +242,12 @@ final class VoxelWorld implements StructureTemplates.Target {
             furnaces.clear();
         }
         this.seed = seed;
+        this.terrainPreset = terrainPreset == null ? TerrainPreset.LEGACY : terrainPreset;
         this.worldDirectory = worldDirectory;
         this.saveDirectory = worldDirectory.resolve(GameConfig.SAVE_CHUNKS_DIRECTORY);
         this.regionStorage = new RegionStorage(worldDirectory);
         this.worldRandom = new Random(seed ^ 0x7A21AF13D54E3B21L);
-        this.worldGenerator = new WorldGenerator(seed);
+        this.worldGenerator = new WorldGenerator(seed, this.terrainPreset);
         this.worldTime = 0.30;
         this.streamingWarmupFrames = 0;
         this.lastStreamingChunkX = Integer.MIN_VALUE;
@@ -245,8 +260,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         loadMobs();
     }
 
-    List<Zombie> getZombies() {
-        return zombies;
+    List<MobEntity> getMobs() {
+        return mobs;
     }
 
     List<DroppedItem> getDroppedItems() {
@@ -259,12 +274,20 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     void spawnZombieAt(double x, double y, double z) {
         double spawnY = Math.max(GameConfig.WORLD_MIN_Y + 1.0, Math.min(GameConfig.WORLD_MAX_Y - GameConfig.ZOMBIE_HEIGHT, y));
-        zombies.add(new Zombie(x, spawnY, z, x, z, worldRandom));
+        mobs.add(new MobEntity(x, spawnY, z, x, z, worldRandom));
     }
 
     void spawnMobAt(MobKind kind, double x, double y, double z) {
         double spawnY = Math.max(GameConfig.WORLD_MIN_Y + 1.0, Math.min(GameConfig.WORLD_MAX_Y - GameConfig.ZOMBIE_HEIGHT, y));
-        zombies.add(new Zombie(kind, x, spawnY, z, x, z, worldRandom));
+        mobs.add(new MobEntity(kind, x, spawnY, z, x, z, worldRandom));
+    }
+
+    private void spawnBabyMobAt(MobKind kind, double x, double y, double z) {
+        double spawnY = Math.max(GameConfig.WORLD_MIN_Y + 1.0, Math.min(GameConfig.WORLD_MAX_Y - GameConfig.ZOMBIE_HEIGHT, y));
+        MobEntity baby = new MobEntity(kind, x, spawnY, z, x, z, worldRandom);
+        baby.babyAge = PASSIVE_BABY_GROW_SECONDS;
+        baby.breedCooldown = PASSIVE_BABY_GROW_SECONDS;
+        mobs.add(baby);
     }
 
     void setRenderDistanceChunks(int renderDistanceChunks) {
@@ -291,6 +314,13 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     boolean isChunkLoaded(int chunkX, int chunkZ) {
         return loadedColumns.containsKey(columnKey(chunkX, chunkZ));
+    }
+
+    boolean isBlockLoaded(int x, int y, int z) {
+        if (!GameConfig.isWorldCoordinateInside(x, y, z)) {
+            return false;
+        }
+        return loadedColumns.containsKey(columnKey(worldToChunk(x), worldToChunk(z)));
     }
 
     void fillLoadedChunksSnapshot(List<Chunk> chunks) {
@@ -322,7 +352,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         for (int i = 0; i < permutation.length; i++) {
             permutation[i] = values[i & 255];
         }
-        worldGenerator = new WorldGenerator(seed);
+        worldGenerator = new WorldGenerator(seed, terrainPreset);
     }
 
     void saveAllLoadedColumns() {
@@ -344,13 +374,14 @@ final class VoxelWorld implements StructureTemplates.Target {
         activeWaterCells.clear();
         activeLavaCells.clear();
         activeSandCells.clear();
+        clearDynamicBlockQueues();
         leafDecayTimers.clear();
         fallingBlockSources.clear();
         dirtyChunkSections.clear();
         pendingMeshDirtySections.clear();
         simulationDirtyColumns.clear();
         waterFlowCache.clear();
-        zombies.clear();
+        mobs.clear();
         populatedVillageCells.clear();
         droppedItems.clear();
         fallingBlocks.clear();
@@ -370,20 +401,21 @@ final class VoxelWorld implements StructureTemplates.Target {
         activeWaterCells.clear();
         activeLavaCells.clear();
         activeSandCells.clear();
+        clearDynamicBlockQueues();
         leafDecayTimers.clear();
         fallingBlockSources.clear();
         waterFlowCache.clear();
         dirtyChunkSections.clear();
         pendingMeshDirtySections.clear();
         simulationDirtyColumns.clear();
-        zombies.clear();
+        mobs.clear();
         populatedVillageCells.clear();
         droppedItems.clear();
         fallingBlocks.clear();
         chestContainers.clear();
         furnaces.clear();
         simulationAccumulator = 0.0;
-        zombieSpawnCooldown = 20.0;
+        hostileMobSpawnCooldown = 20.0;
         worldTickCounter = 0L;
         worldTime = 0.30;
         mobUpdateCounter = 0L;
@@ -856,7 +888,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private void loadMobs() {
-        zombies.clear();
+        mobs.clear();
         if (worldDirectory == null) {
             return;
         }
@@ -881,7 +913,7 @@ final class VoxelWorld implements StructureTemplates.Target {
                 double z = input.readDouble();
                 double homeX = input.readDouble();
                 double homeZ = input.readDouble();
-                Zombie mob = new Zombie(kind, x, y, z, homeX, homeZ, worldRandom);
+                MobEntity mob = new MobEntity(kind, x, y, z, homeX, homeZ, worldRandom);
                 mob.health = Math.max(0.0, Math.min(input.readDouble(), maxMobHealth(kind)));
                 mob.velocityX = input.readDouble();
                 mob.velocityZ = input.readDouble();
@@ -897,12 +929,23 @@ final class VoxelWorld implements StructureTemplates.Target {
                 mob.fleeTimer = input.readDouble();
                 mob.loveTimer = input.readDouble();
                 mob.breedCooldown = input.readDouble();
+                if (version >= 2) {
+                    mob.walkCycle = input.readDouble();
+                    mob.resting = input.readBoolean();
+                    mob.fireTimer = input.readDouble();
+                    mob.fireDamageTimer = input.readDouble();
+                    mob.wasInWater = input.readBoolean();
+                    mob.aiTickOffset = input.readInt();
+                }
+                if (version >= 3) {
+                    mob.babyAge = input.readDouble();
+                }
                 if (mob.health > 0.0 && isInside((int) Math.floor(mob.x), (int) Math.floor(mob.y), (int) Math.floor(mob.z))) {
-                    zombies.add(mob);
+                    mobs.add(mob);
                 }
             }
         } catch (IOException ignored) {
-            zombies.clear();
+            mobs.clear();
         }
     }
 
@@ -917,13 +960,13 @@ final class VoxelWorld implements StructureTemplates.Target {
                 output.writeInt(MOB_SAVE_MAGIC);
                 output.writeInt(MOB_SAVE_VERSION);
                 int count = 0;
-                for (Zombie mob : zombies) {
+                for (MobEntity mob : mobs) {
                     if (mob != null && mob.health > 0.0) {
                         count++;
                     }
                 }
                 output.writeInt(count);
-                for (Zombie mob : zombies) {
+                for (MobEntity mob : mobs) {
                     if (mob == null || mob.health <= 0.0) {
                         continue;
                     }
@@ -948,6 +991,13 @@ final class VoxelWorld implements StructureTemplates.Target {
                     output.writeDouble(mob.fleeTimer);
                     output.writeDouble(mob.loveTimer);
                     output.writeDouble(mob.breedCooldown);
+                    output.writeDouble(mob.walkCycle);
+                    output.writeBoolean(mob.resting);
+                    output.writeDouble(mob.fireTimer);
+                    output.writeDouble(mob.fireDamageTimer);
+                    output.writeBoolean(mob.wasInWater);
+                    output.writeInt(mob.aiTickOffset);
+                    output.writeDouble(mob.babyAge);
                 }
             }
         } catch (IOException ignored) {
@@ -963,88 +1013,89 @@ final class VoxelWorld implements StructureTemplates.Target {
         return kind == MobKind.COW || kind == MobKind.SHEEP || kind == MobKind.PIG ? 10.0 : 20.0;
     }
 
-    void updateZombies(PlayerState player, double deltaTime) {
+    void updateMobs(PlayerState player, double deltaTime) {
         if (player == null) {
             return;
         }
 
         mobUpdateCounter++;
-        zombieSpawnCooldown -= deltaTime;
+        hostileMobSpawnCooldown -= deltaTime;
         populateVillageResidentsNear(player);
         maybeSpawnZombieNearPlayer(player);
 
         int aiUpdates = 0;
-        for (int i = zombies.size() - 1; i >= 0; i--) {
-            Zombie zombie = zombies.get(i);
-            double despawnDistance = zombie.kind == MobKind.VILLAGER ? 220.0 : 96.0;
-            double playerDistanceSquared = distanceSquared(zombie.x, zombie.z, player.x, player.z);
-            if (zombie.health <= 0) {
-                dropMobLoot(zombie);
-                zombies.remove(i);
+        for (int i = mobs.size() - 1; i >= 0; i--) {
+            MobEntity mob = mobs.get(i);
+            double despawnDistance = mob.kind == MobKind.VILLAGER ? 220.0 : 96.0;
+            double playerDistanceSquared = distanceSquared(mob.x, mob.z, player.x, player.z);
+            if (mob.health <= 0) {
+                dropMobLoot(mob);
+                mobs.remove(i);
                 continue;
             }
             if (playerDistanceSquared > despawnDistance * despawnDistance) {
-                zombies.remove(i);
+                mobs.remove(i);
                 continue;
             }
 
             boolean inWater = intersectsFluid(
-                zombie.x, zombie.y, zombie.z,
+                mob.x, mob.y, mob.z,
                 GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.WATER
             );
             boolean inLava = intersectsFluid(
-                zombie.x, zombie.y, zombie.z,
+                mob.x, mob.y, mob.z,
                 GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.LAVA
             );
-            if (inWater != zombie.wasInWater) {
-                zombie.splashQueued = true;
+            if (inWater != mob.wasInWater) {
+                mob.splashQueued = true;
             }
-            zombie.wasInWater = inWater;
+            mob.wasInWater = inWater;
 
             if (inLava) {
-                zombie.fireTimer = Math.max(zombie.fireTimer, 3.0);
-                zombie.fireDamageTimer -= deltaTime;
-                if (zombie.fireDamageTimer <= 0.0) {
-                    zombie.health -= GameConfig.LAVA_DAMAGE;
-                    zombie.fireDamageTimer = GameConfig.LAVA_DAMAGE_INTERVAL;
+                mob.fireTimer = Math.max(mob.fireTimer, 3.0);
+                mob.fireDamageTimer -= deltaTime;
+                if (mob.fireDamageTimer <= 0.0) {
+                    mob.health -= GameConfig.LAVA_DAMAGE;
+                    mob.fireDamageTimer = GameConfig.LAVA_DAMAGE_INTERVAL;
                 }
-            } else if (isSunBurningMob(zombie, inWater)) {
-                zombie.fireTimer = Math.max(zombie.fireTimer, 1.2);
-                zombie.fireDamageTimer -= deltaTime;
-                if (zombie.fireDamageTimer <= 0.0) {
-                    zombie.health -= GameConfig.FIRE_DAMAGE;
-                    zombie.fireDamageTimer = GameConfig.FIRE_DAMAGE_INTERVAL;
+            } else if (isSunBurningMob(mob, inWater)) {
+                mob.fireTimer = Math.max(mob.fireTimer, 1.2);
+                mob.fireDamageTimer -= deltaTime;
+                if (mob.fireDamageTimer <= 0.0) {
+                    mob.health -= GameConfig.FIRE_DAMAGE;
+                    mob.fireDamageTimer = GameConfig.FIRE_DAMAGE_INTERVAL;
                 }
             } else {
-                zombie.fireTimer = Math.max(0.0, zombie.fireTimer - deltaTime);
+                mob.fireTimer = Math.max(0.0, mob.fireTimer - deltaTime);
             }
-            zombie.hurtCooldown = Math.max(0.0, zombie.hurtCooldown - deltaTime);
-            zombie.fleeTimer = Math.max(0.0, zombie.fleeTimer - deltaTime);
-            zombie.loveTimer = Math.max(0.0, zombie.loveTimer - deltaTime);
-            zombie.breedCooldown = Math.max(0.0, zombie.breedCooldown - deltaTime);
+            mob.hurtCooldown = Math.max(0.0, mob.hurtCooldown - deltaTime);
+            mob.fleeTimer = Math.max(0.0, mob.fleeTimer - deltaTime);
+            mob.loveTimer = Math.max(0.0, mob.loveTimer - deltaTime);
+            mob.breedCooldown = Math.max(0.0, mob.breedCooldown - deltaTime);
+            mob.babyAge = Math.max(0.0, mob.babyAge - deltaTime);
 
             int aiInterval = zombieAiInterval(playerDistanceSquared);
             boolean nearMob = aiInterval <= GameConfig.ZOMBIE_NEAR_AI_TICKS;
-            boolean scheduledAi = Math.floorMod(mobUpdateCounter + zombie.aiTickOffset, aiInterval) == 0;
+            boolean scheduledAi = Math.floorMod(mobUpdateCounter + mob.aiTickOffset, aiInterval) == 0;
             if (nearMob || (scheduledAi && aiUpdates < MAX_MOB_AI_UPDATES_PER_FRAME)) {
-                updateZombieAi(zombie, player, deltaTime * aiInterval);
+                updateMobAi(mob, player, deltaTime * aiInterval);
                 aiUpdates++;
             }
-            updateZombieMovement(zombie, inWater, deltaTime);
-            if (isHostileMob(zombie)) {
-                maybeQueueZombieGrowl(zombie, player, deltaTime);
-                tryZombieAttack(zombie, player);
+            updateMobMovement(mob, inWater, deltaTime);
+            if (isHostileMob(mob)) {
+                maybeQueueHostileMobGrowl(mob, player, deltaTime);
+                tryHostileMobAttack(mob, player);
             } else {
-                maybeQueuePassiveMobSound(zombie, deltaTime);
+                maybeQueuePassiveMobSound(mob, deltaTime);
             }
         }
     }
 
-    private boolean isHostileMob(Zombie mob) {
+    private boolean isHostileMob(MobEntity mob) {
         return mob.kind == MobKind.ZOMBIE || mob.kind == MobKind.SKELETON;
     }
 
-    private boolean isPassiveMob(Zombie mob) {
+    private boolean isPassiveMob(MobEntity mob) {
         return mob != null && (mob.kind == MobKind.PIG || mob.kind == MobKind.SHEEP || mob.kind == MobKind.COW);
     }
 
@@ -1058,7 +1109,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         return GameConfig.ZOMBIE_FAR_AI_TICKS;
     }
 
-    private void dropMobLoot(Zombie mob) {
+    private void dropMobLoot(MobEntity mob) {
         if (mob == null || mob.kind == MobKind.VILLAGER) {
             return;
         }
@@ -1092,7 +1143,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private void populateVillageResidentsNear(PlayerState player) {
-        if (player == null || zombies.size() > 96) {
+        if (player == null || mobs.size() > 96) {
             return;
         }
         int villageCellSize = getVillageCellSizeChunks();
@@ -1141,7 +1192,7 @@ final class VoxelWorld implements StructureTemplates.Target {
                 || collides(x + 0.5, surfaceY + 1.01, z + 0.5, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT)) {
                 continue;
             }
-            zombies.add(new Zombie(MobKind.VILLAGER, x + 0.5, surfaceY + 1.01, z + 0.5, centerX + 0.5, centerZ + 0.5, new Random(villageSeed ^ attempt)));
+            mobs.add(new MobEntity(MobKind.VILLAGER, x + 0.5, surfaceY + 1.01, z + 0.5, centerX + 0.5, centerZ + 0.5, new Random(villageSeed ^ attempt)));
             spawned++;
         }
         return spawned;
@@ -1152,7 +1203,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         return mantissa / (double) (1L << 53);
     }
 
-    private boolean isSunBurningMob(Zombie mob, boolean inWater) {
+    private boolean isSunBurningMob(MobEntity mob, boolean inWater) {
         return isHostileMob(mob)
             && isDaytime()
             && !inWater
@@ -1166,7 +1217,10 @@ final class VoxelWorld implements StructureTemplates.Target {
     private boolean isExposedToSky(int x, int y, int z) {
         for (int checkY = Math.max(y, GameConfig.WORLD_MIN_Y); checkY <= GameConfig.WORLD_MAX_Y; checkY++) {
             byte block = getBlock(x, checkY, z);
-            if (Blocks.isOpaque(block) && block != GameConfig.OAK_LEAVES && block != GameConfig.PINE_LEAVES) {
+            if (Blocks.isOpaque(block)
+                && block != GameConfig.OAK_LEAVES
+                && block != GameConfig.PINE_LEAVES
+                && block != GameConfig.BIRCH_LEAVES) {
                 return false;
             }
         }
@@ -1194,7 +1248,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             }
             setBlockState(hit.x, hit.y, hit.z, GameConfig.AIR, -1);
         }
-        if (targetBlock == GameConfig.OAK_LOG || targetBlock == GameConfig.PINE_LOG) {
+        if (targetBlock == GameConfig.OAK_LOG || targetBlock == GameConfig.PINE_LOG || targetBlock == GameConfig.BIRCH_LOG) {
             scheduleUnsupportedLeavesAround(hit.x, hit.y, hit.z);
         }
         updatePlantSupportAt(hit.x, hit.y + 1, hit.z);
@@ -1296,11 +1350,11 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private boolean isLeafBlock(byte block) {
-        return block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES;
+        return block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES;
     }
 
     private boolean isLogBlock(byte block) {
-        return block == GameConfig.OAK_LOG || block == GameConfig.PINE_LOG;
+        return block == GameConfig.OAK_LOG || block == GameConfig.PINE_LOG || block == GameConfig.BIRCH_LOG;
     }
 
     boolean interactBlock(RayHit hit, PlayerState player, boolean shiftDown) {
@@ -1585,6 +1639,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (placedBlock == GameConfig.RED_BED) {
             return placeBed(placeX, placeY, placeZ, player);
         }
+        if (isStairBlock(placedBlock)) {
+            return placeStair(placeX, placeY, placeZ, placedBlock, player);
+        }
 
         byte targetBlock = getBlock(placeX, placeY, placeZ);
         boolean canReplaceTarget = Blocks.isReplaceable(targetBlock)
@@ -1660,6 +1717,24 @@ final class VoxelWorld implements StructureTemplates.Target {
         refreshDynamicCellsAround(x, y + 1, z);
         markDirtyBlock(x, y, z);
         markDirtyBlock(x, y + 1, z);
+        refreshSurfaceHeight(x, z);
+        return true;
+    }
+
+    private boolean placeStair(int x, int y, int z, byte block, PlayerState player) {
+        byte targetBlock = getBlock(x, y, z);
+        if (!Blocks.isReplaceable(targetBlock) && !GameConfig.isLiquidBlock(targetBlock)) {
+            return false;
+        }
+        if (blockIntersectsPlayerHitbox(x, y, z, block, player)) {
+            return false;
+        }
+        int facing = player == null ? 0 : facingFromYaw(player.yaw);
+        setBlockState(x, y, z, Blocks.stairState(block, facing));
+        updatePlantSupportAt(x, y + 1, z);
+        updateDoorSupportAt(x, y + 1, z);
+        refreshDynamicCellsAround(x, y, z);
+        markDirtyBlock(x, y, z);
         refreshSurfaceHeight(x, z);
         return true;
     }
@@ -1914,6 +1989,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             case GameConfig.RED_FLOWER:
             case GameConfig.YELLOW_FLOWER:
             case GameConfig.SEAGRASS:
+            case GameConfig.DEAD_BUSH:
                 return new double[]{0.18, 0.0, 0.18, 0.82, 0.86, 0.82};
             case GameConfig.RAIL:
                 return new double[]{0.0, 0.0, 0.0, 1.0, 0.075, 1.0};
@@ -1999,9 +2075,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         double dirY = Math.sin(player.pitch);
         double dirZ = Math.sin(player.yaw) * horizontalLength;
         double reach = 3.4;
-        Zombie best = null;
+        MobEntity best = null;
         double bestProjection = Double.POSITIVE_INFINITY;
-        for (Zombie mob : zombies) {
+        for (MobEntity mob : mobs) {
             if (mob.health <= 0) {
                 continue;
             }
@@ -2051,16 +2127,21 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (player == null || !isBreedingFood(itemId)) {
             return false;
         }
-        Zombie fed = findFeedTarget(player, itemId);
+        MobEntity fed = findFeedTarget(player, itemId);
         if (fed == null) {
             return false;
+        }
+        if (fed.isBaby()) {
+            fed.babyAge = Math.max(0.0, fed.babyAge - 60.0);
+            fed.growlQueued = true;
+            return true;
         }
         fed.loveTimer = 8.0;
         fed.breedCooldown = Math.max(fed.breedCooldown, 1.0);
         fed.growlQueued = true;
-        Zombie mate = findMateFor(fed);
+        MobEntity mate = findMateFor(fed);
         if (mate != null) {
-            spawnMobAt(fed.kind, (fed.x + mate.x) * 0.5, Math.max(fed.y, mate.y), (fed.z + mate.z) * 0.5);
+            spawnBabyMobAt(fed.kind, (fed.x + mate.x) * 0.5, Math.max(fed.y, mate.y), (fed.z + mate.z) * 0.5);
             fed.loveTimer = 0.0;
             mate.loveTimer = 0.0;
             fed.breedCooldown = 35.0;
@@ -2069,10 +2150,10 @@ final class VoxelWorld implements StructureTemplates.Target {
         return true;
     }
 
-    private Zombie findFeedTarget(PlayerState player, byte itemId) {
-        Zombie best = null;
+    private MobEntity findFeedTarget(PlayerState player, byte itemId) {
+        MobEntity best = null;
         double bestDistance = 3.2 * 3.2;
-        for (Zombie mob : zombies) {
+        for (MobEntity mob : mobs) {
             if (!canFeedMob(mob, itemId)) {
                 continue;
             }
@@ -2088,9 +2169,10 @@ final class VoxelWorld implements StructureTemplates.Target {
         return best;
     }
 
-    private Zombie findMateFor(Zombie fed) {
-        for (Zombie other : zombies) {
-            if (other == fed || other.kind != fed.kind || other.health <= 0 || other.breedCooldown > 0.0 || other.loveTimer <= 0.0) {
+    private MobEntity findMateFor(MobEntity fed) {
+        for (MobEntity other : mobs) {
+            if (other == fed || other.kind != fed.kind || other.health <= 0 || other.isBaby()
+                || other.breedCooldown > 0.0 || other.loveTimer <= 0.0) {
                 continue;
             }
             if (distanceSquared(fed.x, fed.z, other.x, other.z) <= 6.0 * 6.0 && Math.abs(fed.y - other.y) <= 2.0) {
@@ -2100,12 +2182,14 @@ final class VoxelWorld implements StructureTemplates.Target {
         return null;
     }
 
-    private boolean canFeedMob(Zombie mob, byte itemId) {
-        return mob != null
-            && mob.health > 0
-            && mob.breedCooldown <= 0.0
-            && ((itemId == GameConfig.WHEAT_CROP && (mob.kind == MobKind.COW || mob.kind == MobKind.SHEEP))
-                || (itemId == InventoryItems.CARROT && mob.kind == MobKind.PIG));
+    private boolean canFeedMob(MobEntity mob, byte itemId) {
+        if (mob == null || mob.health <= 0) {
+            return false;
+        }
+        boolean correctFood = (itemId == GameConfig.WHEAT_CROP && (mob.kind == MobKind.COW || mob.kind == MobKind.SHEEP))
+            || (itemId == InventoryItems.CARROT && mob.kind == MobKind.PIG);
+        return correctFood
+            && (mob.isBaby() || mob.breedCooldown <= 0.0);
     }
 
     private boolean isBreedingFood(byte itemId) {
@@ -2468,14 +2552,14 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     int getVillageCellSizeChunks() {
         if (worldGenerator == null) {
-            worldGenerator = new WorldGenerator(seed);
+            worldGenerator = new WorldGenerator(seed, terrainPreset);
         }
         return worldGenerator.debugVillageCellSizeChunks();
     }
 
     int[] getVillageCenterForCell(int cellX, int cellZ) {
         if (worldGenerator == null) {
-            worldGenerator = new WorldGenerator(seed);
+            worldGenerator = new WorldGenerator(seed, terrainPreset);
         }
         return worldGenerator.debugVillageCenterForCell(cellX, cellZ);
     }
@@ -2521,10 +2605,11 @@ final class VoxelWorld implements StructureTemplates.Target {
             return neighbor != GameConfig.SNOW_LAYER
                 && (isTransparentBlock(neighbor) || !isSolidBlock(neighbor));
         }
-        if (sourceBlock == GameConfig.OAK_LEAVES || sourceBlock == GameConfig.PINE_LEAVES) {
+        if (sourceBlock == GameConfig.OAK_LEAVES || sourceBlock == GameConfig.PINE_LEAVES || sourceBlock == GameConfig.BIRCH_LEAVES) {
             return neighbor != sourceBlock
                 && neighbor != GameConfig.OAK_LOG
-                && neighbor != GameConfig.PINE_LOG;
+                && neighbor != GameConfig.PINE_LOG
+                && neighbor != GameConfig.BIRCH_LOG;
         }
         return isTransparentBlock(neighbor) || !isSolidBlock(neighbor);
     }
@@ -2597,6 +2682,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             || block == GameConfig.RED_FLOWER
             || block == GameConfig.YELLOW_FLOWER
             || block == GameConfig.WHEAT_CROP
+            || block == GameConfig.DEAD_BUSH
             || block == GameConfig.TORCH;
     }
 
@@ -2610,7 +2696,16 @@ final class VoxelWorld implements StructureTemplates.Target {
             && block != GameConfig.OAK_FENCE_GATE
             && block != GameConfig.RED_BED
             && block != GameConfig.OAK_DOOR
+            && !isStairBlock(block)
             && !isCrossPlant(block);
+    }
+
+    boolean isStairBlock(byte block) {
+        return block == GameConfig.OAK_STAIRS
+            || block == GameConfig.PINE_STAIRS
+            || block == GameConfig.BIRCH_STAIRS
+            || block == GameConfig.STONE_STAIRS
+            || block == GameConfig.COBBLESTONE_STAIRS;
     }
 
     int getFluidDistance(int x, int y, int z) {
@@ -2626,9 +2721,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         int playerChunkZ = player == null ? 0 : worldToChunk((int) Math.floor(player.z));
 
         HashSet<Long> reactionCandidates = new HashSet<>();
-        tickFluidSet(activeWaterCells, GameConfig.WATER, playerChunkX, playerChunkZ, reactionCandidates, MAX_WATER_CELLS_PER_WORLD_TICK);
+        tickFluidSet(activeWaterCells, queuedWaterCells, activeWaterQueue, GameConfig.WATER, playerChunkX, playerChunkZ, reactionCandidates, MAX_WATER_CELLS_PER_WORLD_TICK);
         if (worldTickCounter % GameConfig.LAVA_FLOW_STEP_INTERVAL == 0) {
-            tickFluidSet(activeLavaCells, GameConfig.LAVA, playerChunkX, playerChunkZ, reactionCandidates, MAX_LAVA_CELLS_PER_WORLD_TICK);
+            tickFluidSet(activeLavaCells, queuedLavaCells, activeLavaQueue, GameConfig.LAVA, playerChunkX, playerChunkZ, reactionCandidates, MAX_LAVA_CELLS_PER_WORLD_TICK);
         }
         resolveFluidReactions(reactionCandidates);
         tickSand(playerChunkX, playerChunkZ);
@@ -2670,20 +2765,28 @@ final class VoxelWorld implements StructureTemplates.Target {
             || getBlock(x, y + 1, z - 1) == GameConfig.GRASS;
     }
 
-    private void tickFluidSet(HashSet<Long> activeCells, byte fluidItem, int playerChunkX, int playerChunkZ, HashSet<Long> reactionCandidates, int maxCells) {
+    private void tickFluidSet(HashSet<Long> activeCells, HashSet<Long> queuedCells, ArrayDeque<Long> queue, byte fluidItem, int playerChunkX, int playerChunkZ, HashSet<Long> reactionCandidates, int maxCells) {
         if (activeCells.isEmpty()) {
             return;
         }
 
-        ArrayList<Long> snapshot = new ArrayList<>(activeCells);
-        snapshot.sort((left, right) -> Integer.compare(
-            dynamicCellPriority(left, playerChunkX, playerChunkZ),
-            dynamicCellPriority(right, playerChunkX, playerChunkZ)
-        ));
+        if (queue.isEmpty()) {
+            refillDynamicQueue(activeCells, queuedCells, queue, maxCells * 4);
+        }
         HashMap<Long, PendingBlockChange> pendingChanges = new HashMap<>();
         ArrayList<Long> processedKeys = new ArrayList<>();
         int processed = 0;
-        for (long blockKey : snapshot) {
+        int attempts = 0;
+        int maxAttempts = Math.max(maxCells * 8, maxCells);
+        while (processed < maxCells && attempts < maxAttempts && !queue.isEmpty()) {
+            long blockKey = queue.removeFirst();
+            if (!queuedCells.remove(blockKey)) {
+                continue;
+            }
+            attempts++;
+            if (!activeCells.contains(blockKey)) {
+                continue;
+            }
             int x = unpackBlockX(blockKey);
             int y = unpackBlockY(blockKey);
             int z = unpackBlockZ(blockKey);
@@ -2693,13 +2796,12 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
             if (!isChunkWithinFluidSimulationDistance(worldToChunk(x), worldToChunk(z), playerChunkX, playerChunkZ)) {
+                enqueueDynamicCell(activeCells, queuedCells, queue, blockKey);
                 continue;
             }
             if (!shouldTickDynamicCell(blockKey, x, z, playerChunkX, playerChunkZ)) {
+                enqueueDynamicCell(activeCells, queuedCells, queue, blockKey);
                 continue;
-            }
-            if (processed >= maxCells) {
-                break;
             }
             processed++;
             processedKeys.add(blockKey);
@@ -2775,6 +2877,10 @@ final class VoxelWorld implements StructureTemplates.Target {
             return;
         }
 
+        if (!hasFluidHorizontalFloor(x, y, z, fluidItem)) {
+            return;
+        }
+
         int nextDistance = block == sourceBlock || fallingColumn ? 1 : currentDistance + 1;
         if (nextDistance > maxDistance) {
             return;
@@ -2821,13 +2927,26 @@ final class VoxelWorld implements StructureTemplates.Target {
     private boolean hasSimpleFluidNeighborSupport(int x, int y, int z, byte fluidItem, int currentDistance) {
         byte neighbor = getBlock(x, y, z);
         if (neighbor == GameConfig.sourceBlockForFluid(fluidItem)) {
-            return true;
+            return hasFluidHorizontalFloor(x, y, z, fluidItem);
         }
         if (GameConfig.fluidItemForBlock(neighbor) != fluidItem) {
             return false;
         }
+        if (!hasFluidHorizontalFloor(x, y, z, fluidItem)) {
+            return false;
+        }
         int neighborDistance = getFluidDistance(x, y, z);
         return neighborDistance >= 0 && neighborDistance < currentDistance;
+    }
+
+    private boolean hasFluidHorizontalFloor(int x, int y, int z, byte fluidItem) {
+        if (y <= GameConfig.WORLD_MIN_Y) {
+            return true;
+        }
+        byte below = getBlock(x, y - 1, z);
+        return below != GameConfig.AIR
+            && GameConfig.fluidItemForBlock(below) != fluidItem
+            && !isReplaceableForFluid(below);
     }
 
     private void tickSand(int playerChunkX, int playerChunkZ) {
@@ -2835,13 +2954,21 @@ final class VoxelWorld implements StructureTemplates.Target {
             return;
         }
 
-        ArrayList<Long> snapshot = new ArrayList<>(activeSandCells);
-        snapshot.sort((left, right) -> Integer.compare(
-            dynamicCellPriority(left, playerChunkX, playerChunkZ),
-            dynamicCellPriority(right, playerChunkX, playerChunkZ)
-        ));
+        if (activeSandQueue.isEmpty()) {
+            refillDynamicQueue(activeSandCells, queuedSandCells, activeSandQueue, MAX_SAND_CELLS_PER_WORLD_TICK * 4);
+        }
         int processed = 0;
-        for (long blockKey : snapshot) {
+        int attempts = 0;
+        int maxAttempts = Math.max(MAX_SAND_CELLS_PER_WORLD_TICK * 8, MAX_SAND_CELLS_PER_WORLD_TICK);
+        while (processed < MAX_SAND_CELLS_PER_WORLD_TICK && attempts < maxAttempts && !activeSandQueue.isEmpty()) {
+            long blockKey = activeSandQueue.removeFirst();
+            if (!queuedSandCells.remove(blockKey)) {
+                continue;
+            }
+            attempts++;
+            if (!activeSandCells.contains(blockKey)) {
+                continue;
+            }
             int x = unpackBlockX(blockKey);
             int y = unpackBlockY(blockKey);
             int z = unpackBlockZ(blockKey);
@@ -2851,13 +2978,12 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
             if (!isChunkWithinFluidSimulationDistance(worldToChunk(x), worldToChunk(z), playerChunkX, playerChunkZ)) {
+                enqueueDynamicCell(activeSandCells, queuedSandCells, activeSandQueue, blockKey);
                 continue;
             }
             if (!shouldTickDynamicCell(blockKey, x, z, playerChunkX, playerChunkZ)) {
+                enqueueDynamicCell(activeSandCells, queuedSandCells, activeSandQueue, blockKey);
                 continue;
-            }
-            if (processed >= MAX_SAND_CELLS_PER_WORLD_TICK) {
-                break;
             }
             processed++;
             byte below = getBlock(x, y - 1, z);
@@ -3162,69 +3288,69 @@ final class VoxelWorld implements StructureTemplates.Target {
         return isReplaceableForFluid(block) || GameConfig.fluidItemForBlock(block) == fluidItem;
     }
 
-    private void updateZombieAi(Zombie zombie, PlayerState player, double deltaTime) {
-        if (zombie.kind == MobKind.VILLAGER) {
-            updateVillagerAi(zombie, deltaTime);
+    private void updateMobAi(MobEntity mob, PlayerState player, double deltaTime) {
+        if (mob.kind == MobKind.VILLAGER) {
+            updateVillagerAi(mob, deltaTime);
             return;
         }
-        zombie.wanderTime -= deltaTime;
-        if (zombie.wanderTime <= 0.0) {
-            if (zombie.resting) {
-                zombie.resting = false;
-                chooseZombieDirection(zombie, true);
-                zombie.wanderTime = 1.4 + zombie.random.nextDouble() * 1.8;
+        mob.wanderTime -= deltaTime;
+        if (mob.wanderTime <= 0.0) {
+            if (mob.resting) {
+                mob.resting = false;
+                chooseMobDirection(mob, true);
+                mob.wanderTime = 1.4 + mob.random.nextDouble() * 1.8;
             } else {
-                zombie.resting = true;
-                zombie.wanderTime = 0.8 + zombie.random.nextDouble() * 1.2;
+                mob.resting = true;
+                mob.wanderTime = 0.8 + mob.random.nextDouble() * 1.2;
             }
         }
 
         double targetVelocityX = 0.0;
         double targetVelocityZ = 0.0;
-        boolean pursuingPlayer = isHostileMob(zombie) && canPursuePlayer(zombie, player);
-        if (isPassiveMob(zombie) && zombie.fleeTimer > 0.0 && player != null) {
-            double deltaX = zombie.x - player.x;
-            double deltaZ = zombie.z - player.z;
+        boolean pursuingPlayer = isHostileMob(mob) && canHostileMobPursuePlayer(mob, player);
+        if (isPassiveMob(mob) && mob.fleeTimer > 0.0 && player != null) {
+            double deltaX = mob.x - player.x;
+            double deltaZ = mob.z - player.z;
             double horizontalDistanceSquared = deltaX * deltaX + deltaZ * deltaZ;
             if (horizontalDistanceSquared > 1.0e-8) {
                 double horizontalDistance = Math.sqrt(horizontalDistanceSquared);
                 double fleeSpeed = GameConfig.ZOMBIE_WANDER_SPEED * 1.65;
                 targetVelocityX = deltaX / horizontalDistance * fleeSpeed;
                 targetVelocityZ = deltaZ / horizontalDistance * fleeSpeed;
-                zombie.targetBodyYaw = Math.atan2(deltaZ, deltaX);
-                zombie.resting = false;
+                mob.targetBodyYaw = Math.atan2(deltaZ, deltaX);
+                mob.resting = false;
             }
         } else if (pursuingPlayer) {
-            zombie.resting = false;
-            double deltaX = player.x - zombie.x;
-            double deltaZ = player.z - zombie.z;
+            mob.resting = false;
+            double deltaX = player.x - mob.x;
+            double deltaZ = player.z - mob.z;
             double horizontalDistanceSquared = deltaX * deltaX + deltaZ * deltaZ;
             if (horizontalDistanceSquared > 1.0e-8) {
                 double horizontalDistance = Math.sqrt(horizontalDistanceSquared);
                 targetVelocityX = deltaX / horizontalDistance * GameConfig.ZOMBIE_CHASE_SPEED;
                 targetVelocityZ = deltaZ / horizontalDistance * GameConfig.ZOMBIE_CHASE_SPEED;
-                steerZombieAroundObstacle(zombie, targetVelocityX, targetVelocityZ, zombieSteering);
-                targetVelocityX = zombieSteering.x;
-                targetVelocityZ = zombieSteering.z;
-                zombie.targetBodyYaw = Math.atan2(deltaZ, deltaX);
+                steerMobAroundObstacle(mob, targetVelocityX, targetVelocityZ, mobSteering);
+                targetVelocityX = mobSteering.x;
+                targetVelocityZ = mobSteering.z;
+                mob.targetBodyYaw = Math.atan2(deltaZ, deltaX);
             }
-        } else if (!zombie.resting) {
-            double wanderSpeed = isHostileMob(zombie) ? GameConfig.ZOMBIE_WANDER_SPEED : GameConfig.ZOMBIE_WANDER_SPEED * 0.62;
-            targetVelocityX = directionMoveX(zombie.directionIndex) * wanderSpeed;
-            targetVelocityZ = directionMoveZ(zombie.directionIndex) * wanderSpeed;
-            zombie.targetBodyYaw = angleForDirectionIndex(zombie.directionIndex);
+        } else if (!mob.resting) {
+            double wanderSpeed = isHostileMob(mob) ? GameConfig.ZOMBIE_WANDER_SPEED : GameConfig.ZOMBIE_WANDER_SPEED * 0.62;
+            targetVelocityX = directionMoveX(mob.directionIndex) * wanderSpeed;
+            targetVelocityZ = directionMoveZ(mob.directionIndex) * wanderSpeed;
+            mob.targetBodyYaw = angleForDirectionIndex(mob.directionIndex);
         } else {
-            zombie.targetBodyYaw = zombie.bodyYaw;
+            mob.targetBodyYaw = mob.bodyYaw;
         }
 
-        calculateZombieSeparation(zombie, zombieSeparation);
+        calculateMobSeparation(mob, zombieSeparation);
         targetVelocityX += zombieSeparation.x;
         targetVelocityZ += zombieSeparation.z;
 
         double targetSpeedSquared = targetVelocityX * targetVelocityX + targetVelocityZ * targetVelocityZ;
-        double maxSpeed = isHostileMob(zombie)
+        double maxSpeed = isHostileMob(mob)
             ? GameConfig.ZOMBIE_CHASE_SPEED
-            : GameConfig.ZOMBIE_WANDER_SPEED * (zombie.fleeTimer > 0.0 ? 1.75 : 0.72);
+            : GameConfig.ZOMBIE_WANDER_SPEED * (mob.fleeTimer > 0.0 ? 1.75 : 0.72);
         if (targetSpeedSquared > maxSpeed * maxSpeed) {
             double scale = maxSpeed / Math.sqrt(targetSpeedSquared);
             targetVelocityX *= scale;
@@ -3232,11 +3358,11 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         double blend = Math.min(1.0, deltaTime * 8.0);
-        zombie.velocityX += (targetVelocityX - zombie.velocityX) * blend;
-        zombie.velocityZ += (targetVelocityZ - zombie.velocityZ) * blend;
+        mob.velocityX += (targetVelocityX - mob.velocityX) * blend;
+        mob.velocityZ += (targetVelocityZ - mob.velocityZ) * blend;
     }
 
-    private void updateVillagerAi(Zombie villager, double deltaTime) {
+    private void updateVillagerAi(MobEntity villager, double deltaTime) {
         villager.wanderTime -= deltaTime;
         double homeDistance = Math.sqrt(distanceSquared(villager.x, villager.z, villager.homeX, villager.homeZ));
         boolean night = !isDaytime();
@@ -3251,7 +3377,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         if (villager.wanderTime <= 0.0) {
             villager.resting = villager.random.nextDouble() < (night ? 0.78 : 0.34);
-            chooseZombieDirection(villager, true);
+            chooseMobDirection(villager, true);
             villager.wanderTime = night
                 ? 2.4 + villager.random.nextDouble() * 3.2
                 : 1.2 + villager.random.nextDouble() * 2.4;
@@ -3264,7 +3390,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             targetVelocityZ = directionMoveZ(villager.directionIndex) * speed;
             villager.targetBodyYaw = angleForDirectionIndex(villager.directionIndex);
         }
-        calculateZombieSeparation(villager, zombieSeparation);
+        calculateMobSeparation(villager, zombieSeparation);
         targetVelocityX += zombieSeparation.x * 0.5;
         targetVelocityZ += zombieSeparation.z * 0.5;
         double blend = Math.min(1.0, deltaTime * 5.0);
@@ -3272,123 +3398,123 @@ final class VoxelWorld implements StructureTemplates.Target {
         villager.velocityZ += (targetVelocityZ - villager.velocityZ) * blend;
     }
 
-    private void updateZombieMovement(Zombie zombie, boolean inWater, double deltaTime) {
+    private void updateMobMovement(MobEntity mob, boolean inWater, double deltaTime) {
         if (inWater) {
-            sampleFluidFlow(zombie.x, zombie.y, zombie.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.WATER, sampledFluidFlow);
-            zombie.velocityX += sampledFluidFlow.x * GameConfig.WATER_ENTITY_FLOW_PUSH * deltaTime;
-            zombie.velocityZ += sampledFluidFlow.z * GameConfig.WATER_ENTITY_FLOW_PUSH * deltaTime;
-            zombie.verticalVelocity += sampledFluidFlow.y * GameConfig.WATER_VERTICAL_FLOW_PUSH * deltaTime;
-            zombie.velocityX *= 0.82;
-            zombie.velocityZ *= 0.82;
-            zombie.verticalVelocity -= GameConfig.WATER_SINK_ACCELERATION * deltaTime;
+            sampleFluidFlow(mob.x, mob.y, mob.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.WATER, sampledFluidFlow);
+            mob.velocityX += sampledFluidFlow.x * GameConfig.WATER_ENTITY_FLOW_PUSH * deltaTime;
+            mob.velocityZ += sampledFluidFlow.z * GameConfig.WATER_ENTITY_FLOW_PUSH * deltaTime;
+            mob.verticalVelocity += sampledFluidFlow.y * GameConfig.WATER_VERTICAL_FLOW_PUSH * deltaTime;
+            mob.velocityX *= 0.82;
+            mob.velocityZ *= 0.82;
+            mob.verticalVelocity -= GameConfig.WATER_SINK_ACCELERATION * deltaTime;
             double tickScale = deltaTime / GameConfig.PHYSICS_TICK_SECONDS;
-            zombie.verticalVelocity *= Math.pow(GameConfig.WATER_DRAG_PER_TICK, tickScale);
+            mob.verticalVelocity *= Math.pow(GameConfig.WATER_DRAG_PER_TICK, tickScale);
         }
 
-        double moveX = zombie.velocityX * deltaTime;
-        double moveZ = zombie.velocityZ * deltaTime;
-        boolean movedHorizontally = moveZombieHorizontal(zombie, moveX, moveZ, deltaTime);
+        double moveX = mob.velocityX * deltaTime;
+        double moveZ = mob.velocityZ * deltaTime;
+        boolean movedHorizontally = moveMobHorizontal(mob, moveX, moveZ, deltaTime);
         if (!movedHorizontally && (Math.abs(moveX) > 1.0e-8 || Math.abs(moveZ) > 1.0e-8)) {
-            zombie.velocityX *= 0.25;
-            zombie.velocityZ *= 0.25;
-            redirectZombieAfterCollision(zombie);
+            mob.velocityX *= 0.25;
+            mob.velocityZ *= 0.25;
+            redirectMobAfterCollision(mob);
         }
 
-        if (Double.isNaN(zombie.stepTargetY)) {
+        if (Double.isNaN(mob.stepTargetY)) {
             if (!inWater) {
-                zombie.verticalVelocity = Math.max(zombie.verticalVelocity - GameConfig.GRAVITY * deltaTime, -GameConfig.TERMINAL_VELOCITY);
+                mob.verticalVelocity = Math.max(mob.verticalVelocity - GameConfig.GRAVITY * deltaTime, -GameConfig.TERMINAL_VELOCITY);
             }
-            moveZombieVertical(zombie, zombie.verticalVelocity * deltaTime);
-            zombie.isGrounded = isZombieStandingOnGround(zombie);
+            moveMobVertical(mob, mob.verticalVelocity * deltaTime);
+            mob.isGrounded = isMobStandingOnGround(mob);
         }
-        zombie.bodyYaw = turnTowardAngle(zombie.bodyYaw, zombie.targetBodyYaw, GameConfig.ZOMBIE_TURN_SPEED * deltaTime);
+        mob.bodyYaw = turnTowardAngle(mob.bodyYaw, mob.targetBodyYaw, GameConfig.ZOMBIE_TURN_SPEED * deltaTime);
 
-        double horizontalSpeed = Math.sqrt(zombie.velocityX * zombie.velocityX + zombie.velocityZ * zombie.velocityZ);
+        double horizontalSpeed = Math.sqrt(mob.velocityX * mob.velocityX + mob.velocityZ * mob.velocityZ);
         if (movedHorizontally && horizontalSpeed > 0.02) {
-            zombie.walkCycle += horizontalSpeed * deltaTime * (zombie.isGrounded ? 8.0 : 5.0);
+            mob.walkCycle += horizontalSpeed * deltaTime * (mob.isGrounded ? 8.0 : 5.0);
         } else {
-            zombie.walkCycle += (0.0 - zombie.walkCycle) * Math.min(1.0, deltaTime * 7.0);
+            mob.walkCycle += (0.0 - mob.walkCycle) * Math.min(1.0, deltaTime * 7.0);
         }
     }
 
-    private boolean moveZombieHorizontal(Zombie zombie, double moveX, double moveZ, double deltaTime) {
+    private boolean moveMobHorizontal(MobEntity mob, double moveX, double moveZ, double deltaTime) {
         if (Math.abs(moveX) < 1e-8 && Math.abs(moveZ) < 1e-8) {
             return false;
         }
 
-        double nextX = zombie.x + moveX;
-        double nextZ = zombie.z + moveZ;
-        if (canZombieOccupy(nextX, zombie.y, nextZ)) {
-            zombie.x = nextX;
-            zombie.z = nextZ;
-            zombie.stepTargetY = Double.NaN;
+        double nextX = mob.x + moveX;
+        double nextZ = mob.z + moveZ;
+        if (canZombieOccupy(nextX, mob.y, nextZ)) {
+            mob.x = nextX;
+            mob.z = nextZ;
+            mob.stepTargetY = Double.NaN;
             return true;
         }
-        if ((zombie.isGrounded || !Double.isNaN(zombie.stepTargetY)) && canZombieStepUp(zombie, moveX, moveZ)) {
-            if (Double.isNaN(zombie.stepTargetY) || zombie.stepTargetY < zombie.y + 0.5) {
-                zombie.stepTargetY = zombie.y + 1.0;
+        if ((mob.isGrounded || !Double.isNaN(mob.stepTargetY)) && canMobStepUp(mob, moveX, moveZ)) {
+            if (Double.isNaN(mob.stepTargetY) || mob.stepTargetY < mob.y + 0.5) {
+                mob.stepTargetY = mob.y + 1.0;
             }
-            double raisedY = Math.min(zombie.stepTargetY, zombie.y + GameConfig.ZOMBIE_STEP_SPEED * deltaTime);
-            if (canZombieOccupy(zombie.x, raisedY, zombie.z)) {
-                zombie.y = raisedY;
+            double raisedY = Math.min(mob.stepTargetY, mob.y + GameConfig.ZOMBIE_STEP_SPEED * deltaTime);
+            if (canZombieOccupy(mob.x, raisedY, mob.z)) {
+                mob.y = raisedY;
             }
-            zombie.verticalVelocity = 0.0;
-            zombie.isGrounded = false;
-            if (zombie.y + 1.0e-4 >= zombie.stepTargetY && canZombieOccupy(nextX, zombie.y, nextZ)) {
-                zombie.x = nextX;
-                zombie.z = nextZ;
-                zombie.stepTargetY = Double.NaN;
+            mob.verticalVelocity = 0.0;
+            mob.isGrounded = false;
+            if (mob.y + 1.0e-4 >= mob.stepTargetY && canZombieOccupy(nextX, mob.y, nextZ)) {
+                mob.x = nextX;
+                mob.z = nextZ;
+                mob.stepTargetY = Double.NaN;
             }
             return true;
         }
 
-        zombie.stepTargetY = Double.NaN;
+        mob.stepTargetY = Double.NaN;
         return false;
     }
 
-    private void moveZombieVertical(Zombie zombie, double moveY) {
+    private void moveMobVertical(MobEntity mob, double moveY) {
         if (Math.abs(moveY) < 1e-8) {
             return;
         }
 
-        double nextY = zombie.y + moveY;
-        if (!collides(zombie.x, nextY, zombie.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT)) {
-            zombie.y = nextY;
+        double nextY = mob.y + moveY;
+        if (!collides(mob.x, nextY, mob.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT)) {
+            mob.y = nextY;
             return;
         }
 
         if (moveY > 0.0) {
             int guard = 0;
-            while (collides(zombie.x, nextY, zombie.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT) && guard++ < 256) {
+            while (collides(mob.x, nextY, mob.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT) && guard++ < 256) {
                 nextY -= 0.01;
             }
         } else {
             int guard = 0;
-            while (collides(zombie.x, nextY, zombie.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT) && guard++ < 256) {
+            while (collides(mob.x, nextY, mob.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT) && guard++ < 256) {
                 nextY += 0.01;
             }
-            zombie.isGrounded = true;
+            mob.isGrounded = true;
         }
 
-        zombie.y = nextY;
-        zombie.verticalVelocity = 0.0;
+        mob.y = nextY;
+        mob.verticalVelocity = 0.0;
     }
 
-    private boolean canZombieStepUp(Zombie zombie, double moveX, double moveZ) {
+    private boolean canMobStepUp(MobEntity mob, double moveX, double moveZ) {
         if (Math.abs(moveX) < 1e-8 && Math.abs(moveZ) < 1e-8) {
             return false;
         }
 
-        double nextX = zombie.x + moveX;
-        double nextZ = zombie.z + moveZ;
-        if (!collides(nextX, zombie.y, nextZ, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT)) {
+        double nextX = mob.x + moveX;
+        double nextZ = mob.z + moveZ;
+        if (!collides(nextX, mob.y, nextZ, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT)) {
             return false;
         }
-        return canZombieOccupy(nextX, zombie.y + 1.0, nextZ);
+        return canZombieOccupy(nextX, mob.y + 1.0, nextZ);
     }
 
-    private boolean isZombieStandingOnGround(Zombie zombie) {
-        return collides(zombie.x, zombie.y - 0.05, zombie.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT);
+    private boolean isMobStandingOnGround(MobEntity mob) {
+        return collides(mob.x, mob.y - 0.05, mob.z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT);
     }
 
     private boolean canZombieOccupy(double x, double y, double z) {
@@ -3400,50 +3526,50 @@ final class VoxelWorld implements StructureTemplates.Target {
         return !collides(x, y, z, GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT);
     }
 
-    private void chooseZombieDirection(Zombie zombie, boolean preferHomeAxis) {
+    private void chooseMobDirection(MobEntity mob, boolean preferHomeAxis) {
         int directionIndex;
-        if (preferHomeAxis && distanceSquared(zombie.x, zombie.z, zombie.homeX, zombie.homeZ) > 4.0) {
-            double deltaX = zombie.homeX - zombie.x;
-            double deltaZ = zombie.homeZ - zombie.z;
+        if (preferHomeAxis && distanceSquared(mob.x, mob.z, mob.homeX, mob.homeZ) > 4.0) {
+            double deltaX = mob.homeX - mob.x;
+            double deltaZ = mob.homeZ - mob.z;
             if (Math.abs(deltaX) >= Math.abs(deltaZ)) {
                 directionIndex = deltaX >= 0.0 ? 0 : 2;
             } else {
                 directionIndex = deltaZ >= 0.0 ? 1 : 3;
             }
         } else {
-            directionIndex = zombie.random.nextInt(4);
+            directionIndex = mob.random.nextInt(4);
         }
 
-        zombie.directionIndex = directionIndex;
-        zombie.wanderDirection = angleForDirectionIndex(directionIndex);
-        zombie.targetBodyYaw = zombie.wanderDirection;
+        mob.directionIndex = directionIndex;
+        mob.wanderDirection = angleForDirectionIndex(directionIndex);
+        mob.targetBodyYaw = mob.wanderDirection;
     }
 
-    private void redirectZombieAfterCollision(Zombie zombie) {
-        if (tryRedirectZombie(zombie, (zombie.directionIndex + 2) & 3)
-            || tryRedirectZombie(zombie, (zombie.directionIndex + 1) & 3)
-            || tryRedirectZombie(zombie, (zombie.directionIndex + 3) & 3)) {
+    private void redirectMobAfterCollision(MobEntity mob) {
+        if (tryRedirectMob(mob, (mob.directionIndex + 2) & 3)
+            || tryRedirectMob(mob, (mob.directionIndex + 1) & 3)
+            || tryRedirectMob(mob, (mob.directionIndex + 3) & 3)) {
             return;
         }
 
-        zombie.resting = true;
-        zombie.wanderTime = 0.8 + zombie.random.nextDouble() * 1.2;
-        zombie.targetBodyYaw = angleForDirectionIndex(zombie.random.nextInt(4));
+        mob.resting = true;
+        mob.wanderTime = 0.8 + mob.random.nextDouble() * 1.2;
+        mob.targetBodyYaw = angleForDirectionIndex(mob.random.nextInt(4));
     }
 
-    private boolean tryRedirectZombie(Zombie zombie, int candidate) {
+    private boolean tryRedirectMob(MobEntity mob, int candidate) {
         double moveX = directionMoveX(candidate) * 0.25;
         double moveZ = directionMoveZ(candidate) * 0.25;
-        boolean canStep = zombie.isGrounded && canZombieStepUp(zombie, moveX, moveZ);
-        if (!canZombieOccupy(zombie.x + moveX, zombie.y, zombie.z + moveZ) && !canStep) {
+        boolean canStep = mob.isGrounded && canMobStepUp(mob, moveX, moveZ);
+        if (!canZombieOccupy(mob.x + moveX, mob.y, mob.z + moveZ) && !canStep) {
             return false;
         }
 
-        zombie.directionIndex = candidate;
-        zombie.wanderDirection = angleForDirectionIndex(candidate);
-        zombie.targetBodyYaw = zombie.wanderDirection;
-        zombie.resting = false;
-        zombie.wanderTime = 1.5 + zombie.random.nextDouble() * 1.5;
+        mob.directionIndex = candidate;
+        mob.wanderDirection = angleForDirectionIndex(candidate);
+        mob.targetBodyYaw = mob.wanderDirection;
+        mob.resting = false;
+        mob.wanderTime = 1.5 + mob.random.nextDouble() * 1.5;
         return true;
     }
 
@@ -3493,7 +3619,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         return angle;
     }
 
-    private void steerZombieAroundObstacle(Zombie zombie, double velocityX, double velocityZ, MutableVec2 output) {
+    private void steerMobAroundObstacle(MobEntity mob, double velocityX, double velocityZ, MutableVec2 output) {
         double speedSquared = velocityX * velocityX + velocityZ * velocityZ;
         if (speedSquared < 1.0e-8) {
             output.set(0.0, 0.0);
@@ -3504,8 +3630,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         double probeScale = 0.35 / speed;
         double probeX = velocityX * probeScale;
         double probeZ = velocityZ * probeScale;
-        if (canZombieOccupy(zombie.x + probeX, zombie.y, zombie.z + probeZ)
-            || (zombie.isGrounded && canZombieStepUp(zombie, probeX, probeZ))) {
+        if (canZombieOccupy(mob.x + probeX, mob.y, mob.z + probeZ)
+            || (mob.isGrounded && canMobStepUp(mob, probeX, probeZ))) {
             output.set(velocityX, velocityZ);
             return;
         }
@@ -3513,20 +3639,20 @@ final class VoxelWorld implements StructureTemplates.Target {
         double signX = Math.signum(velocityX);
         double signZ = Math.signum(velocityZ);
         if (Math.abs(velocityX) >= Math.abs(velocityZ)) {
-            if (signX != 0.0 && canZombieOccupy(zombie.x + signX * 0.35, zombie.y, zombie.z)) {
+            if (signX != 0.0 && canZombieOccupy(mob.x + signX * 0.35, mob.y, mob.z)) {
                 output.set(signX * speed, 0.0);
                 return;
             }
-            if (signZ != 0.0 && canZombieOccupy(zombie.x, zombie.y, zombie.z + signZ * 0.35)) {
+            if (signZ != 0.0 && canZombieOccupy(mob.x, mob.y, mob.z + signZ * 0.35)) {
                 output.set(0.0, signZ * speed);
                 return;
             }
         } else {
-            if (signZ != 0.0 && canZombieOccupy(zombie.x, zombie.y, zombie.z + signZ * 0.35)) {
+            if (signZ != 0.0 && canZombieOccupy(mob.x, mob.y, mob.z + signZ * 0.35)) {
                 output.set(0.0, signZ * speed);
                 return;
             }
-            if (signX != 0.0 && canZombieOccupy(zombie.x + signX * 0.35, zombie.y, zombie.z)) {
+            if (signX != 0.0 && canZombieOccupy(mob.x + signX * 0.35, mob.y, mob.z)) {
                 output.set(signX * speed, 0.0);
                 return;
             }
@@ -3534,27 +3660,27 @@ final class VoxelWorld implements StructureTemplates.Target {
 
         double leftX = -velocityZ / speed * speed;
         double leftZ = velocityX / speed * speed;
-        if (canZombieOccupy(zombie.x + leftX / speed * 0.35, zombie.y, zombie.z + leftZ / speed * 0.35)) {
+        if (canZombieOccupy(mob.x + leftX / speed * 0.35, mob.y, mob.z + leftZ / speed * 0.35)) {
             output.set(leftX, leftZ);
             return;
         }
-        if (canZombieOccupy(zombie.x - leftX / speed * 0.35, zombie.y, zombie.z - leftZ / speed * 0.35)) {
+        if (canZombieOccupy(mob.x - leftX / speed * 0.35, mob.y, mob.z - leftZ / speed * 0.35)) {
             output.set(-leftX, -leftZ);
             return;
         }
         output.set(0.0, 0.0);
     }
 
-    private void calculateZombieSeparation(Zombie zombie, MutableVec2 output) {
+    private void calculateMobSeparation(MobEntity mob, MutableVec2 output) {
         double separationX = 0.0;
         double separationZ = 0.0;
         double separationDistanceSquared = GameConfig.ZOMBIE_SEPARATION_DISTANCE * GameConfig.ZOMBIE_SEPARATION_DISTANCE;
-        for (Zombie other : zombies) {
-            if (other == zombie) {
+        for (MobEntity other : mobs) {
+            if (other == mob) {
                 continue;
             }
-            double deltaX = zombie.x - other.x;
-            double deltaZ = zombie.z - other.z;
+            double deltaX = mob.x - other.x;
+            double deltaZ = mob.z - other.z;
             double distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
             if (distanceSquared < 1.0e-6 || distanceSquared > separationDistanceSquared) {
                 continue;
@@ -3567,51 +3693,51 @@ final class VoxelWorld implements StructureTemplates.Target {
         output.set(separationX, separationZ);
     }
 
-    private boolean canPursuePlayer(Zombie zombie, PlayerState player) {
+    private boolean canHostileMobPursuePlayer(MobEntity mob, PlayerState player) {
         if (player == null || player.creativeMode || player.spectatorMode || player.health <= 0) {
             return false;
         }
-        if (Math.abs(player.y - zombie.y) > GameConfig.ZOMBIE_AGGRO_Y_LIMIT) {
+        if (Math.abs(player.y - mob.y) > GameConfig.ZOMBIE_AGGRO_Y_LIMIT) {
             return false;
         }
-        return distanceSquared(zombie.x, zombie.z, player.x, player.z) <= GameConfig.ZOMBIE_VIEW_DISTANCE * GameConfig.ZOMBIE_VIEW_DISTANCE;
+        return distanceSquared(mob.x, mob.z, player.x, player.z) <= GameConfig.ZOMBIE_VIEW_DISTANCE * GameConfig.ZOMBIE_VIEW_DISTANCE;
     }
 
-    private void maybeQueueZombieGrowl(Zombie zombie, PlayerState player, double deltaTime) {
-        if (!canPursuePlayer(zombie, player) || zombie.growlCooldown > 0.0) {
-            zombie.growlCooldown = Math.max(0.0, zombie.growlCooldown - deltaTime);
+    private void maybeQueueHostileMobGrowl(MobEntity mob, PlayerState player, double deltaTime) {
+        if (!canHostileMobPursuePlayer(mob, player) || mob.growlCooldown > 0.0) {
+            mob.growlCooldown = Math.max(0.0, mob.growlCooldown - deltaTime);
             return;
         }
-        double distanceToPlayerSquared = distanceSquared(zombie.x, zombie.z, player.x, player.z);
+        double distanceToPlayerSquared = distanceSquared(mob.x, mob.z, player.x, player.z);
         if (distanceToPlayerSquared < ZOMBIE_GROWL_DISTANCE_SQUARED
-            && zombie.random.nextDouble() < deltaTime * 0.45) {
-            zombie.growlCooldown = 4.0 + zombie.random.nextDouble() * 5.0;
-            zombie.growlQueued = true;
+            && mob.random.nextDouble() < deltaTime * 0.45) {
+            mob.growlCooldown = 4.0 + mob.random.nextDouble() * 5.0;
+            mob.growlQueued = true;
         }
     }
 
-    private void maybeQueuePassiveMobSound(Zombie zombie, double deltaTime) {
-        zombie.growlCooldown = Math.max(0.0, zombie.growlCooldown - deltaTime);
-        if (zombie.growlCooldown > 0.0) {
+    private void maybeQueuePassiveMobSound(MobEntity mob, double deltaTime) {
+        mob.growlCooldown = Math.max(0.0, mob.growlCooldown - deltaTime);
+        if (mob.growlCooldown > 0.0) {
             return;
         }
-        if (zombie.random.nextDouble() < deltaTime * 0.10) {
-            zombie.growlCooldown = 5.0 + zombie.random.nextDouble() * 7.0;
-            zombie.growlQueued = true;
+        if (mob.random.nextDouble() < deltaTime * 0.10) {
+            mob.growlCooldown = 5.0 + mob.random.nextDouble() * 7.0;
+            mob.growlQueued = true;
         }
     }
 
-    private void tryZombieAttack(Zombie zombie, PlayerState player) {
-        zombie.attackCooldown = Math.max(0.0, zombie.attackCooldown - GameConfig.PHYSICS_TICK_SECONDS);
-        if (!canPursuePlayer(zombie, player) || zombie.attackCooldown > 0.0 || player.health <= 0) {
+    private void tryHostileMobAttack(MobEntity mob, PlayerState player) {
+        mob.attackCooldown = Math.max(0.0, mob.attackCooldown - GameConfig.PHYSICS_TICK_SECONDS);
+        if (!canHostileMobPursuePlayer(mob, player) || mob.attackCooldown > 0.0 || player.health <= 0) {
             return;
         }
-        double distanceToPlayerSquared = distanceSquared(zombie.x, zombie.z, player.x, player.z);
+        double distanceToPlayerSquared = distanceSquared(mob.x, mob.z, player.x, player.z);
         if (distanceToPlayerSquared <= GameConfig.ZOMBIE_ATTACK_RANGE * GameConfig.ZOMBIE_ATTACK_RANGE
-            && Math.abs((zombie.y + 0.9) - (player.y + 0.9)) <= 1.35) {
+            && Math.abs((mob.y + 0.9) - (player.y + 0.9)) <= 1.35) {
             applyPlayerDamage(player, GameConfig.ZOMBIE_ATTACK_DAMAGE);
-            zombie.attackCooldown = GameConfig.ZOMBIE_ATTACK_COOLDOWN;
-            zombie.growlQueued = true;
+            mob.attackCooldown = GameConfig.ZOMBIE_ATTACK_COOLDOWN;
+            mob.growlQueued = true;
         }
     }
 
@@ -3628,7 +3754,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private void maybeSpawnZombieNearPlayer(PlayerState player) {
-        if (player == null || player.creativeMode || player.spectatorMode || zombies.size() >= ZOMBIE_TARGET_COUNT || zombieSpawnCooldown > 0.0) {
+        if (player == null || player.creativeMode || player.spectatorMode || mobs.size() >= HOSTILE_MOB_TARGET_COUNT || hostileMobSpawnCooldown > 0.0) {
             return;
         }
 
@@ -3664,15 +3790,15 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
             MobKind kind = chooseSpawnMobKind(day, blockX, surfaceY, blockZ);
-            double zombieX = blockX + 0.5;
-            double zombieY = surfaceY + 1.01;
-            double zombieZ = blockZ + 0.5;
-            zombies.add(new Zombie(kind, zombieX, zombieY, zombieZ, zombieX, zombieZ, worldRandom));
-            zombieSpawnCooldown = day ? 2.0 + worldRandom.nextDouble() * 2.4 : 1.5 + worldRandom.nextDouble() * 1.5;
+            double mobX = blockX + 0.5;
+            double mobY = surfaceY + 1.01;
+            double mobZ = blockZ + 0.5;
+            mobs.add(new MobEntity(kind, mobX, mobY, mobZ, mobX, mobZ, worldRandom));
+            hostileMobSpawnCooldown = day ? 2.0 + worldRandom.nextDouble() * 2.4 : 1.5 + worldRandom.nextDouble() * 1.5;
             return;
         }
 
-        zombieSpawnCooldown = 0.8;
+        hostileMobSpawnCooldown = 0.8;
     }
 
     private MobKind chooseSpawnMobKind(boolean day, int blockX, int surfaceY, int blockZ) {
@@ -4012,7 +4138,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         boolean profile = GameConfig.ENABLE_FRAME_PROFILING;
         long startNs = profile ? System.nanoTime() : 0L;
         if (worldGenerator == null) {
-            worldGenerator = new WorldGenerator(seed);
+            worldGenerator = new WorldGenerator(seed, terrainPreset);
         }
         GeneratedChunkColumn generated = worldGenerator.generateChunk(chunkX, chunkZ);
         ChunkColumn column = new ChunkColumn(chunkX, chunkZ, false);
@@ -4144,11 +4270,23 @@ final class VoxelWorld implements StructureTemplates.Target {
                         activeWaterCells.remove(blockKey);
                         activeLavaCells.remove(blockKey);
                         activeSandCells.remove(blockKey);
+                        queuedWaterCells.remove(blockKey);
+                        queuedLavaCells.remove(blockKey);
+                        queuedSandCells.remove(blockKey);
                         waterFlowCache.remove(blockKey);
                     }
                 }
             }
         }
+    }
+
+    private void clearDynamicBlockQueues() {
+        queuedWaterCells.clear();
+        queuedLavaCells.clear();
+        queuedSandCells.clear();
+        activeWaterQueue.clear();
+        activeLavaQueue.clear();
+        activeSandQueue.clear();
     }
 
     private void updateActiveStateAt(int x, int y, int z) {
@@ -4160,20 +4298,45 @@ final class VoxelWorld implements StructureTemplates.Target {
         byte block = getBlock(x, y, z);
         if (GameConfig.isWaterBlock(block) && isFluidActiveCandidate(x, y, z, GameConfig.WATER)) {
             activeWaterCells.add(blockKey);
+            enqueueDynamicCell(activeWaterCells, queuedWaterCells, activeWaterQueue, blockKey);
         } else {
             activeWaterCells.remove(blockKey);
+            queuedWaterCells.remove(blockKey);
         }
 
         if (GameConfig.isLavaBlock(block) && isFluidActiveCandidate(x, y, z, GameConfig.LAVA)) {
             activeLavaCells.add(blockKey);
+            enqueueDynamicCell(activeLavaCells, queuedLavaCells, activeLavaQueue, blockKey);
         } else {
             activeLavaCells.remove(blockKey);
+            queuedLavaCells.remove(blockKey);
         }
 
         if (isFallingTerrainBlock(block) && isSandActiveCandidate(x, y, z)) {
             activeSandCells.add(blockKey);
+            enqueueDynamicCell(activeSandCells, queuedSandCells, activeSandQueue, blockKey);
         } else {
             activeSandCells.remove(blockKey);
+            queuedSandCells.remove(blockKey);
+        }
+    }
+
+    private void enqueueDynamicCell(HashSet<Long> activeCells, HashSet<Long> queuedCells, ArrayDeque<Long> queue, long blockKey) {
+        if (activeCells.contains(blockKey) && queuedCells.add(blockKey)) {
+            queue.addLast(blockKey);
+        }
+    }
+
+    private void refillDynamicQueue(HashSet<Long> activeCells, HashSet<Long> queuedCells, ArrayDeque<Long> queue, int limit) {
+        int queued = 0;
+        for (long blockKey : activeCells) {
+            if (queuedCells.add(blockKey)) {
+                queue.addLast(blockKey);
+                queued++;
+                if (queued >= limit) {
+                    return;
+                }
+            }
         }
     }
 
@@ -4190,7 +4353,8 @@ final class VoxelWorld implements StructureTemplates.Target {
             return false;
         }
         if (GameConfig.isFluidSourceBlock(block) && getFluidDistance(x, y, z) == GameConfig.NATURAL_FLUID_DISTANCE) {
-            return y > GameConfig.WORLD_MIN_Y && canFluidOccupyBlock(getBlock(x, y - 1, z), fluidItem);
+            return (y > GameConfig.WORLD_MIN_Y && canFluidOccupyBlock(getBlock(x, y - 1, z), fluidItem))
+                || hasLoadedNaturalFluidExpansionOpportunity(x, y, z, fluidItem);
         }
         if (GameConfig.isFluidFlowingBlock(block)) {
             int distance = getFluidDistance(x, y, z);
@@ -4216,9 +4380,26 @@ final class VoxelWorld implements StructureTemplates.Target {
             || isReplaceableForFluid(getBlock(x, y, z - 1));
     }
 
+    private boolean hasLoadedNaturalFluidExpansionOpportunity(int x, int y, int z, byte fluidItem) {
+        if (!hasFluidHorizontalFloor(x, y, z, fluidItem)) {
+            return false;
+        }
+        return canIntroduceLoadedFluid(x + 1, y, z, fluidItem, 1)
+            || canIntroduceLoadedFluid(x - 1, y, z, fluidItem, 1)
+            || canIntroduceLoadedFluid(x, y, z + 1, fluidItem, 1)
+            || canIntroduceLoadedFluid(x, y, z - 1, fluidItem, 1);
+    }
+
+    private boolean canIntroduceLoadedFluid(int x, int y, int z, byte fluidItem, int distance) {
+        return isBlockLoaded(x, y, z) && canIntroduceSimpleFluid(x, y, z, fluidItem, distance);
+    }
+
     private boolean hasSimpleFluidExpansionOpportunity(int x, int y, int z, byte fluidItem, int currentDistance) {
         if (y > GameConfig.WORLD_MIN_Y && canIntroduceSimpleFluid(x, y - 1, z, fluidItem, 0)) {
             return true;
+        }
+        if (!hasFluidHorizontalFloor(x, y, z, fluidItem)) {
+            return false;
         }
         int nextDistance = currentDistance + 1;
         if (nextDistance > GameConfig.fluidSpreadDistance(fluidItem)) {
@@ -4369,6 +4550,7 @@ final class VoxelWorld implements StructureTemplates.Target {
             || supportBlock == GameConfig.DIRT
             || supportBlock == GameConfig.COBBLESTONE
             || supportBlock == GameConfig.STONE
+            || supportBlock == GameConfig.SNOW_BLOCK
             || supportBlock == GameConfig.DEEPSLATE
             || supportBlock == GameConfig.SAND
             || supportBlock == GameConfig.GRAVEL;
@@ -4385,6 +4567,8 @@ final class VoxelWorld implements StructureTemplates.Target {
                 || supportBlock == GameConfig.SAND
                 || supportBlock == GameConfig.FARMLAND
                 || supportBlock == InventoryItems.OAK_PLANKS
+                || supportBlock == GameConfig.PINE_PLANKS
+                || supportBlock == GameConfig.BIRCH_PLANKS
                 || supportBlock == GameConfig.COBBLESTONE
                 || supportBlock == GameConfig.STONE
                 || supportBlock == GameConfig.DEEPSLATE
@@ -4409,7 +4593,10 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private boolean blocksSky(byte block) {
-        return Blocks.isSolid(block) && block != GameConfig.OAK_LEAVES && block != GameConfig.PINE_LEAVES;
+        return Blocks.isSolid(block)
+            && block != GameConfig.OAK_LEAVES
+            && block != GameConfig.PINE_LEAVES
+            && block != GameConfig.BIRCH_LEAVES;
     }
 
     private boolean isReplaceableForFluid(byte block) {
@@ -4438,14 +4625,6 @@ final class VoxelWorld implements StructureTemplates.Target {
     private boolean isChunkWithinFluidSimulationDistance(int chunkX, int chunkZ, int playerChunkX, int playerChunkZ) {
         return Math.abs(chunkX - playerChunkX) <= GameConfig.FLUID_SIMULATION_CHUNK_DISTANCE
             && Math.abs(chunkZ - playerChunkZ) <= GameConfig.FLUID_SIMULATION_CHUNK_DISTANCE;
-    }
-
-    private int dynamicCellPriority(long blockKey, int playerChunkX, int playerChunkZ) {
-        int x = unpackBlockX(blockKey);
-        int z = unpackBlockZ(blockKey);
-        int distance = Math.max(Math.abs(worldToChunk(x) - playerChunkX), Math.abs(worldToChunk(z) - playerChunkZ));
-        int y = unpackBlockY(blockKey) - GameConfig.WORLD_MIN_Y;
-        return distance * 8192 + y;
     }
 
     private boolean shouldTickDynamicCell(long blockKey, int x, int z, int playerChunkX, int playerChunkZ) {
@@ -4891,5 +5070,4 @@ final class VoxelWorld implements StructureTemplates.Target {
                 return -y;
         }
     }
-
 }

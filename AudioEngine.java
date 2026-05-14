@@ -7,6 +7,7 @@ import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -143,7 +144,9 @@ final class AudioEngine {
         boolean naturalSurface = blockBelow == GameConfig.GRASS
             || blockBelow == GameConfig.DIRT
             || blockBelow == GameConfig.SAND
-            || blockBelow == GameConfig.OAK_LEAVES;
+            || blockBelow == GameConfig.OAK_LEAVES
+            || blockBelow == GameConfig.PINE_LEAVES
+            || blockBelow == GameConfig.BIRCH_LEAVES;
         play(naturalSurface ? "step_grass" : "step_stone", 0.55f, 1.0f, x, y, z);
     }
 
@@ -232,6 +235,10 @@ final class AudioEngine {
         if (!enabled) {
             return;
         }
+        gain *= Settings.masterVolumeScale();
+        if (gain <= 0.0f) {
+            return;
+        }
 
         Integer bufferId = buffers.get(key);
         if (bufferId == null) {
@@ -296,7 +303,7 @@ final class AudioEngine {
             );
 
             try (AudioInputStream pcm = AudioSystem.getAudioInputStream(decoded, source)) {
-                byte[] bytes = pcm.readAllBytes();
+                byte[] bytes = readAllBytes(pcm);
                 ByteBuffer buffer = BufferUtils.createByteBuffer(bytes.length);
                 buffer.put(bytes);
                 buffer.flip();
@@ -304,6 +311,16 @@ final class AudioEngine {
                 return new WavData(buffer, format, (int) decoded.getSampleRate());
             }
         }
+    }
+
+    private byte[] readAllBytes(AudioInputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            output.write(buffer, 0, read);
+        }
+        return output.toByteArray();
     }
 
     private void loadSoundSafely(String key, Path path) {

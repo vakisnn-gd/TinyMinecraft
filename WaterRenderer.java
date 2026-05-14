@@ -45,6 +45,10 @@ final class WaterRenderer {
         boolean neighborLiquid = world.isLiquidBlock(neighbor);
         boolean neighborSolid = world.isSolidBlock(neighbor);
 
+        if (liquid && (face == Face.WEST || face == Face.EAST || face == Face.NORTH || face == Face.SOUTH)
+            && !world.isBlockLoaded(neighborX, neighborY, neighborZ)) {
+            return false;
+        }
         if (neighbor == GameConfig.AIR) {
             return true;
         }
@@ -69,10 +73,11 @@ final class WaterRenderer {
         if (block == GameConfig.SNOW_LAYER) {
             return neighbor != GameConfig.SNOW_LAYER && (world.isTransparentBlock(neighbor) || !neighborSolid);
         }
-        if (block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES) {
+        if (block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES) {
             return neighbor != block
                 && neighbor != GameConfig.OAK_LOG
-                && neighbor != GameConfig.PINE_LOG;
+                && neighbor != GameConfig.PINE_LOG
+                && neighbor != GameConfig.BIRCH_LOG;
         }
         return world.isTransparentBlock(neighbor) || !neighborSolid;
     }

@@ -202,7 +202,7 @@ final class ChatSystem {
             biomeName.append(parts[i]);
         }
         String result = target.locateBiome(biomeName.toString());
-        addMessage(result == null || result.isBlank() ? "Biome not found." : result);
+        addMessage(isBlank(result) ? "Biome not found." : result);
     }
 
     private void executeTeleport(String[] parts, CommandTarget target) {
@@ -326,7 +326,7 @@ final class ChatSystem {
                 || "mineshaft".equalsIgnoreCase(direct)
                 || "shaft".equalsIgnoreCase(direct)) {
                 String result = target.locateStructure(direct);
-                addMessage(result == null || result.isBlank() ? "Structure not found." : result);
+                addMessage(isBlank(result) ? "Structure not found." : result);
                 return;
             }
         }
@@ -345,7 +345,7 @@ final class ChatSystem {
                 biomeName.append(parts[i]);
             }
             String result = target.locateBiome(biomeName.toString());
-            addMessage(result == null || result.isBlank() ? "Biome not found." : result);
+            addMessage(isBlank(result) ? "Biome not found." : result);
             return;
         }
 
@@ -358,7 +358,7 @@ final class ChatSystem {
                 structureName.append(parts[i]);
             }
             String result = target.locateStructure(structureName.toString());
-            addMessage(result == null || result.isBlank() ? "Structure not found." : result);
+            addMessage(isBlank(result) ? "Structure not found." : result);
             return;
         }
 
@@ -433,5 +433,9 @@ final class ChatSystem {
             return;
         }
         addMessage(target.blockInfo());
+    }
+
+    private boolean isBlank(String text) {
+        return text == null || text.trim().isEmpty();
     }
 }

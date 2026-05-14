@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 if not exist out mkdir out
 
-javac -encoding UTF-8 --release 21 -cp "lib/*" -d out *.java
+javac -encoding UTF-8 --release 8 -cp "lib/*" -d out *.java
 if errorlevel 1 (
     echo Compilation failed.
     pause

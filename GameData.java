@@ -1,6 +1,8 @@
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Random;
 
 final class GameConfig {
@@ -87,6 +89,17 @@ final class GameConfig {
     static final byte DEEPSLATE_COAL_ORE = 62;
     static final byte RED_BED = 71;
     static final byte OAK_FENCE_GATE = 117;
+    static final byte BIRCH_LOG = 118;
+    static final byte BIRCH_LEAVES = 119;
+    static final byte SNOW_BLOCK = 120;
+    static final byte DEAD_BUSH = 121;
+    static final byte PINE_PLANKS = 122;
+    static final byte BIRCH_PLANKS = 123;
+    static final byte OAK_STAIRS = 124;
+    static final byte PINE_STAIRS = 125;
+    static final byte BIRCH_STAIRS = 126;
+    static final byte STONE_STAIRS = 127;
+    static final byte COBBLESTONE_STAIRS = (byte) 128;
 
     static final double PLAYER_RADIUS = 0.30;
     static final double PLAYER_HEIGHT = 1.80;
@@ -165,8 +178,8 @@ final class GameConfig {
     static final int WATER_SPREAD_DISTANCE = 8;
     // Лава растекается медленнее и ближе: только до 4 блоков.
     static final int LAVA_SPREAD_DISTANCE = 4;
-    static final int WATER_FLOW_TICKS = 25;
-    static final int LAVA_FLOW_TICKS = 20;
+    static final int WATER_FLOW_TICKS = 1;
+    static final int LAVA_FLOW_TICKS = 8;
     static final double WORLD_TICK_INTERVAL = GAME_TICK_SECONDS * WATER_FLOW_TICKS;
     static final int LAVA_FLOW_STEP_INTERVAL = Math.max(1, LAVA_FLOW_TICKS / WATER_FLOW_TICKS);
     static final int NATURAL_FLUID_DISTANCE = -2;
@@ -221,6 +234,8 @@ final class GameConfig {
     static final String[] CREATIVE_TABS_EN = {"Blocks", "Nature", "Tools", "Fluids"};
     static final String[] GAME_MODE_OPTIONS_EN = {"Survival", "Creative", "Spectator"};
     static final String[] DIFFICULTY_OPTIONS_EN = {"Peaceful", "Easy", "Normal", "Hard"};
+    static final String[] TERRAIN_PRESET_OPTIONS = {"\u041e\u0431\u044b\u0447\u043d\u044b\u0439", "\u0411\u043e\u043b\u044c\u0448\u0438\u0435 \u0431\u0438\u043e\u043c\u044b"};
+    static final String[] TERRAIN_PRESET_OPTIONS_EN = {"Default", "Large Biomes"};
     public static final double REACH_DISTANCE = MAX_REACH;
 
     private GameConfig() {
@@ -365,6 +380,51 @@ final class GameConfig {
         return Settings.isRussian() ? DIFFICULTY_OPTIONS : DIFFICULTY_OPTIONS_EN;
     }
 
+    static String[] terrainPresetOptions() {
+        return Settings.isRussian() ? TERRAIN_PRESET_OPTIONS : TERRAIN_PRESET_OPTIONS_EN;
+    }
+
+}
+
+enum TerrainPreset {
+    LEGACY("legacy", 0),
+    DEFAULT("default", 0),
+    LARGE_BIOMES("large_biomes", 1);
+
+    static final TerrainPreset NEW_WORLD_DEFAULT = DEFAULT;
+
+    private final String metadataId;
+    private final int createWorldOptionIndex;
+
+    TerrainPreset(String metadataId, int createWorldOptionIndex) {
+        this.metadataId = metadataId;
+        this.createWorldOptionIndex = createWorldOptionIndex;
+    }
+
+    String metadataId() {
+        return metadataId;
+    }
+
+    int createWorldOptionIndex() {
+        return createWorldOptionIndex;
+    }
+
+    static TerrainPreset fromCreateWorldOption(int index) {
+        return index == LARGE_BIOMES.createWorldOptionIndex ? LARGE_BIOMES : DEFAULT;
+    }
+
+    static TerrainPreset fromMetadata(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return LEGACY;
+        }
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_').replace(' ', '_');
+        for (TerrainPreset preset : values()) {
+            if (preset.metadataId.equals(normalized) || preset.name().toLowerCase(java.util.Locale.ROOT).equals(normalized)) {
+                return preset;
+            }
+        }
+        return LEGACY;
+    }
 }
 
 enum ChunkGenerationStatus {
@@ -390,14 +450,16 @@ final class WorldInfo {
     final long lastModifiedMillis;
     final int gameMode;
     final int difficulty;
+    final TerrainPreset terrainPreset;
 
-    WorldInfo(String name, Path directory, long seed, long lastModifiedMillis, int gameMode, int difficulty) {
+    WorldInfo(String name, Path directory, long seed, long lastModifiedMillis, int gameMode, int difficulty, TerrainPreset terrainPreset) {
         this.name = name;
         this.directory = directory;
         this.seed = seed;
         this.lastModifiedMillis = lastModifiedMillis;
         this.gameMode = gameMode;
         this.difficulty = difficulty;
+        this.terrainPreset = terrainPreset == null ? TerrainPreset.LEGACY : terrainPreset;
     }
 }
 
@@ -408,18 +470,18 @@ final class RuntimePaths {
     }
 
     static Path resolve(String first, String... more) {
-        return PROJECT_ROOT.resolve(Path.of(first, more)).normalize();
+        return PROJECT_ROOT.resolve(Paths.get(first, more)).normalize();
     }
 
     private static Path detectProjectRoot() {
-        Path cwd = Path.of("").toAbsolutePath().normalize();
+        Path cwd = Paths.get("").toAbsolutePath().normalize();
         Path cwdRoot = projectRootFrom(cwd);
         if (cwdRoot != null) {
             return cwdRoot;
         }
 
         try {
-            Path classPath = Path.of(RuntimePaths.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
+            Path classPath = Paths.get(RuntimePaths.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
             Path classRoot = projectRootFrom(classPath);
             if (classRoot != null) {
                 return classRoot;
@@ -453,8 +515,11 @@ final class Settings {
     static double mouseVerticalFactor = 0.7407407407;
     static int inventoryUiSize = 2;
     static int graphicsQuality = 0;
+    static int brightness = 50;
+    static int masterVolume = 80;
     static int savedRenderDistance = GameConfig.CHUNK_RENDER_DISTANCE;
     static int savedFovDegrees = (int) GameConfig.FOV_DEGREES;
+    static int savedMaxFps = 144;
     static String language = "ru";
 
     private Settings() {
@@ -476,10 +541,16 @@ final class Settings {
                     inventoryUiSize = clampInventoryUiSize(Integer.parseInt(trimmed.substring(16)));
                 } else if (trimmed.startsWith("graphicsQuality=")) {
                     graphicsQuality = clampGraphicsQuality(Integer.parseInt(trimmed.substring(16)));
+                } else if (trimmed.startsWith("brightness=")) {
+                    brightness = clampPercent(Integer.parseInt(trimmed.substring(11)));
+                } else if (trimmed.startsWith("masterVolume=")) {
+                    masterVolume = clampPercent(Integer.parseInt(trimmed.substring(13)));
                 } else if (trimmed.startsWith("renderDistance=")) {
                     savedRenderDistance = clamp(Integer.parseInt(trimmed.substring(15)), GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
                 } else if (trimmed.startsWith("fov=")) {
                     savedFovDegrees = clamp(Integer.parseInt(trimmed.substring(4)), 55, 100);
+                } else if (trimmed.startsWith("maxFps=")) {
+                    savedMaxFps = clamp(Integer.parseInt(trimmed.substring(7)), 30, 240);
                 } else if (trimmed.startsWith("language=")) {
                     String value = trimmed.substring(9).trim().toLowerCase(java.util.Locale.ROOT);
                     language = "en".equals(value) ? "en" : "ru";
@@ -488,23 +559,36 @@ final class Settings {
         } catch (RuntimeException | java.io.IOException ignored) {
             inventoryUiSize = clampInventoryUiSize(inventoryUiSize);
             graphicsQuality = clampGraphicsQuality(graphicsQuality);
+            brightness = clampPercent(brightness);
+            masterVolume = clampPercent(masterVolume);
             savedRenderDistance = clamp(savedRenderDistance, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
             savedFovDegrees = clamp(savedFovDegrees, 55, 100);
+            savedMaxFps = clamp(savedMaxFps, 30, 240);
         }
     }
 
     static void save(int renderDistance, int fovDegrees) {
+        save(renderDistance, fovDegrees, savedMaxFps);
+    }
+
+    static void save(int renderDistance, int fovDegrees, int maxFps) {
         savedRenderDistance = clamp(renderDistance, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS);
         savedFovDegrees = clamp(fovDegrees, 55, 100);
+        savedMaxFps = clamp(maxFps, 30, 240);
         inventoryUiSize = clampInventoryUiSize(inventoryUiSize);
         graphicsQuality = clampGraphicsQuality(graphicsQuality);
+        brightness = clampPercent(brightness);
+        masterVolume = clampPercent(masterVolume);
         String text = "renderDistance=" + savedRenderDistance + System.lineSeparator()
             + "fov=" + savedFovDegrees + System.lineSeparator()
+            + "maxFps=" + savedMaxFps + System.lineSeparator()
             + "inventoryUiSize=" + inventoryUiSize + System.lineSeparator()
             + "graphicsQuality=" + graphicsQuality + System.lineSeparator()
+            + "brightness=" + brightness + System.lineSeparator()
+            + "masterVolume=" + masterVolume + System.lineSeparator()
             + "language=" + language + System.lineSeparator();
         try {
-            java.nio.file.Files.writeString(RuntimePaths.resolve("options.txt"), text, java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(RuntimePaths.resolve("options.txt"), text.getBytes(StandardCharsets.UTF_8));
         } catch (java.io.IOException ignored) {
         }
     }
@@ -517,8 +601,20 @@ final class Settings {
         return clamp(value, 0, 1);
     }
 
+    private static int clampPercent(int value) {
+        return clamp(value, 0, 100);
+    }
+
     static boolean goodGraphics() {
         return graphicsQuality >= 1;
+    }
+
+    static float brightnessMultiplier() {
+        return 0.72f + clampPercent(brightness) * 0.0076f;
+    }
+
+    static float masterVolumeScale() {
+        return clampPercent(masterVolume) / 100.0f;
     }
 
     static boolean isRussian() {
@@ -570,9 +666,20 @@ final class HotbarConfig {
         GameConfig.OAK_LEAVES,
         GameConfig.PINE_LOG,
         GameConfig.PINE_LEAVES,
+        GameConfig.BIRCH_LOG,
+        GameConfig.BIRCH_LEAVES,
+        GameConfig.SNOW_BLOCK,
         GameConfig.CACTUS,
         GameConfig.SNOW_LAYER,
+        GameConfig.DEAD_BUSH,
         GameConfig.SEAGRASS,
+        GameConfig.PINE_PLANKS,
+        GameConfig.BIRCH_PLANKS,
+        GameConfig.OAK_STAIRS,
+        GameConfig.PINE_STAIRS,
+        GameConfig.BIRCH_STAIRS,
+        GameConfig.STONE_STAIRS,
+        GameConfig.COBBLESTONE_STAIRS,
         InventoryItems.ITEM_WATER_BUCKET,
         InventoryItems.ITEM_LAVA_BUCKET,
         GameConfig.DIAMOND_ORE
@@ -898,6 +1005,7 @@ final class ChunkMesh {
     boolean hasOpaqueGeometry;
     boolean hasTransparentGeometry;
     boolean resident;
+    long revealStartNanos;
 
     ChunkMesh(int chunkX, int chunkY, int chunkZ) {
         this.chunkX = chunkX;
@@ -924,18 +1032,6 @@ final class RayHit {
     }
 }
 
-final class ZombieStructure {
-    final int x;
-    final int y;
-    final int z;
-
-    ZombieStructure(int x, int y, int z) {
-        this.x = x;
-        this.y = y;
-        this.z = z;
-    }
-}
-
 enum MobKind {
     ZOMBIE,
     SKELETON,
@@ -945,7 +1041,7 @@ enum MobKind {
     VILLAGER
 }
 
-final class Zombie extends Entity {
+final class MobEntity extends Entity {
     final MobKind kind;
     final double homeX;
     final double homeZ;
@@ -962,17 +1058,18 @@ final class Zombie extends Entity {
     double fleeTimer = 0.0;
     double loveTimer = 0.0;
     double breedCooldown = 0.0;
+    double babyAge = 0.0;
     int aiTickOffset;
     double stepTargetY = Double.NaN;
     boolean growlQueued;
     boolean splashQueued;
     final Random random;
 
-    Zombie(double x, double y, double z, double homeX, double homeZ, Random seedRandom) {
+    MobEntity(double x, double y, double z, double homeX, double homeZ, Random seedRandom) {
         this(MobKind.ZOMBIE, x, y, z, homeX, homeZ, seedRandom);
     }
 
-    Zombie(MobKind kind, double x, double y, double z, double homeX, double homeZ, Random seedRandom) {
+    MobEntity(MobKind kind, double x, double y, double z, double homeX, double homeZ, Random seedRandom) {
         super(x, y, z, maxHealthFor(kind));
         this.kind = kind == null ? MobKind.ZOMBIE : kind;
         this.homeX = homeX;
@@ -997,12 +1094,26 @@ final class Zombie extends Entity {
 
     @Override
     double radius() {
+        if (isPassiveBaby()) {
+            return GameConfig.ZOMBIE_RADIUS * 0.58;
+        }
         return GameConfig.ZOMBIE_RADIUS;
     }
 
     @Override
     double height() {
+        if (isPassiveBaby()) {
+            return GameConfig.ZOMBIE_HEIGHT * 0.58;
+        }
         return GameConfig.ZOMBIE_HEIGHT;
+    }
+
+    boolean isBaby() {
+        return babyAge > 0.0;
+    }
+
+    private boolean isPassiveBaby() {
+        return isBaby() && (kind == MobKind.COW || kind == MobKind.SHEEP || kind == MobKind.PIG);
     }
 }
 

@@ -35,10 +35,10 @@ final class WorldGenerator {
     private static final int VILLAGE_CELL_SIZE_CHUNKS = 7;
     private static final double VILLAGE_CHANCE = 0.42;
     private static final int VILLAGE_FOUNDATION_DEPTH = 14;
-    private static final int VILLAGE_ROAD_FOUNDATION_DEPTH = 20;
+    private static final int VILLAGE_ROAD_FOUNDATION_DEPTH = 8;
     private static final int VILLAGE_STRUCTURE_PROTECTION_DEPTH = 36;
     private static final int WET_RIVER_CAVE_PROTECTION_DEPTH = 28;
-    private static final int VILLAGE_ROAD_HALF_WIDTH = 2;
+    private static final int VILLAGE_ROAD_HALF_WIDTH = 1;
     private static final byte GENMASK_STRUCTURE = 1;
     private static final byte GENMASK_ROAD = 1 << 1;
     private static final byte GENMASK_WET_RIVER = 1 << 2;
@@ -51,12 +51,20 @@ final class WorldGenerator {
     private static final ThreadLocal<GenerationScratch> SCRATCH = ThreadLocal.withInitial(GenerationScratch::new);
 
     private final long seed;
+    private final TerrainPreset terrainPreset;
+    private final TerrainProfile terrain;
     private final int[] permutation = new int[512];
     private final DensitySampler densitySampler = new DensitySampler();
     private final ConcurrentHashMap<Long, VillagePlan> villagePlanCache = new ConcurrentHashMap<>();
 
     WorldGenerator(long seed) {
+        this(seed, TerrainPreset.LEGACY);
+    }
+
+    WorldGenerator(long seed, TerrainPreset terrainPreset) {
         this.seed = seed;
+        this.terrainPreset = terrainPreset == null ? TerrainPreset.LEGACY : terrainPreset;
+        this.terrain = TerrainProfile.forPreset(this.terrainPreset);
         initializePermutation();
     }
 
@@ -205,6 +213,7 @@ final class WorldGenerator {
         populateSmallSurfacePools(column, startX, startZ, scratch);
         populateOreClusters(column, startX, startZ, scratch);
         populateCaveWallOres(column, startX, startZ, scratch);
+        populateDesertOases(column, startX, startZ);
         populateSurface(column, startX, startZ, scratch);
         populateStructures(column, startX, startZ, scratch);
         enforceShoreSand(column, startX, startZ, scratch);
@@ -421,7 +430,7 @@ final class WorldGenerator {
                     continue;
                 }
                 byte surface = column.getBlock(x, surfaceY, z);
-                if (surface == GameConfig.OAK_LOG || surface == GameConfig.PINE_LOG) {
+                if (surface == GameConfig.OAK_LOG || surface == GameConfig.PINE_LOG || surface == GameConfig.BIRCH_LOG) {
                     setStructureBlock(column, x, surfaceY, z, GameConfig.GRASS);
                 }
                 for (int y = Math.max(GameConfig.WORLD_MIN_Y + 1, baseY - 2); y <= Math.min(GameConfig.WORLD_MAX_Y, baseY + 28); y++) {
@@ -430,6 +439,8 @@ final class WorldGenerator {
                         || block == GameConfig.OAK_LEAVES
                         || block == GameConfig.PINE_LOG
                         || block == GameConfig.PINE_LEAVES
+                        || block == GameConfig.BIRCH_LOG
+                        || block == GameConfig.BIRCH_LEAVES
                         || block == GameConfig.TALL_GRASS
                         || block == GameConfig.RED_FLOWER
                         || block == GameConfig.YELLOW_FLOWER
@@ -447,7 +458,9 @@ final class WorldGenerator {
             if (block == GameConfig.OAK_LOG
                 || block == GameConfig.OAK_LEAVES
                 || block == GameConfig.PINE_LOG
-                || block == GameConfig.PINE_LEAVES) {
+                || block == GameConfig.PINE_LEAVES
+                || block == GameConfig.BIRCH_LOG
+                || block == GameConfig.BIRCH_LEAVES) {
                 setStructureBlock(column, x, y, z, GameConfig.AIR);
             }
         }
@@ -528,8 +541,8 @@ final class WorldGenerator {
 
     private int villageRoadY(int worldX, int worldZ, int surfaceY, int baseY) {
         double gradeNoise = fractalNoise((worldX + 910.0) * 0.035, (worldZ - 410.0) * 0.035, 2, 0.50) * 0.45;
-        int target = (int) Math.round(lerp(surfaceY, baseY + gradeNoise, 0.92));
-        return clamp(target, baseY - 1, baseY + 1);
+        int target = (int) Math.round(lerp(surfaceY, baseY + gradeNoise, 0.58));
+        return clamp(target, baseY - 2, baseY + 2);
     }
 
     private byte villageRoadSurfaceBlock(int worldX, int worldZ, int edgeDistance) {
@@ -583,8 +596,8 @@ final class WorldGenerator {
             if (block == GameConfig.BEDROCK) {
                 return y + 1;
             }
-            if (y <= minimumBottom && !shouldReplaceVillageFoundation(block)) {
-                return y + 1;
+            if (y <= minimumBottom) {
+                return shouldReplaceVillageFoundation(block) ? minimumBottom : y + 1;
             }
             y--;
         }
@@ -597,8 +610,10 @@ final class WorldGenerator {
             || isPlant(block)
             || block == GameConfig.OAK_LOG
             || block == GameConfig.PINE_LOG
+            || block == GameConfig.BIRCH_LOG
             || block == GameConfig.OAK_LEAVES
-            || block == GameConfig.PINE_LEAVES;
+            || block == GameConfig.PINE_LEAVES
+            || block == GameConfig.BIRCH_LEAVES;
     }
 
     private byte villageFoundationBlock(int y, int groundY) {
@@ -825,7 +840,7 @@ final class WorldGenerator {
 
         boolean oceanFloorSurface = surfaceHeight < GameConfig.SEA_LEVEL;
         boolean beachTerrain = isBeachSurface(surfaceHeight, terrainFlags);
-        int fillDepth = (oceanFloorSurface || beachTerrain) ? Math.max(dirtDepth, OCEAN_SAND_DEPTH + 1) : dirtDepth;
+        int fillDepth = oceanFloorSurface ? Math.max(dirtDepth, OCEAN_SAND_DEPTH + 1) : (beachTerrain ? OCEAN_SAND_DEPTH : dirtDepth);
         int depth = 0;
         for (int worldY = surfaceHeight; worldY >= GameConfig.WORLD_MIN_Y; worldY--) {
             byte block = column.getBlock(worldX, worldY, worldZ);
@@ -1342,7 +1357,8 @@ final class WorldGenerator {
                     if (shouldProtectCarve(scratch, startX, startZ, x, y, z)) {
                         continue;
                     }
-                    if (!allowSurfaceBlocks && shouldProtectSurfaceRoof(scratch, startX, startZ, x, y, z)) {
+                    if ((!allowSurfaceBlocks || shouldProtectAquaticSurfaceEntrance(scratch, startX, startZ, x, y, z))
+                        && shouldProtectSurfaceRoof(scratch, startX, startZ, x, y, z)) {
                         continue;
                     }
                     byte block = column.getBlock(x, y, z);
@@ -1674,8 +1690,8 @@ final class WorldGenerator {
     private boolean isRiverWaterCore(RiverSample river) {
         return river != null
             && river.wet
-            && river.mask >= 0.54
-            && river.distanceToCenter <= river.width * 0.66;
+            && river.mask >= 0.42
+            && river.distanceToCenter <= river.width * 0.88;
     }
 
     private byte riverBedBlock(int worldX, int worldZ, RiverSample river) {
@@ -1731,11 +1747,11 @@ final class WorldGenerator {
 
     private void populateSmallSurfacePools(GeneratedChunkColumn column, int startX, int startZ, GenerationScratch scratch) {
         long chunkSeed = mix64(seed ^ ((long) column.chunkX * 341873128712L) ^ ((long) column.chunkZ * 132897987541L));
-        if (randomUnit(chunkSeed) < 0.12) {
+        if (randomUnit(chunkSeed) < 0.045) {
             tryPlaceSurfacePool(column, startX, startZ, scratch, chunkSeed, GameConfig.WATER_SOURCE);
         }
         long lavaSeed = mix64(chunkSeed ^ 0x6A09E667F3BCC909L);
-        if (randomUnit(lavaSeed) < 0.018) {
+        if (randomUnit(lavaSeed) < 0.006) {
             tryPlaceSurfacePool(column, startX, startZ, scratch, lavaSeed, GameConfig.LAVA_SOURCE);
         }
     }
@@ -1761,7 +1777,7 @@ final class WorldGenerator {
             return;
         }
 
-        int radius = fluidBlock == GameConfig.LAVA_SOURCE ? 2 : 2 + (int) ((noiseSeed >>> 19) & 1L);
+        int radius = fluidBlock == GameConfig.LAVA_SOURCE ? 3 : 4 + (int) ((noiseSeed >>> 19) & 1L);
         int fluidY = centerSurfaceY - 1;
         int floorY = fluidY - (fluidBlock == GameConfig.LAVA_SOURCE ? 1 : 2);
         byte floorBlock = fluidBlock == GameConfig.LAVA_SOURCE
@@ -1928,6 +1944,8 @@ final class WorldGenerator {
                 if (biome == Biome.DESERT && surfaceBlock == GameConfig.SAND) {
                     if (randomUnit(noiseSeed) < 0.052) {
                         tryPlaceCactus(column, worldX, surfaceY + 1, worldZ, noiseSeed);
+                    } else if (randomUnit(noiseSeed ^ 0x5151L) < 0.070) {
+                        column.setBlock(worldX, surfaceY + 1, worldZ, GameConfig.DEAD_BUSH);
                     }
                     continue;
                 }
@@ -1941,7 +1959,9 @@ final class WorldGenerator {
 
                 double treeRoll = randomUnit(noiseSeed);
                 if (biomeSupportsTrees(biome) && treeRoll < treeChanceForBiome(biome)) {
-                    if (biome.pineTrees) {
+                    if (biome == Biome.BIRCH_FOREST) {
+                        tryPlaceBirchTree(column, worldX, worldZ, startX, startZ, noiseSeed);
+                    } else if (biome.pineTrees) {
                         tryPlacePineTree(column, worldX, worldZ, startX, startZ, noiseSeed);
                     } else {
                         tryPlaceTree(column, worldX, worldZ, startX, startZ, noiseSeed);
@@ -1968,6 +1988,52 @@ final class WorldGenerator {
                 } else if ((biome == Biome.MEADOW && floraNoise < -0.28) || floraNoise < -0.46) {
                     column.setBlock(worldX, surfaceY + 1, worldZ,
                         ((noiseSeed >>> 5) & 1L) == 0L ? GameConfig.RED_FLOWER : GameConfig.YELLOW_FLOWER);
+                }
+            }
+        }
+    }
+
+    private void populateDesertOases(GeneratedChunkColumn column, int startX, int startZ) {
+        long chunkSeed = mix64(seed ^ 0x0A51E5L ^ ((long) column.chunkX * 91815541L) ^ ((long) column.chunkZ * 19281131L));
+        if (randomUnit(chunkSeed) > 0.035) {
+            return;
+        }
+        int centerX = startX + 4 + (int) (randomUnit(chunkSeed ^ 0x45L) * 8.0);
+        int centerZ = startZ + 4 + (int) (randomUnit(chunkSeed ^ 0x91L) * 8.0);
+        if (sampleBiome(centerX, centerZ) != Biome.DESERT) {
+            return;
+        }
+        int centerY = findSurface(column, centerX, centerZ);
+        if (centerY <= GameConfig.SEA_LEVEL || centerY >= GameConfig.WORLD_MAX_Y - 3) {
+            return;
+        }
+        int radius = 4 + (int) (randomUnit(chunkSeed ^ 0xD3L) * 2.0);
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int x = centerX + dx;
+                int z = centerZ + dz;
+                if (!isInColumn(column, x, z)) {
+                    continue;
+                }
+                double dist = Math.sqrt(dx * dx + dz * dz);
+                double edgeNoise = fractalNoise((x + 200.0) * 0.24, (z - 130.0) * 0.24, 2, 0.55);
+                if (dist > radius + edgeNoise * 0.8) {
+                    continue;
+                }
+                int y = findSurface(column, x, z);
+                if (dist < radius * 0.45) {
+                    column.setBlock(x, y, z, GameConfig.SAND);
+                    column.setBlock(x, y + 1, z, GameConfig.WATER_SOURCE);
+                } else if (dist < radius * 0.75) {
+                    column.setBlock(x, y, z, GameConfig.GRASS);
+                    if (column.getBlock(x, y + 1, z) == GameConfig.AIR && randomUnit(chunkSeed ^ ((long) dx << 32) ^ dz) < 0.40) {
+                        column.setBlock(x, y + 1, z, GameConfig.TALL_GRASS);
+                    }
+                } else {
+                    column.setBlock(x, y, z, GameConfig.SAND);
+                    if (column.getBlock(x, y + 1, z) == GameConfig.AIR && randomUnit(chunkSeed ^ ((long) x * 31L) ^ z) < 0.18) {
+                        column.setBlock(x, y + 1, z, GameConfig.DEAD_BUSH);
+                    }
                 }
             }
         }
@@ -2092,6 +2158,44 @@ final class WorldGenerator {
         return true;
     }
 
+    private boolean tryPlaceBirchTree(GeneratedChunkColumn column, int worldX, int worldZ, int startX, int startZ, long noiseSeed) {
+        if (worldX < startX + 2 || worldX > startX + GameConfig.CHUNK_SIZE - 3
+            || worldZ < startZ + 2 || worldZ > startZ + GameConfig.CHUNK_SIZE - 3) {
+            return false;
+        }
+
+        int surfaceY = findSurface(column, worldX, worldZ);
+        if (surfaceY < GameConfig.SEA_LEVEL + 1 || surfaceY + 8 > GameConfig.WORLD_MAX_Y) {
+            return false;
+        }
+        if (column.getBlock(worldX, surfaceY, worldZ) != GameConfig.GRASS) {
+            return false;
+        }
+
+        int trunkBaseY = surfaceY + 1;
+        int trunkHeight = 5 + (int) ((noiseSeed >>> 8) & 1L);
+        for (int y = trunkBaseY; y <= trunkBaseY + trunkHeight + 2; y++) {
+            int radius = y >= trunkBaseY + trunkHeight - 2 ? 2 : 0;
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                    byte existing = column.getBlock(worldX + offsetX, y, worldZ + offsetZ);
+                    if (existing != GameConfig.AIR && !isPlant(existing)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        for (int y = 0; y < trunkHeight; y++) {
+            column.setBlock(worldX, trunkBaseY + y, worldZ, GameConfig.BIRCH_LOG);
+        }
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 2, worldZ, 2, true, GameConfig.BIRCH_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight - 1, worldZ, 2, false, GameConfig.BIRCH_LEAVES);
+        placeLeavesLayer(column, worldX, trunkBaseY + trunkHeight, worldZ, 1, true, GameConfig.BIRCH_LEAVES);
+        column.setBlock(worldX, trunkBaseY + trunkHeight + 1, worldZ, GameConfig.BIRCH_LEAVES);
+        return true;
+    }
+
     private boolean tryPlaceCactus(GeneratedChunkColumn column, int worldX, int baseY, int worldZ, long noiseSeed) {
         int height = 2 + (int) ((noiseSeed >>> 9) & 1L);
         if (((noiseSeed >>> 13) & 3L) == 0L) {
@@ -2147,34 +2251,43 @@ final class WorldGenerator {
     }
 
     private int sampleSurfaceHeight(int worldX, int worldZ, Biome biome, double continentalness, double lakeBasin) {
-        double continentRelief = fractalNoise(worldX * CONTINENT_SCALE, worldZ * CONTINENT_SCALE, 3, 0.53);
-        double erosion = fractalNoise((worldX + 240.0) * EROSION_SCALE, (worldZ - 510.0) * EROSION_SCALE, 3, 0.58);
-        double ridges = Math.abs(fractalNoise((worldX - 680.0) * RIDGE_SCALE, (worldZ + 420.0) * RIDGE_SCALE, 3, 0.56));
-        double detail = fractalNoise((worldX + 120.0) * DETAIL_SCALE, (worldZ - 290.0) * DETAIL_SCALE, 3, 0.46);
+        double continentRelief = fractalNoise(worldX * terrain.continentScale, worldZ * terrain.continentScale, 3, 0.53);
+        double erosion = fractalNoise((worldX + 240.0) * terrain.erosionScale, (worldZ - 510.0) * terrain.erosionScale, 3, 0.58);
+        double ridges = Math.abs(fractalNoise((worldX - 680.0) * terrain.ridgeScale, (worldZ + 420.0) * terrain.ridgeScale, 3, 0.56));
+        double detail = fractalNoise((worldX + 120.0) * terrain.detailScale, (worldZ - 290.0) * terrain.detailScale, 3, 0.46);
 
-        double landBlend = smoothstep(OCEAN_COASTLINE - COASTLINE_WIDTH, OCEAN_COASTLINE + COASTLINE_WIDTH, continentalness);
-        double inland = smoothstep(OCEAN_COASTLINE + 0.10, 0.42, continentalness);
-        double oceanDepth = smoothstep(OCEAN_COASTLINE - 0.12, -0.72, continentalness);
-        double coastalShelf = smoothstep(OCEAN_COASTLINE - 0.22, OCEAN_COASTLINE - 0.04, continentalness)
-            * (1.0 - smoothstep(OCEAN_COASTLINE + 0.02, OCEAN_COASTLINE + 0.12, continentalness));
+        double landBlend = smoothstep(terrain.oceanCoastline - terrain.coastlineWidth, terrain.oceanCoastline + terrain.coastlineWidth, continentalness);
+        double inland = smoothstep(terrain.oceanCoastline + 0.10, 0.42, continentalness);
+        double oceanDepth = smoothstep(terrain.oceanCoastline - 0.12, -0.72, continentalness);
+        double coastalShelf = smoothstep(terrain.oceanCoastline - 0.22, terrain.oceanCoastline - 0.04, continentalness)
+            * (1.0 - smoothstep(terrain.oceanCoastline + 0.02, terrain.oceanCoastline + 0.12, continentalness));
 
         double oceanHeight = GameConfig.SEA_LEVEL - 12.0
-            - oceanDepth * 30.0
+            - oceanDepth * terrain.oceanDepth
             + coastalShelf * 5.0
             + erosion * 1.5
             + detail * 0.7;
-        double shoreLift = smoothstep(OCEAN_COASTLINE + 0.02, OCEAN_COASTLINE + 0.26, continentalness) * 1.8;
+        double shoreLift = smoothstep(terrain.oceanCoastline + 0.02, terrain.oceanCoastline + 0.26, continentalness) * 1.8;
+        double mountainFactor = sampleMountainFactor(worldX, worldZ, continentalness);
         double landHeight = GameConfig.SEA_LEVEL + 4.0
             + shoreLift
-            + inland * biome.continentAmplitude * 0.48
-            + continentRelief * biome.erosionAmplitude * (0.34 + inland * 0.11)
-            + erosion * biome.erosionAmplitude * (0.30 + inland * 0.12)
-            + ridges * ridges * biome.ridgeAmplitude * (0.16 + inland * 0.34)
-            + detail * biome.detailAmplitude * (0.36 + inland * 0.19);
+            + inland * biome.continentAmplitude * 0.48 * terrain.landRelief
+            + continentRelief * biome.erosionAmplitude * (0.34 + inland * 0.11) * terrain.landRelief
+            + erosion * biome.erosionAmplitude * (0.30 + inland * 0.12) * terrain.landRelief
+            + ridges * ridges * biome.ridgeAmplitude * (0.16 + inland * 0.34) * terrain.ridgeRelief
+            + detail * biome.detailAmplitude * (0.36 + inland * 0.19) * terrain.detailRelief;
+        if (mountainFactor > 0.0) {
+            double peak = smoothstep(0.08, 0.54, ridges) * mountainFactor;
+            landHeight += mountainFactor * terrain.mountainBaseLift + peak * terrain.mountainPeakLift;
+        }
+        if (biome == Biome.WOODED_HILLS || biome == Biome.GROVE) {
+            double hillPeak = smoothstep(0.22, 0.78, ridges) * smoothstep(terrain.oceanCoastline + 0.18, 0.58, continentalness);
+            landHeight += hillPeak * terrain.hillPeakLift;
+        }
 
         double baseHeight = lerp(oceanHeight, landHeight, landBlend);
-        if (continentalness > OCEAN_COASTLINE + 0.26 && lakeBasin < LAKE_BANK_WIDTH) {
-            double lakeBlend = smoothstep(LAKE_WIDTH, LAKE_BANK_WIDTH, lakeBasin);
+        if (continentalness > terrain.oceanCoastline + 0.26 && lakeBasin < terrain.lakeBankWidth) {
+            double lakeBlend = smoothstep(terrain.lakeWidth, terrain.lakeBankWidth, lakeBasin);
             double lakeFloor = GameConfig.SEA_LEVEL - 7.0 + detail * 0.25;
             baseHeight = lerp(lakeFloor, baseHeight, lakeBlend);
         }
@@ -2183,11 +2296,19 @@ final class WorldGenerator {
         if (riverShape.active) {
             double center = 1.0 - smoothstep(0.0, riverShape.width, riverShape.distanceToCenter);
             double valley = 1.0 - smoothstep(riverShape.width * 0.22, riverShape.bankWidth, riverShape.distanceToCenter);
-            double lowlandWetness = 1.0 - smoothstep(GameConfig.SEA_LEVEL + 2.0, GameConfig.SEA_LEVEL + 8.0, baseHeight);
-            double wetFloor = Math.min(baseHeight - lerp(0.18, 0.58, center), GameConfig.SEA_LEVEL - lerp(0.08, 0.62, center));
+            double lowlandWetness = 1.0 - smoothstep(GameConfig.SEA_LEVEL + 3.0, GameConfig.SEA_LEVEL + 14.0, baseHeight);
+            double riverGrade = fractalNoise((worldX + 1230.0) * terrain.riverFieldScale * 0.32, (worldZ - 1880.0) * terrain.riverFieldScale * 0.32, 2, 0.56);
+            double targetWater = GameConfig.SEA_LEVEL + riverGrade * 1.6;
+            double wetFloor = Math.min(baseHeight - lerp(0.10, 0.36, center), targetWater - lerp(0.28, 1.15, center));
             double dryFloor = baseHeight - lerp(0.08, 0.34, center);
             double targetFloor = lerp(dryFloor, wetFloor, lowlandWetness);
-            baseHeight = lerp(baseHeight, targetFloor, valley * 0.26);
+            baseHeight = lerp(baseHeight, targetFloor, valley * terrain.riverValleyStrength);
+        }
+
+        if (biome == Biome.DESERT) {
+            double dunes = Math.abs(fractalNoise((worldX + 430.0) * 0.016, (worldZ - 720.0) * 0.016, 3, 0.52));
+            double duneRipples = fractalNoise((worldX - 170.0) * 0.055, (worldZ + 260.0) * 0.055, 2, 0.50);
+            baseHeight += Math.max(0.0, dunes - 0.30) * 8.0 + duneRipples * 1.2;
         }
 
         return clamp((int) Math.round(baseHeight), 8, GameConfig.WORLD_MAX_Y - 9);
@@ -2221,19 +2342,19 @@ final class WorldGenerator {
 
     private byte sampleTerrainFlags(int worldX, int worldZ, double continentalness, double lakeBasin, int surfaceHeight) {
         byte flags = 0;
-        boolean lake = continentalness > OCEAN_COASTLINE + 0.26 && lakeBasin < LAKE_WIDTH;
+        boolean lake = continentalness > terrain.oceanCoastline + 0.26 && lakeBasin < terrain.lakeWidth;
         if (lake) {
             return TERRAIN_LAKE;
         }
-        if (continentalness < OCEAN_COASTLINE) {
+        if (continentalness < terrain.oceanCoastline) {
             return TERRAIN_OCEAN;
         }
 
-        boolean shorelineHeight = surfaceHeight >= GameConfig.SEA_LEVEL - 3
+        boolean shorelineHeight = surfaceHeight >= GameConfig.SEA_LEVEL - 2
             && surfaceHeight <= GameConfig.SEA_LEVEL + BEACH_MAX_HEIGHT_ABOVE_SEA;
-        boolean oceanCoastline = continentalness >= OCEAN_COASTLINE
-            && continentalness <= OCEAN_COASTLINE + COASTLINE_WIDTH
-            && lakeBasin >= LAKE_BANK_WIDTH;
+        boolean oceanCoastline = continentalness >= terrain.oceanCoastline
+            && continentalness <= terrain.oceanCoastline + terrain.coastlineWidth
+            && lakeBasin >= terrain.lakeBankWidth;
         if (shorelineHeight && oceanCoastline) {
             return TERRAIN_BEACH;
         }
@@ -2242,8 +2363,8 @@ final class WorldGenerator {
     }
 
     private double sampleContinentalness(int worldX, int worldZ) {
-        double primary = fractalNoise((worldX + 1800.0) * CONTINENTALNESS_SCALE, (worldZ - 900.0) * CONTINENTALNESS_SCALE, 5, 0.54);
-        double broad = fractalNoise((worldX - 2400.0) * CONTINENTALNESS_SCALE * 0.45, (worldZ + 1600.0) * CONTINENTALNESS_SCALE * 0.45, 3, 0.56);
+        double primary = fractalNoise((worldX + 1800.0) * terrain.continentalnessScale, (worldZ - 900.0) * terrain.continentalnessScale, 5, 0.54);
+        double broad = fractalNoise((worldX - 2400.0) * terrain.continentalnessScale * 0.45, (worldZ + 1600.0) * terrain.continentalnessScale * 0.45, 3, 0.56);
         return clamp(primary * 0.72 + broad * 0.28, -1.0, 1.0);
     }
 
@@ -2254,15 +2375,16 @@ final class WorldGenerator {
         }
 
         double centerMask = 1.0 - smoothstep(0.0, shape.width, shape.distanceToCenter);
-        boolean wet = approximateSurfaceHeight <= GameConfig.SEA_LEVEL + 5 && centerMask > 0.24;
+        boolean wet = approximateSurfaceHeight <= GameConfig.SEA_LEVEL + terrain.riverWetHeight && centerMask > terrain.riverWetMask;
+        double riverGrade = fractalNoise((worldX + 1230.0) * terrain.riverFieldScale * 0.32, (worldZ - 1880.0) * terrain.riverFieldScale * 0.32, 2, 0.56);
         int waterLevel = clamp(
-            Math.min(approximateSurfaceHeight - 1, GameConfig.SEA_LEVEL + 4),
+            Math.min(approximateSurfaceHeight - 1, GameConfig.SEA_LEVEL + 2 + (int) Math.round(riverGrade * 1.5)),
             GameConfig.SEA_LEVEL,
-            GameConfig.SEA_LEVEL + 6
+            GameConfig.SEA_LEVEL + 5
         );
         if (wet) {
             double bedNoise = fractalNoise((worldX - 910.0) * 0.050, (worldZ + 310.0) * 0.050, 2, 0.50);
-            int depth = clamp(1 + (int) Math.round(centerMask * 0.65 + bedNoise * 0.25), 1, 2);
+            int depth = clamp(terrain.riverMinDepth + (int) Math.round(centerMask * terrain.riverDepthRange + bedNoise * 0.35), terrain.riverMinDepth, terrain.riverMaxDepth);
             int bedLevel = waterLevel - depth;
             return new RiverSample(true, true, shape.distanceToCenter, shape.width, shape.bankWidth, shape.mask, waterLevel, bedLevel);
         }
@@ -2272,19 +2394,19 @@ final class WorldGenerator {
     }
 
     private RiverShape sampleRiverShape(int worldX, int worldZ, double continentalness, double lakeBasin) {
-        if (continentalness <= OCEAN_COASTLINE + 0.20 || lakeBasin < LAKE_BANK_WIDTH) {
+        if (continentalness <= terrain.oceanCoastline + terrain.riverActivationOffset || lakeBasin < terrain.lakeBankWidth) {
             return RiverShape.INACTIVE;
         }
 
         double line = sampleRiverField(worldX, worldZ);
         double dx = sampleRiverField(worldX + 4, worldZ) - sampleRiverField(worldX - 4, worldZ);
         double dz = sampleRiverField(worldX, worldZ + 4) - sampleRiverField(worldX, worldZ - 4);
-        double slope = Math.max(0.0014, (Math.abs(dx) + Math.abs(dz)) / 8.0);
+        double slope = Math.max(0.0012, (Math.abs(dx) + Math.abs(dz)) / 8.0);
         double distance = Math.abs(line) / slope;
 
-        double widthNoise = climate01(fractalNoise((worldX + 1480.0) * 0.0022, (worldZ - 820.0) * 0.0022, 2, 0.54));
-        double width = lerp(RIVER_MIN_WIDTH_BLOCKS, RIVER_MAX_WIDTH_BLOCKS, widthNoise);
-        double bankWidth = width + lerp(RIVER_MIN_BANK_BLOCKS, RIVER_MAX_BANK_BLOCKS, widthNoise);
+        double widthNoise = climate01(fractalNoise((worldX + 1480.0) * terrain.riverWidthScale, (worldZ - 820.0) * terrain.riverWidthScale, 2, 0.54));
+        double width = lerp(terrain.riverMinWidth, terrain.riverMaxWidth, widthNoise);
+        double bankWidth = width + lerp(terrain.riverMinBank, terrain.riverMaxBank, widthNoise);
         double mask = 1.0 - smoothstep(width, bankWidth, distance);
         if (mask <= 0.0) {
             return RiverShape.INACTIVE;
@@ -2293,8 +2415,8 @@ final class WorldGenerator {
     }
 
     private double sampleRiverField(int worldX, int worldZ) {
-        double primary = fractalNoise((worldX + 760.0) * RIVER_FIELD_SCALE, (worldZ - 1130.0) * RIVER_FIELD_SCALE, 3, 0.52);
-        double broad = fractalNoise((worldX - 340.0) * RIVER_FIELD_SCALE * 0.48, (worldZ + 910.0) * RIVER_FIELD_SCALE * 0.48, 2, 0.55);
+        double primary = fractalNoise((worldX + 760.0) * terrain.riverFieldScale, (worldZ - 1130.0) * terrain.riverFieldScale, 3, 0.52);
+        double broad = fractalNoise((worldX - 340.0) * terrain.riverFieldScale * 0.48, (worldZ + 910.0) * terrain.riverFieldScale * 0.48, 2, 0.55);
         return primary * 0.82 + broad * 0.18;
     }
 
@@ -2308,7 +2430,7 @@ final class WorldGenerator {
         double temperature = smoothClimate(
             worldX,
             worldZ,
-            TEMPERATURE_SCALE,
+            terrain.temperatureScale,
             -380.0,
             140.0,
             4,
@@ -2317,28 +2439,53 @@ final class WorldGenerator {
         double humidity = smoothClimate(
             worldX,
             worldZ,
-            HUMIDITY_SCALE,
+            terrain.humidityScale,
             510.0,
             -260.0,
             4,
             0.58
         );
-        double highland = climate01(fractalNoise((worldX - 2140.0) * 0.0018, (worldZ + 990.0) * 0.0018, 4, 0.56));
-        double ridgeGate = Math.abs(fractalNoise((worldX + 750.0) * 0.0048, (worldZ - 1180.0) * 0.0048, 3, 0.55));
-        double weirdness = climate01(fractalNoise((worldX + 150.0) * 0.0034, (worldZ - 2060.0) * 0.0034, 3, 0.57));
-        if (highland > 0.79 && ridgeGate > 0.22 && temperature < 0.78 && humidity > 0.18) {
+        double continentalness = sampleContinentalness(worldX, worldZ);
+        double highland = sampleHighland(worldX, worldZ);
+        double weirdness = sampleWeirdness(worldX, worldZ);
+        double mountainFactor = sampleMountainFactor(worldX, worldZ, continentalness);
+        if (mountainFactor > 0.18 && temperature < 0.82 && humidity > 0.16) {
             return Biome.MOUNTAINS;
         }
-        if (highland > 0.70 && temperature < 0.54 && humidity > 0.44) {
+        if (highland > terrain.groveThreshold && temperature < 0.50 && humidity > 0.48) {
             return Biome.GROVE;
         }
-        if (highland > 0.68 && humidity > 0.42 && weirdness > 0.62) {
+        if (highland > terrain.woodedHillsThreshold && humidity > 0.42 && weirdness > terrain.woodedHillsWeirdness) {
             return Biome.WOODED_HILLS;
         }
-        if (highland > 0.66 && temperature > 0.42 && temperature < 0.76 && humidity > 0.34 && humidity < 0.72) {
+        if (highland > terrain.meadowThreshold && temperature > 0.42 && temperature < 0.78 && humidity > 0.30 && humidity < 0.70) {
             return Biome.MEADOW;
         }
         return betaBiomeFromClimate(temperature, humidity, weirdness);
+    }
+
+    private double sampleHighland(int worldX, int worldZ) {
+        return smoothClimate(worldX, worldZ, terrain.highlandScale, -2140.0, 990.0, 5, 0.56);
+    }
+
+    private double sampleRidgeGate(int worldX, int worldZ) {
+        double ridges = Math.abs(fractalNoise((worldX + 750.0) * terrain.ridgeGateScale, (worldZ - 1180.0) * terrain.ridgeGateScale, 3, 0.55));
+        return smoothstep(terrain.mountainRidgeThreshold - 0.10, terrain.mountainRidgeThreshold + 0.18, ridges);
+    }
+
+    private double sampleWeirdness(int worldX, int worldZ) {
+        return smoothClimate(worldX, worldZ, terrain.weirdnessScale, 150.0, -2060.0, 4, 0.57);
+    }
+
+    private double sampleMountainFactor(int worldX, int worldZ, double continentalness) {
+        if (terrain.mountainPeakLift <= 0.0) {
+            return 0.0;
+        }
+        double highland = sampleHighland(worldX, worldZ);
+        double highlandMask = smoothstep(terrain.mountainThreshold - 0.16, terrain.mountainThreshold + 0.04, highland);
+        double inland = smoothstep(terrain.oceanCoastline + 0.05, 0.32, continentalness);
+        double ridgeMask = 0.65 + sampleRidgeGate(worldX, worldZ) * 0.35;
+        return clamp(highlandMask * ridgeMask * inland, 0.0, 1.0);
     }
 
     String debugBiomeName(int worldX, int worldZ) {
@@ -2350,7 +2497,7 @@ final class WorldGenerator {
         if ((terrainFlags & TERRAIN_OCEAN) != 0) {
             return surfaceHeight < GameConfig.SEA_LEVEL - 10 ? "Deep Ocean" : "Ocean";
         }
-        if (river.active) {
+        if (river.wet && river.mask >= 0.42) {
             return "River";
         }
         if ((terrainFlags & TERRAIN_LAKE) != 0) {
@@ -2481,6 +2628,7 @@ final class WorldGenerator {
             || block == GameConfig.DIRT
             || block == GameConfig.COBBLESTONE
             || block == GameConfig.STONE
+            || block == GameConfig.SNOW_BLOCK
             || block == GameConfig.DEEPSLATE
             || block == GameConfig.SAND;
     }
@@ -2592,7 +2740,7 @@ final class WorldGenerator {
         if (temperature < 0.34 && humidity > 0.46 && weirdness > 0.56) {
             return Biome.GROVE;
         }
-        if (temperature > 0.92 && humidity < 0.12) {
+        if (temperature > terrain.desertTemperature && humidity < terrain.desertHumidity) {
             return weirdness > 0.60 ? Biome.BADLANDS : Biome.DESERT;
         }
         if (humidity < 0.24) {
@@ -2604,14 +2752,14 @@ final class WorldGenerator {
         if (adjustedHumidity > 0.52 && temperature < 0.68) {
             return Biome.SWAMPLAND;
         }
-        if (temperature < 0.44) {
+        if (temperature < 0.38 || (temperature < 0.44 && humidity > 0.66 && weirdness > 0.54)) {
             return Biome.TAIGA;
         }
         if (temperature < 0.82) {
             if (humidity > 0.62 && weirdness > 0.55) {
                 return Biome.DARK_FOREST;
             }
-            if (humidity > 0.36 && humidity < 0.66 && weirdness < 0.30) {
+            if (humidity > terrain.birchMinHumidity && humidity < terrain.birchMaxHumidity && weirdness < terrain.birchWeirdness) {
                 return Biome.BIRCH_FOREST;
             }
             if (humidity < 0.38) {
@@ -2634,6 +2782,21 @@ final class WorldGenerator {
 
     private boolean isAquaticTerrain(byte terrainFlags) {
         return (terrainFlags & (TERRAIN_OCEAN | TERRAIN_BEACH | TERRAIN_LAKE)) != 0;
+    }
+
+    private boolean shouldProtectAquaticSurfaceEntrance(GenerationScratch scratch, int startX, int startZ, int worldX, int worldY, int worldZ) {
+        int localX = worldX - startX;
+        int localZ = worldZ - startZ;
+        if (localX < 0 || localX >= GameConfig.CHUNK_SIZE || localZ < 0 || localZ >= GameConfig.CHUNK_SIZE) {
+            return false;
+        }
+        int index = columnIndex(localX, localZ);
+        byte terrainFlags = scratch.terrainFlags[index];
+        if (!isAquaticTerrain(terrainFlags) && (scratch.riverSamples[index] == null || !scratch.riverSamples[index].wet)) {
+            return false;
+        }
+        int protectedDepth = caveRoofDepth(BIOMES[scratch.biomeOrdinals[index] & 0xFF], terrainFlags, scratch.riverSamples[index] != null && scratch.riverSamples[index].wet) + 8;
+        return scratch.surfaceHeights[index] - worldY < protectedDepth;
     }
 
     private int caveRoofDepth(byte terrainFlags) {
@@ -2776,6 +2939,9 @@ final class WorldGenerator {
         }
         if (isMountainBiome(biome) && surfaceHeight > GameConfig.SEA_LEVEL + 28) {
             double rockNoise = climate01(fractalNoise((worldX - 1520.0) * 0.064, (worldZ + 830.0) * 0.064, 2, 0.54));
+            if (surfaceHeight > GameConfig.SEA_LEVEL + 72 && rockNoise > 0.35) {
+                return GameConfig.SNOW_BLOCK;
+            }
             if (surfaceHeight > GameConfig.SEA_LEVEL + 56 || rockNoise > 0.62) {
                 return GameConfig.STONE;
             }
@@ -2813,6 +2979,13 @@ final class WorldGenerator {
         if ((terrainFlags & TERRAIN_LAKE) != 0) {
             double floorNoise = fractalNoise((worldX + 930.0) * 0.070, (worldZ - 1210.0) * 0.070, 2, 0.52);
             return floorNoise > 0.30 ? GameConfig.GRAVEL : (floorNoise < -0.35 ? GameConfig.SAND : GameConfig.DIRT);
+        }
+        double floorNoise = fractalNoise((worldX + 930.0) * 0.060, (worldZ - 1210.0) * 0.060, 2, 0.52);
+        if (floorNoise > 0.24) {
+            return GameConfig.GRAVEL;
+        }
+        if (floorNoise < -0.42) {
+            return GameConfig.CLAY;
         }
         return GameConfig.SAND;
     }
@@ -2902,6 +3075,7 @@ final class WorldGenerator {
             || block == GameConfig.RED_FLOWER
             || block == GameConfig.YELLOW_FLOWER
             || block == GameConfig.SNOW_LAYER
+            || block == GameConfig.DEAD_BUSH
             || block == GameConfig.WHEAT_CROP
             || block == GameConfig.RAIL
             || block == GameConfig.TORCH
@@ -3104,6 +3278,180 @@ final class WorldGenerator {
 
     private double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static final class TerrainProfile {
+        final double continentScale;
+        final double continentalnessScale;
+        final double erosionScale;
+        final double ridgeScale;
+        final double detailScale;
+        final double riverFieldScale;
+        final double riverWidthScale;
+        final double temperatureScale;
+        final double humidityScale;
+        final double highlandScale;
+        final double ridgeGateScale;
+        final double weirdnessScale;
+        final double oceanCoastline;
+        final double coastlineWidth;
+        final double oceanDepth;
+        final double landRelief;
+        final double ridgeRelief;
+        final double detailRelief;
+        final double mountainBaseLift;
+        final double mountainPeakLift;
+        final double hillPeakLift;
+        final double riverMinWidth;
+        final double riverMaxWidth;
+        final double riverMinBank;
+        final double riverMaxBank;
+        final double riverActivationOffset;
+        final double riverValleyStrength;
+        final int riverWetHeight;
+        final double riverWetMask;
+        final int riverMinDepth;
+        final int riverMaxDepth;
+        final double riverDepthRange;
+        final double lakeWidth;
+        final double lakeBankWidth;
+        final double mountainThreshold;
+        final double mountainRidgeThreshold;
+        final double groveThreshold;
+        final double woodedHillsThreshold;
+        final double woodedHillsWeirdness;
+        final double meadowThreshold;
+        final double desertTemperature;
+        final double desertHumidity;
+        final double birchMinHumidity;
+        final double birchMaxHumidity;
+        final double birchWeirdness;
+
+        TerrainProfile(
+            double continentScale,
+            double continentalnessScale,
+            double erosionScale,
+            double ridgeScale,
+            double detailScale,
+            double riverFieldScale,
+            double riverWidthScale,
+            double temperatureScale,
+            double humidityScale,
+            double highlandScale,
+            double ridgeGateScale,
+            double weirdnessScale,
+            double oceanCoastline,
+            double coastlineWidth,
+            double oceanDepth,
+            double landRelief,
+            double ridgeRelief,
+            double detailRelief,
+            double mountainBaseLift,
+            double mountainPeakLift,
+            double hillPeakLift,
+            double riverMinWidth,
+            double riverMaxWidth,
+            double riverMinBank,
+            double riverMaxBank,
+            double riverActivationOffset,
+            double riverValleyStrength,
+            int riverWetHeight,
+            double riverWetMask,
+            int riverMinDepth,
+            int riverMaxDepth,
+            double riverDepthRange,
+            double lakeWidth,
+            double lakeBankWidth,
+            double mountainThreshold,
+            double mountainRidgeThreshold,
+            double groveThreshold,
+            double woodedHillsThreshold,
+            double woodedHillsWeirdness,
+            double meadowThreshold,
+            double desertTemperature,
+            double desertHumidity,
+            double birchMinHumidity,
+            double birchMaxHumidity,
+            double birchWeirdness
+        ) {
+            this.continentScale = continentScale;
+            this.continentalnessScale = continentalnessScale;
+            this.erosionScale = erosionScale;
+            this.ridgeScale = ridgeScale;
+            this.detailScale = detailScale;
+            this.riverFieldScale = riverFieldScale;
+            this.riverWidthScale = riverWidthScale;
+            this.temperatureScale = temperatureScale;
+            this.humidityScale = humidityScale;
+            this.highlandScale = highlandScale;
+            this.ridgeGateScale = ridgeGateScale;
+            this.weirdnessScale = weirdnessScale;
+            this.oceanCoastline = oceanCoastline;
+            this.coastlineWidth = coastlineWidth;
+            this.oceanDepth = oceanDepth;
+            this.landRelief = landRelief;
+            this.ridgeRelief = ridgeRelief;
+            this.detailRelief = detailRelief;
+            this.mountainBaseLift = mountainBaseLift;
+            this.mountainPeakLift = mountainPeakLift;
+            this.hillPeakLift = hillPeakLift;
+            this.riverMinWidth = riverMinWidth;
+            this.riverMaxWidth = riverMaxWidth;
+            this.riverMinBank = riverMinBank;
+            this.riverMaxBank = riverMaxBank;
+            this.riverActivationOffset = riverActivationOffset;
+            this.riverValleyStrength = riverValleyStrength;
+            this.riverWetHeight = riverWetHeight;
+            this.riverWetMask = riverWetMask;
+            this.riverMinDepth = riverMinDepth;
+            this.riverMaxDepth = riverMaxDepth;
+            this.riverDepthRange = riverDepthRange;
+            this.lakeWidth = lakeWidth;
+            this.lakeBankWidth = lakeBankWidth;
+            this.mountainThreshold = mountainThreshold;
+            this.mountainRidgeThreshold = mountainRidgeThreshold;
+            this.groveThreshold = groveThreshold;
+            this.woodedHillsThreshold = woodedHillsThreshold;
+            this.woodedHillsWeirdness = woodedHillsWeirdness;
+            this.meadowThreshold = meadowThreshold;
+            this.desertTemperature = desertTemperature;
+            this.desertHumidity = desertHumidity;
+            this.birchMinHumidity = birchMinHumidity;
+            this.birchMaxHumidity = birchMaxHumidity;
+            this.birchWeirdness = birchWeirdness;
+        }
+
+        static TerrainProfile forPreset(TerrainPreset preset) {
+            if (preset == TerrainPreset.LARGE_BIOMES) {
+                return new TerrainProfile(
+                    0.00235, 0.00072, 0.0032, 0.0082, 0.029,
+                    0.00092, 0.00095, 0.00095, 0.00105, 0.00082, 0.00180, 0.00135,
+                    0.005, 0.035, 38.0, 1.36, 1.55, 1.12, 48.0, 150.0, 8.0,
+                    7.2, 13.2, 12.0, 19.0, 0.12, 0.74, 13, 0.14, 2, 4, 2.05,
+                    LAKE_WIDTH, LAKE_BANK_WIDTH, 0.38, 0.08, 0.62, 0.61, 0.49, 0.58,
+                    0.76, 0.30, 0.32, 0.72, 0.44
+                );
+            }
+            if (preset == TerrainPreset.DEFAULT) {
+                return new TerrainProfile(
+                    0.00315, 0.00105, 0.0048, 0.0125, 0.041,
+                    0.00145, 0.00155, 0.00215, 0.00230, 0.00145, 0.00305, 0.00255,
+                    0.010, 0.052, 36.0, 1.44, 1.66, 1.16, 54.0, 164.0, 9.0,
+                    6.4, 11.4, 10.5, 16.5, 0.13, 0.72, 12, 0.14, 2, 4, 2.00,
+                    LAKE_WIDTH, LAKE_BANK_WIDTH, 0.38, 0.08, 0.62, 0.61, 0.49, 0.58,
+                    0.76, 0.30, 0.32, 0.72, 0.44
+                );
+            }
+            return new TerrainProfile(
+                CONTINENT_SCALE, CONTINENTALNESS_SCALE, EROSION_SCALE, RIDGE_SCALE, DETAIL_SCALE,
+                RIVER_FIELD_SCALE, 0.0022, TEMPERATURE_SCALE, HUMIDITY_SCALE, 0.0018, 0.0048, 0.0034,
+                OCEAN_COASTLINE, COASTLINE_WIDTH, 30.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0,
+                RIVER_MIN_WIDTH_BLOCKS, RIVER_MAX_WIDTH_BLOCKS, RIVER_MIN_BANK_BLOCKS, RIVER_MAX_BANK_BLOCKS,
+                0.20, 0.26, 5, 0.24, 1, 2, 0.65,
+                LAKE_WIDTH, LAKE_BANK_WIDTH, 0.79, 0.22, 0.70, 0.68, 0.62, 0.66,
+                0.92, 0.12, 0.36, 0.66, 0.30
+            );
+        }
     }
 
     private enum Biome {
@@ -3470,6 +3818,7 @@ final class GeneratedChunkColumn implements StructureTemplates.Target {
             || block == GameConfig.RED_FLOWER
             || block == GameConfig.YELLOW_FLOWER
             || block == GameConfig.SNOW_LAYER
+            || block == GameConfig.DEAD_BUSH
             || block == GameConfig.WHEAT_CROP
             || block == GameConfig.RAIL
             || block == GameConfig.TORCH

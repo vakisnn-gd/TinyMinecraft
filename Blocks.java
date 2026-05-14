@@ -117,6 +117,17 @@ final class BlockRegistry {
         register(GameConfig.PINE_LOG, "minecraft:pine_log", "Pine Log", true, true, false, false, false, false, 0);
         register(GameConfig.PINE_LEAVES, "minecraft:pine_leaves", "Pine Leaves", true, true, false, false, false, false, 0);
         register(GameConfig.SNOW_LAYER, "minecraft:snow_layer", "Snow Layer", false, false, false, true, false, false, 0);
+        register(GameConfig.BIRCH_LOG, "minecraft:birch_log", "Birch Log", true, true, false, false, false, false, 0);
+        register(GameConfig.BIRCH_LEAVES, "minecraft:birch_leaves", "Birch Leaves", true, true, false, false, false, false, 0);
+        register(GameConfig.SNOW_BLOCK, "minecraft:snow_block", "Snow Block", true, true, false, false, false, false, 0);
+        register(GameConfig.DEAD_BUSH, "minecraft:dead_bush", "Dead Bush", false, false, false, true, true, false, 0);
+        register(GameConfig.PINE_PLANKS, "minecraft:spruce_planks", "Spruce Planks", true, true, false, false, false, false, 0);
+        register(GameConfig.BIRCH_PLANKS, "minecraft:birch_planks", "Birch Planks", true, true, false, false, false, false, 0);
+        register(GameConfig.OAK_STAIRS, "minecraft:oak_stairs", "Oak Stairs", true, false, false, false, false, false, 0);
+        register(GameConfig.PINE_STAIRS, "minecraft:spruce_stairs", "Spruce Stairs", true, false, false, false, false, false, 0);
+        register(GameConfig.BIRCH_STAIRS, "minecraft:birch_stairs", "Birch Stairs", true, false, false, false, false, false, 0);
+        register(GameConfig.STONE_STAIRS, "minecraft:stone_stairs", "Stone Stairs", true, false, false, false, false, false, 0);
+        register(GameConfig.COBBLESTONE_STAIRS, "minecraft:cobblestone_stairs", "Cobblestone Stairs", true, false, false, false, false, false, 0);
         register(GameConfig.GRAVEL, "minecraft:gravel", "Gravel", true, true, false, false, false, true, 0);
         register(GameConfig.SEAGRASS, "minecraft:seagrass", "Seagrass", false, false, false, true, true, false, 0);
         register(GameConfig.DEEPSLATE, "minecraft:deepslate", "Deepslate", true, true, false, false, false, false, 0);
@@ -291,12 +302,20 @@ final class Blocks {
         return withData(GameConfig.OAK_FENCE_GATE, data);
     }
 
+    static BlockState stairState(byte legacyId, int facing) {
+        return withData(legacyId, facing & 3);
+    }
+
     static boolean isGateOpen(BlockState state) {
         return state != null && state.type.numericId == (GameConfig.OAK_FENCE_GATE & 0xFF) && (state.data & 1) != 0;
     }
 
     static int gateFacing(BlockState state) {
         return state == null ? 0 : ((state.data >>> 1) & 3);
+    }
+
+    static int stairFacing(BlockState state) {
+        return state == null ? 0 : (state.data & 3);
     }
 
     static boolean isBedHead(BlockState state) {

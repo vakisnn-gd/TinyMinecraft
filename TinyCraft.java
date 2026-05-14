@@ -1,6 +1,9 @@
 import org.lwjgl.glfw.GLFWErrorCallback;
+import org.lwjgl.glfw.GLFWVidMode;
+import org.lwjgl.system.MemoryStack;
 
 import java.io.IOException;
+import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -9,6 +12,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Random;
+import java.util.stream.Stream;
 
 import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MAJOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MINOR;
@@ -157,6 +161,7 @@ public class TinyCraft {
     private int activeMenuTextField = -1;
     private int createWorldGameMode;
     private int createWorldDifficulty = 2;
+    private int createWorldTerrainPreset = TerrainPreset.NEW_WORLD_DEFAULT.createWorldOptionIndex();
     private int currentWorldDifficulty = 2;
     private int renderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
     private int fovDegrees = (int) GameConfig.FOV_DEGREES;
@@ -200,7 +205,11 @@ public class TinyCraft {
     private static void runWorldProfile(String[] args) {
         long profileSeed = args.length > 1 ? parseProfileSeed(args[1]) : 0x5cfa085fdacb6033L;
         int radius = args.length > 2 ? Math.max(1, parseProfileInt(args[2], 6)) : 6;
-        WorldGenerator generator = new WorldGenerator(profileSeed);
+        TerrainPreset profilePreset = args.length > 3 ? TerrainPreset.fromMetadata(args[3]) : TerrainPreset.NEW_WORLD_DEFAULT;
+        if (profilePreset == TerrainPreset.LEGACY && args.length <= 3) {
+            profilePreset = TerrainPreset.NEW_WORLD_DEFAULT;
+        }
+        WorldGenerator generator = new WorldGenerator(profileSeed, profilePreset);
         int columns = 0;
         ArrayList<Long> generationSamples = new ArrayList<>();
         long generationNs = 0L;
@@ -246,8 +255,9 @@ public class TinyCraft {
         double totalMs = (generationNs + copyNs) / 1_000_000.0;
         System.out.printf(
             Locale.ROOT,
-            "World profile: seed=%016x radius=%d columns=%d height=%d..%d generationAvg=%.3fms generationP95=%.3fms generationMax=%.3fms heavyColumns=%d@%.1fms integrationCopyAvg=%.3fms integrationCopyMax=%.3fms total=%.3fms%n",
+            "World profile: seed=%016x preset=%s radius=%d columns=%d height=%d..%d generationAvg=%.3fms generationP95=%.3fms generationMax=%.3fms heavyColumns=%d@%.1fms integrationCopyAvg=%.3fms integrationCopyMax=%.3fms total=%.3fms%n",
             profileSeed,
+            profilePreset.metadataId(),
             radius,
             columns,
             GameConfig.WORLD_MIN_Y,
@@ -297,6 +307,7 @@ public class TinyCraft {
             Settings.load();
             renderDistanceChunks = Settings.savedRenderDistance;
             fovDegrees = Settings.savedFovDegrees;
+            maxFps = Settings.savedMaxFps;
             world.setRenderDistanceChunks(renderDistanceChunks);
             initWindow();
             renderer.init();
@@ -331,7 +342,7 @@ public class TinyCraft {
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         long primaryMonitor = glfwGetPrimaryMonitor();
-        var videoMode = glfwGetVideoMode(primaryMonitor);
+        GLFWVidMode videoMode = glfwGetVideoMode(primaryMonitor);
         int initialWidth = videoMode != null ? videoMode.width() : GameConfig.WINDOW_WIDTH;
         int initialHeight = videoMode != null ? videoMode.height() : GameConfig.WINDOW_HEIGHT;
         long initialMonitor = videoMode != null ? primaryMonitor : NULL;
@@ -884,7 +895,7 @@ public class TinyCraft {
                     int hoveredSlider = renderer.getOptionsSliderAt(mouseX, mouseY, mainMenuScreen);
                     if (hoveredSlider != -1) {
                         mainMenuSelection = hoveredSlider;
-                        applyOptionsSlider(hoveredSlider, renderer.sliderPercentAt(mouseX));
+                        applyOptionsSlider(hoveredSlider, renderer.sliderPercentAt(mouseX, hoveredSlider));
                         return;
                     }
                     if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
@@ -900,6 +911,10 @@ public class TinyCraft {
                         }
                         if (toggle == 1) {
                             createWorldDifficulty = (createWorldDifficulty + 1) % GameConfig.DIFFICULTY_OPTIONS.length;
+                            return;
+                        }
+                        if (toggle == 2) {
+                            createWorldTerrainPreset = (createWorldTerrainPreset + 1) % GameConfig.TERRAIN_PRESET_OPTIONS.length;
                             return;
                         }
                     } else if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
@@ -1093,6 +1108,7 @@ public class TinyCraft {
                 createWorldSeed,
                 createWorldGameMode,
                 createWorldDifficulty,
+                createWorldTerrainPreset,
                 activeMenuTextField,
                 renameWorldName,
                 availableWorlds,
@@ -1162,18 +1178,18 @@ public class TinyCraft {
         updatePlayerArmorProtection();
         updatePlayer(tickDelta);
         world.updateDroppedItems(player, inventory, tickDelta);
-        world.updateZombies(player, tickDelta);
+        world.updateMobs(player, tickDelta);
         if (!deathScreenActive && !creativeMode && !spectatorMode && player.health <= 0) {
             enterDeathScreen();
         }
-        for (Zombie zombie : world.getZombies()) {
-            if (zombie.growlQueued) {
-                audio.playMobAmbient(zombie.kind, zombie.x, zombie.y + 1.4, zombie.z);
-                zombie.growlQueued = false;
+        for (MobEntity mob : world.getMobs()) {
+            if (mob.growlQueued) {
+                audio.playMobAmbient(mob.kind, mob.x, mob.y + 1.4, mob.z);
+                mob.growlQueued = false;
             }
-            if (zombie.splashQueued) {
-                audio.playSplash(zombie.x, zombie.y + 0.3, zombie.z);
-                zombie.splashQueued = false;
+            if (mob.splashQueued) {
+                audio.playSplash(mob.x, mob.y + 0.3, mob.z);
+                mob.splashQueued = false;
             }
         }
         ColumnUpdateList dirtyColumns = world.updateWorldTicks(player, tickDelta);
@@ -1191,8 +1207,8 @@ public class TinyCraft {
     }
 
     private void capturePreviousEntityPositions() {
-        for (Zombie zombie : world.getZombies()) {
-            zombie.capturePreviousPosition();
+        for (MobEntity mob : world.getMobs()) {
+            mob.capturePreviousPosition();
         }
         for (DroppedItem droppedItem : world.getDroppedItems()) {
             droppedItem.capturePreviousPosition();
@@ -1521,7 +1537,7 @@ public class TinyCraft {
 
     private void copyChatToClipboard() {
         String text = chat.copyText();
-        if (text == null || text.isBlank()) {
+        if (text == null || text.trim().isEmpty()) {
             return;
         }
         glfwSetClipboardString(window, text);
@@ -2162,23 +2178,32 @@ public class TinyCraft {
             || block == GameConfig.DEEPSLATE_COAL_ORE
             || block == GameConfig.DEEPSLATE_IRON_ORE
             || block == GameConfig.DEEPSLATE_DIAMOND_ORE
-            || block == GameConfig.OBSIDIAN;
+            || block == GameConfig.OBSIDIAN
+            || block == GameConfig.STONE_STAIRS
+            || block == GameConfig.COBBLESTONE_STAIRS;
         boolean dirtLike = block == GameConfig.GRASS
             || block == GameConfig.DIRT
             || block == GameConfig.SAND
             || block == GameConfig.GRAVEL
             || block == GameConfig.CLAY
             || block == GameConfig.FARMLAND
+            || block == GameConfig.SNOW_BLOCK
             || block == GameConfig.SNOW_LAYER;
         boolean woodLike = block == GameConfig.OAK_LOG
             || block == GameConfig.PINE_LOG
+            || block == GameConfig.BIRCH_LOG
             || block == InventoryItems.OAK_PLANKS
+            || block == GameConfig.PINE_PLANKS
+            || block == GameConfig.BIRCH_PLANKS
+            || block == GameConfig.OAK_STAIRS
+            || block == GameConfig.PINE_STAIRS
+            || block == GameConfig.BIRCH_STAIRS
             || block == GameConfig.CHEST
             || block == GameConfig.CRAFTING_TABLE
             || block == GameConfig.OAK_FENCE
             || block == GameConfig.OAK_FENCE_GATE
             || block == GameConfig.OAK_DOOR;
-        boolean hoeLike = block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES;
+        boolean hoeLike = block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES;
         return (stoneLike && isPickaxe(heldItem))
             || (dirtLike && isShovel(heldItem))
             || (woodLike && isAxe(heldItem))
@@ -2339,6 +2364,7 @@ public class TinyCraft {
         if (!InventoryItems.isCollectible(block)
             || block == GameConfig.OAK_LEAVES
             || block == GameConfig.PINE_LEAVES
+            || block == GameConfig.BIRCH_LEAVES
             || GameConfig.isLiquidBlock(block)) {
             return GameConfig.AIR;
         }
@@ -2461,16 +2487,26 @@ public class TinyCraft {
             || block == GameConfig.DEEPSLATE_COAL_ORE
             || block == GameConfig.DEEPSLATE_IRON_ORE
             || block == GameConfig.DEEPSLATE_DIAMOND_ORE
-            || block == GameConfig.OBSIDIAN;
+            || block == GameConfig.OBSIDIAN
+            || block == GameConfig.STONE_STAIRS
+            || block == GameConfig.COBBLESTONE_STAIRS;
         boolean dirtLike = block == GameConfig.GRASS
             || block == GameConfig.DIRT
             || block == GameConfig.SAND
             || block == GameConfig.GRAVEL
             || block == GameConfig.CLAY
-            || block == GameConfig.FARMLAND;
+            || block == GameConfig.FARMLAND
+            || block == GameConfig.SNOW_BLOCK
+            || block == GameConfig.SNOW_LAYER;
         boolean woodLike = block == GameConfig.OAK_LOG
             || block == GameConfig.PINE_LOG
+            || block == GameConfig.BIRCH_LOG
             || block == InventoryItems.OAK_PLANKS
+            || block == GameConfig.PINE_PLANKS
+            || block == GameConfig.BIRCH_PLANKS
+            || block == GameConfig.OAK_STAIRS
+            || block == GameConfig.PINE_STAIRS
+            || block == GameConfig.BIRCH_STAIRS
             || block == GameConfig.CHEST
             || block == GameConfig.CRAFTING_TABLE
             || block == GameConfig.OAK_FENCE
@@ -2494,10 +2530,10 @@ public class TinyCraft {
         if ((heldItem == InventoryItems.IRON_AXE || heldItem == InventoryItems.STONE_AXE || heldItem == InventoryItems.WOODEN_AXE) && woodLike) {
             return heldItem == InventoryItems.IRON_AXE ? 4.2 : (heldItem == InventoryItems.STONE_AXE ? 3.0 : 1.8);
         }
-        if ((heldItem == InventoryItems.DIAMOND_HOE || heldItem == InventoryItems.NETHERITE_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES)) {
+        if ((heldItem == InventoryItems.DIAMOND_HOE || heldItem == InventoryItems.NETHERITE_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES)) {
             return heldItem == InventoryItems.NETHERITE_HOE ? 5.0 : 4.0;
         }
-        if ((heldItem == InventoryItems.IRON_HOE || heldItem == InventoryItems.STONE_HOE || heldItem == InventoryItems.WOODEN_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES)) {
+        if ((heldItem == InventoryItems.IRON_HOE || heldItem == InventoryItems.STONE_HOE || heldItem == InventoryItems.WOODEN_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES)) {
             return heldItem == InventoryItems.IRON_HOE ? 3.4 : (heldItem == InventoryItems.STONE_HOE ? 2.6 : 1.6);
         }
         if (stoneLike) {
@@ -2644,17 +2680,17 @@ public class TinyCraft {
     }
 
     private void toggleFullscreen() {
-        var videoMode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+        GLFWVidMode videoMode = glfwGetVideoMode(glfwGetPrimaryMonitor());
         if (videoMode == null) {
             return;
         }
 
         if (!fullscreen) {
-            try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                var xBuffer = stack.mallocInt(1);
-                var yBuffer = stack.mallocInt(1);
-                var widthBuffer = stack.mallocInt(1);
-                var heightBuffer = stack.mallocInt(1);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                IntBuffer xBuffer = stack.mallocInt(1);
+                IntBuffer yBuffer = stack.mallocInt(1);
+                IntBuffer widthBuffer = stack.mallocInt(1);
+                IntBuffer heightBuffer = stack.mallocInt(1);
                 glfwGetWindowPos(window, xBuffer, yBuffer);
                 glfwGetWindowSize(window, widthBuffer, heightBuffer);
                 windowedX = xBuffer.get(0);
@@ -2758,9 +2794,15 @@ public class TinyCraft {
         } else if (slider == 1) {
             fovDegrees = (int) Math.round(lerp(55.0, 100.0, percent));
         } else if (slider == 2) {
+            Settings.brightness = clamp((int) Math.round(percent * 100.0), 0, 100);
+        } else if (slider == 3) {
+            Settings.masterVolume = clamp((int) Math.round(percent * 100.0), 0, 100);
+        } else if (slider == 4) {
+            maxFps = clamp((int) Math.round(lerp(30.0, 240.0, percent)), 30, 240);
+        } else if (slider == 5) {
             Settings.inventoryUiSize = clamp(1 + (int) Math.round(percent * 3.0), 1, 4);
         }
-        Settings.save(renderDistanceChunks, fovDegrees);
+        Settings.save(renderDistanceChunks, fovDegrees, maxFps);
     }
 
     private void nudgeOptionsSelection(int direction) {
@@ -2770,13 +2812,19 @@ public class TinyCraft {
         } else if (mainMenuSelection == 1) {
             fovDegrees = clamp(fovDegrees + direction * 2, 55, 100);
         } else if (mainMenuSelection == 2) {
-            Settings.inventoryUiSize = clamp(Settings.inventoryUiSize + direction, 1, 4);
+            Settings.brightness = clamp(Settings.brightness + direction * 5, 0, 100);
         } else if (mainMenuSelection == 3) {
-            Settings.graphicsQuality = 1 - Settings.graphicsQuality;
+            Settings.masterVolume = clamp(Settings.masterVolume + direction * 5, 0, 100);
         } else if (mainMenuSelection == 4) {
+            maxFps = clamp(maxFps + direction * 10, 30, 240);
+        } else if (mainMenuSelection == 5) {
+            Settings.inventoryUiSize = clamp(Settings.inventoryUiSize + direction, 1, 4);
+        } else if (mainMenuSelection == 6) {
+            Settings.graphicsQuality = 1 - Settings.graphicsQuality;
+        } else if (mainMenuSelection == 7) {
             Settings.toggleLanguage();
         }
-        Settings.save(renderDistanceChunks, fovDegrees);
+        Settings.save(renderDistanceChunks, fovDegrees, maxFps);
     }
 
     private void closeOptionsMenu() {
@@ -3117,21 +3165,21 @@ public class TinyCraft {
 
         if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
             if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
-                mainMenuSelection = (mainMenuSelection + 5) % 6;
+                mainMenuSelection = (mainMenuSelection + 8) % 9;
             } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
-                mainMenuSelection = (mainMenuSelection + 1) % 6;
+                mainMenuSelection = (mainMenuSelection + 1) % 9;
             } else if (key == GLFW_KEY_A || key == GLFW_KEY_LEFT) {
                 nudgeOptionsSelection(-1);
             } else if (key == GLFW_KEY_D || key == GLFW_KEY_RIGHT) {
                 nudgeOptionsSelection(1);
             } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
-                if (mainMenuSelection == 3) {
+                if (mainMenuSelection == 6) {
                     Settings.graphicsQuality = 1 - Settings.graphicsQuality;
-                    Settings.save(renderDistanceChunks, fovDegrees);
-                } else if (mainMenuSelection == 4) {
+                    Settings.save(renderDistanceChunks, fovDegrees, maxFps);
+                } else if (mainMenuSelection == 7) {
                     Settings.toggleLanguage();
-                    Settings.save(renderDistanceChunks, fovDegrees);
-                } else if (mainMenuSelection == 5) {
+                    Settings.save(renderDistanceChunks, fovDegrees, maxFps);
+                } else if (mainMenuSelection == 8) {
                     closeOptionsMenu();
                 }
             }
@@ -3257,7 +3305,7 @@ public class TinyCraft {
 
         if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
             if (mainMenuSelection == 0) {
-                createNewWorld(createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty);
+                createNewWorld(createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset);
                 showLoadingScreen(loadingTerrainText(), buildingWorldText());
                 ensureWorldLoaded();
                 mainMenuActive = false;
@@ -3286,17 +3334,17 @@ public class TinyCraft {
         }
 
         if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
-            if (mainMenuSelection == 3) {
+            if (mainMenuSelection == 6) {
                 Settings.graphicsQuality = 1 - Settings.graphicsQuality;
-                Settings.save(renderDistanceChunks, fovDegrees);
+                Settings.save(renderDistanceChunks, fovDegrees, maxFps);
                 return;
             }
-            if (mainMenuSelection == 4) {
+            if (mainMenuSelection == 7) {
                 Settings.toggleLanguage();
-                Settings.save(renderDistanceChunks, fovDegrees);
+                Settings.save(renderDistanceChunks, fovDegrees, maxFps);
                 return;
             }
-            if (mainMenuSelection == 5) {
+            if (mainMenuSelection == 8) {
                 closeOptionsMenu();
             }
             return;
@@ -3321,7 +3369,7 @@ public class TinyCraft {
 
     private void ensureWorldLoaded() {
         if (availableWorlds.isEmpty()) {
-            createNewWorld(nextWorldName(), "", 0, 2);
+            createNewWorld(nextWorldName(), "", 0, 2, TerrainPreset.NEW_WORLD_DEFAULT.createWorldOptionIndex());
         }
         WorldInfo worldInfo = selectedWorld();
         if (worldInfo == null) {
@@ -3342,15 +3390,14 @@ public class TinyCraft {
         renderer.clearWorldMeshes();
         showLoadingScreen(loadingTerrainText(), worldInfo.name);
         long worldGenerationStart = System.nanoTime();
-        world.configureWorld(worldInfo.directory, worldInfo.seed);
+        world.configureWorld(worldInfo.directory, worldInfo.seed, worldInfo.terrainPreset);
         world.initializeNoise();
         world.generateWorld();
         FrameProfiler.logTask("world.generateWorld", System.nanoTime() - worldGenerationStart);
+        resetInventoryScreenStateForWorldLoad();
+        inventory.clearAll();
         if (!world.loadPlayerState(player, inventory)) {
-            creativeMode = false;
-            spectatorMode = false;
-            creativeFlightEnabled = false;
-            syncPlayerModeState();
+            resetPlayerStateForNewWorld();
             world.placePlayerAtSpawn(player);
             setGameMode(worldInfo.gameMode);
         } else {
@@ -3377,6 +3424,38 @@ public class TinyCraft {
         resetBreakingProgress();
         syncPlayerModeState();
         syncSelectedHotbarItem();
+    }
+
+    private void resetInventoryScreenStateForWorldLoad() {
+        inventoryOpen = false;
+        activeChestContainer = null;
+        activeFurnace = null;
+        inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
+    }
+
+    private void resetPlayerStateForNewWorld() {
+        creativeMode = false;
+        spectatorMode = false;
+        creativeFlightEnabled = false;
+        deathScreenActive = false;
+        inventoryDroppedOnDeath = false;
+        player.health = GameConfig.MAX_HEALTH;
+        player.hunger = GameConfig.MAX_HUNGER;
+        player.hungerDrainTimer = 0.0;
+        player.hungerDamageTimer = 0.0;
+        player.hungerRegenTimer = 0.0;
+        player.hasCustomSpawn = false;
+        player.spawnX = 0.0;
+        player.spawnY = 0.0;
+        player.spawnZ = 0.0;
+        player.yaw = PlayerState.DEFAULT_YAW;
+        player.pitch = PlayerState.DEFAULT_PITCH;
+        player.verticalVelocity = 0.0;
+        player.cameraBobPhase = 0.0;
+        player.cameraBobAmount = 0.0;
+        player.stepTimer = 0.0;
+        lastCreativeJumpTapTime = -1.0;
+        syncPlayerModeState();
     }
 
     private void warmupWorldStreaming(String worldName) {
@@ -3464,12 +3543,12 @@ public class TinyCraft {
         Path savesRoot = RuntimePaths.resolve(GameConfig.SAVE_ROOT_DIRECTORY);
         try {
             Files.createDirectories(savesRoot);
-            try (var stream = Files.list(savesRoot)) {
+            try (Stream<Path> stream = Files.list(savesRoot)) {
                 stream.filter(Files::isDirectory).forEach(directory -> {
                     try {
                         WorldMetadata metadata = readWorldMetadata(directory);
                         long lastModified = worldLastModified(directory);
-                        availableWorlds.add(new WorldInfo(directory.getFileName().toString(), directory, metadata.seed, lastModified, metadata.gameMode, metadata.difficulty));
+                        availableWorlds.add(new WorldInfo(directory.getFileName().toString(), directory, metadata.seed, lastModified, metadata.gameMode, metadata.difficulty, metadata.terrainPreset));
                     } catch (IOException | NumberFormatException ignored) {
                     }
                 });
@@ -3578,54 +3657,71 @@ public class TinyCraft {
         }
 
         Path seedPath = directory.resolve(GameConfig.SAVE_METADATA_FILE);
-        String[] lines = Files.readString(seedPath, StandardCharsets.UTF_8).split("\\R");
+        String[] lines = readUtf8(seedPath).split("\\R");
         long seed = lines.length == 0 ? 0L : Long.parseUnsignedLong(lines[0].trim(), 16);
         int gameMode = 0;
         int difficulty = 2;
+        TerrainPreset terrainPreset = TerrainPreset.LEGACY;
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].trim();
             if (line.startsWith("mode=")) {
                 gameMode = clamp(Integer.parseInt(line.substring(5)), 0, GameConfig.GAME_MODE_OPTIONS.length - 1);
             } else if (line.startsWith("difficulty=")) {
                 difficulty = clamp(Integer.parseInt(line.substring(11)), 0, GameConfig.DIFFICULTY_OPTIONS.length - 1);
+            } else if (line.startsWith("worldType=")) {
+                terrainPreset = TerrainPreset.fromMetadata(line.substring(10));
+            } else if (line.startsWith("terrainPreset=")) {
+                terrainPreset = TerrainPreset.fromMetadata(line.substring(14));
             }
         }
-        return new WorldMetadata(seed, gameMode, difficulty);
+        return new WorldMetadata(seed, gameMode, difficulty, terrainPreset);
+    }
+
+    private String readUtf8(Path path) throws IOException {
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+    }
+
+    private void writeUtf8(Path path, String text) throws IOException {
+        Files.write(path, text.getBytes(StandardCharsets.UTF_8));
     }
 
     private WorldMetadata readLevelMetadata(Path levelPath) throws IOException {
-        String json = Files.readString(levelPath, StandardCharsets.UTF_8);
+        String json = readUtf8(levelPath);
         String seedText = jsonValue(json, "seed");
         long seed = parseStoredSeed(seedText);
         int gameMode = clamp(jsonIntValue(json, "gameMode", 0), 0, GameConfig.GAME_MODE_OPTIONS.length - 1);
         int difficulty = clamp(jsonIntValue(json, "difficulty", 2), 0, GameConfig.DIFFICULTY_OPTIONS.length - 1);
-        return new WorldMetadata(seed, gameMode, difficulty);
+        TerrainPreset terrainPreset = TerrainPreset.fromMetadata(jsonValue(json, "worldType"));
+        return new WorldMetadata(seed, gameMode, difficulty, terrainPreset);
     }
 
-    private void writeWorldMetadata(Path directory, long seed, int gameMode, int difficulty) throws IOException {
+    private void writeWorldMetadata(Path directory, long seed, int gameMode, int difficulty, TerrainPreset terrainPreset) throws IOException {
         Files.createDirectories(directory);
         Files.createDirectories(directory.resolve(GameConfig.SAVE_REGION_DIRECTORY));
         int clampedGameMode = clamp(gameMode, 0, GameConfig.GAME_MODE_OPTIONS.length - 1);
         int clampedDifficulty = clamp(difficulty, 0, GameConfig.DIFFICULTY_OPTIONS.length - 1);
+        TerrainPreset storedPreset = terrainPreset == null ? TerrainPreset.LEGACY : terrainPreset;
         String seedHex = Long.toUnsignedString(seed, 16);
         String levelJson = "{"
             + System.lineSeparator() + "  \"version\": 1,"
             + System.lineSeparator() + "  \"seed\": \"" + jsonEscape(seedHex) + "\","
             + System.lineSeparator() + "  \"gameMode\": " + clampedGameMode + ","
             + System.lineSeparator() + "  \"difficulty\": " + clampedDifficulty + ","
+            + System.lineSeparator() + "  \"worldType\": \"" + jsonEscape(storedPreset.metadataId()) + "\","
             + System.lineSeparator() + "  \"minY\": " + GameConfig.WORLD_MIN_Y + ","
             + System.lineSeparator() + "  \"height\": " + GameConfig.WORLD_HEIGHT + ","
             + System.lineSeparator() + "  \"seaLevel\": " + GameConfig.SEA_LEVEL + ","
             + System.lineSeparator() + "  \"createdWith\": \"TinyCraft mcrx-1\""
             + System.lineSeparator() + "}"
             + System.lineSeparator();
-        Files.writeString(directory.resolve(GameConfig.SAVE_LEVEL_FILE), levelJson, StandardCharsets.UTF_8);
+        writeUtf8(directory.resolve(GameConfig.SAVE_LEVEL_FILE), levelJson);
 
         String metadata = seedHex
             + System.lineSeparator() + "mode=" + clampedGameMode
             + System.lineSeparator() + "difficulty=" + clampedDifficulty
+            + System.lineSeparator() + "worldType=" + storedPreset.metadataId()
             + System.lineSeparator();
-        Files.writeString(directory.resolve(GameConfig.SAVE_METADATA_FILE), metadata, StandardCharsets.UTF_8);
+        writeUtf8(directory.resolve(GameConfig.SAVE_METADATA_FILE), metadata);
     }
 
     private void saveCurrentWorldMetadata() {
@@ -3634,13 +3730,13 @@ public class TinyCraft {
             return;
         }
         try {
-            writeWorldMetadata(worldInfo.directory, worldInfo.seed, currentGameModeIndex(), currentWorldDifficulty);
+            writeWorldMetadata(worldInfo.directory, worldInfo.seed, currentGameModeIndex(), currentWorldDifficulty, worldInfo.terrainPreset);
         } catch (IOException ignored) {
         }
     }
 
     private long parseStoredSeed(String seedText) {
-        if (seedText == null || seedText.isBlank()) {
+        if (seedText == null || seedText.trim().isEmpty()) {
             return 0L;
         }
         String trimmed = seedText.trim();
@@ -3657,7 +3753,7 @@ public class TinyCraft {
 
     private int jsonIntValue(String json, String key, int defaultValue) {
         String value = jsonValue(json, key);
-        if (value == null || value.isBlank()) {
+        if (value == null || value.trim().isEmpty()) {
             return defaultValue;
         }
         try {
@@ -3726,6 +3822,7 @@ public class TinyCraft {
         createWorldSeed = "";
         createWorldGameMode = 0;
         createWorldDifficulty = 2;
+        createWorldTerrainPreset = TerrainPreset.NEW_WORLD_DEFAULT.createWorldOptionIndex();
         activeMenuTextField = 0;
         mainMenuScreen = GameConfig.MENU_SCREEN_CREATE_WORLD;
         mainMenuSelection = 0;
@@ -3750,12 +3847,12 @@ public class TinyCraft {
         return Settings.isRussian() ? "Подготовка чанков" : "Building world";
     }
 
-    private void createNewWorld(String requestedName, String requestedSeed, int gameMode, int difficulty) {
+    private void createNewWorld(String requestedName, String requestedSeed, int gameMode, int difficulty, int terrainPresetOption) {
         String worldName = uniqueWorldName(sanitizeWorldName(requestedName, nextWorldName()));
         long seed = parseSeed(requestedSeed);
         Path worldDirectory = RuntimePaths.resolve(GameConfig.SAVE_ROOT_DIRECTORY, worldName);
         try {
-            writeWorldMetadata(worldDirectory, seed, gameMode, difficulty);
+            writeWorldMetadata(worldDirectory, seed, gameMode, difficulty, TerrainPreset.fromCreateWorldOption(terrainPresetOption));
             currentWorldDifficulty = difficulty;
         } catch (IOException ignored) {
             return;
@@ -3845,7 +3942,7 @@ public class TinyCraft {
     }
 
     private void deleteDirectory(Path directory) throws IOException {
-        try (var stream = Files.walk(directory)) {
+        try (Stream<Path> stream = Files.walk(directory)) {
             stream.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.deleteIfExists(path);
@@ -3985,7 +4082,7 @@ public class TinyCraft {
 
     private void cleanup() {
         closeContainerScreen();
-        Settings.save(renderDistanceChunks, fovDegrees);
+        Settings.save(renderDistanceChunks, fovDegrees, maxFps);
         if (worldLoaded) {
             syncPlayerModeState();
             saveCurrentWorldMetadata();
@@ -4007,12 +4104,13 @@ public class TinyCraft {
         final long seed;
         final int gameMode;
         final int difficulty;
+        final TerrainPreset terrainPreset;
 
-        WorldMetadata(long seed, int gameMode, int difficulty) {
+        WorldMetadata(long seed, int gameMode, int difficulty, TerrainPreset terrainPreset) {
             this.seed = seed;
             this.gameMode = gameMode;
             this.difficulty = difficulty;
+            this.terrainPreset = terrainPreset == null ? TerrainPreset.LEGACY : terrainPreset;
         }
     }
 }
-

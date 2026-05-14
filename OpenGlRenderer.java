@@ -15,7 +15,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -155,9 +155,9 @@ final class OpenGlRenderer {
     private static final double PACKED_VERTEX_SCALE = 32.0;
     private static final int PACKED_VERTEX_MAX = 1023;
     private static final int MIN_CHUNK_UPLOADS_PER_FRAME = 1;
-    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 1;
-    private static final int MAX_IMMEDIATE_CHUNK_UPLOADS_PER_FRAME = 4;
-    private static final int MAX_BACKLOG_CHUNK_UPLOADS_PER_FRAME = 6;
+    private static final int MAX_CHUNK_UPLOADS_PER_FRAME = 4;
+    private static final int MAX_IMMEDIATE_CHUNK_UPLOADS_PER_FRAME = 8;
+    private static final int MAX_BACKLOG_CHUNK_UPLOADS_PER_FRAME = 24;
     private static final int MAX_PENDING_MESH_BACKLOG = 1536;
     private static final double LIQUID_SURFACE_Z_OFFSET = 0.01;
     private static final double CAMERA_NEAR_PLANE = 0.08;
@@ -189,6 +189,7 @@ final class OpenGlRenderer {
     private final ExecutorService meshExecutor = createMeshExecutor();
     private final LinkedHashMap<String, TextTexture> textTextures = new LinkedHashMap<>(128, 0.75f, true);
     private final Frustum chunkFrustum = new Frustum();
+    private final FloatBuffer fogColorScratch = BufferUtils.createFloatBuffer(4);
 
     private int framebufferWidth = GameConfig.WINDOW_WIDTH;
     private int framebufferHeight = GameConfig.WINDOW_HEIGHT;
@@ -204,6 +205,8 @@ final class OpenGlRenderer {
     private int chunkShaderFancyGraphicsLocation = -1;
     private int chunkShaderFogColorLocation = -1;
     private int chunkShaderFogDensityLocation = -1;
+    private int chunkShaderBrightnessLocation = -1;
+    private int chunkShaderRevealLocation = -1;
     private final FloatBuffer matrixScratch = BufferUtils.createFloatBuffer(16);
     private final float[] modelViewMatrix = new float[16];
     private final float[] projectionMatrix = new float[16];
@@ -286,8 +289,8 @@ final class OpenGlRenderer {
 
     void updateFramebufferSize(long window) {
         try (MemoryStack stack = stackPush()) {
-            var widthBuffer = stack.mallocInt(1);
-            var heightBuffer = stack.mallocInt(1);
+            IntBuffer widthBuffer = stack.mallocInt(1);
+            IntBuffer heightBuffer = stack.mallocInt(1);
             glfwGetFramebufferSize(window, widthBuffer, heightBuffer);
             framebufferWidth = Math.max(1, widthBuffer.get(0));
             framebufferHeight = Math.max(1, heightBuffer.get(0));
@@ -315,56 +318,99 @@ final class OpenGlRenderer {
             return -1;
         }
         float uiScale = Math.max(1.0f, getUiScale());
-        if (isPointInsideSettingsSlider(cursorX, cursorY, optionsRenderDistanceSliderY(uiScale), uiScale)) {
+        if (isPointInsideSettingsSlider(cursorX, cursorY, 0, optionsRenderDistanceSliderY(uiScale), uiScale)) {
             return 0;
         }
-        if (isPointInsideSettingsSlider(cursorX, cursorY, optionsFovSliderY(uiScale), uiScale)) {
+        if (isPointInsideSettingsSlider(cursorX, cursorY, 1, optionsFovSliderY(uiScale), uiScale)) {
             return 1;
         }
-        if (isPointInsideSettingsSlider(cursorX, cursorY, optionsInventoryUiSliderY(uiScale), uiScale)) {
+        if (isPointInsideSettingsSlider(cursorX, cursorY, 2, optionsBrightnessSliderY(uiScale), uiScale)) {
             return 2;
+        }
+        if (isPointInsideSettingsSlider(cursorX, cursorY, 3, optionsVolumeSliderY(uiScale), uiScale)) {
+            return 3;
+        }
+        if (isPointInsideSettingsSlider(cursorX, cursorY, 4, optionsFpsSliderY(uiScale), uiScale)) {
+            return 4;
+        }
+        if (isPointInsideSettingsSlider(cursorX, cursorY, 5, optionsInventoryUiSliderY(uiScale), uiScale)) {
+            return 5;
         }
         return -1;
     }
 
-    double sliderPercentAt(double cursorX) {
+    double sliderPercentAt(double cursorX, int sliderIndex) {
         float uiScale = Math.max(1.0f, getUiScale());
-        float sliderWidth = 320.0f * uiScale;
-        float sliderX = framebufferWidth * 0.5f - sliderWidth * 0.5f;
+        float sliderWidth = optionsControlWidth(uiScale);
+        float sliderX = optionsControlX(sliderIndex, uiScale);
         return clamp((cursorX - sliderX) / sliderWidth, 0.0, 1.0);
     }
 
-    private boolean isPointInsideSettingsSlider(double cursorX, double cursorY, float y, float uiScale) {
-        float sliderWidth = 320.0f * uiScale;
-        float sliderX = framebufferWidth * 0.5f - sliderWidth * 0.5f;
+    private boolean isPointInsideSettingsSlider(double cursorX, double cursorY, int optionIndex, float y, float uiScale) {
+        float sliderWidth = optionsControlWidth(uiScale);
+        float sliderX = optionsControlX(optionIndex, uiScale);
         return cursorX >= sliderX - 10.0f * uiScale
             && cursorX <= sliderX + sliderWidth + 10.0f * uiScale
             && cursorY >= y - 16.0f * uiScale
             && cursorY <= y + 22.0f * uiScale;
     }
 
+    private float optionsControlWidth(float uiScale) {
+        return Math.min(360.0f * uiScale, Math.max(220.0f * uiScale, (framebufferWidth - 180.0f * uiScale) * 0.5f));
+    }
+
+    private float optionsColumnGap(float uiScale) {
+        return 44.0f * uiScale;
+    }
+
+    private float optionsControlX(int optionIndex, float uiScale) {
+        float controlWidth = optionsControlWidth(uiScale);
+        float gap = optionsColumnGap(uiScale);
+        boolean rightColumn = optionIndex >= 3 && optionIndex <= 7 && optionIndex != 6;
+        if (rightColumn) {
+            return framebufferWidth * 0.5f + gap * 0.5f;
+        }
+        return framebufferWidth * 0.5f - controlWidth - gap * 0.5f;
+    }
+
+    private float optionsRowY(int row, float uiScale) {
+        return Math.max(110.0f * uiScale, framebufferHeight * 0.18f) + row * 76.0f * uiScale;
+    }
+
     private float optionsRenderDistanceSliderY(float uiScale) {
-        return Math.max(112.0f * uiScale, framebufferHeight * 0.20f);
+        return optionsRowY(0, uiScale);
     }
 
     private float optionsFovSliderY(float uiScale) {
-        return optionsRenderDistanceSliderY(uiScale) + 70.0f * uiScale;
+        return optionsRowY(1, uiScale);
+    }
+
+    private float optionsBrightnessSliderY(float uiScale) {
+        return optionsRowY(2, uiScale);
+    }
+
+    private float optionsVolumeSliderY(float uiScale) {
+        return optionsRowY(0, uiScale);
+    }
+
+    private float optionsFpsSliderY(float uiScale) {
+        return optionsRowY(1, uiScale);
     }
 
     private float optionsInventoryUiSliderY(float uiScale) {
-        return optionsRenderDistanceSliderY(uiScale) + 140.0f * uiScale;
+        return optionsRowY(2, uiScale);
     }
 
     private float optionsGraphicsButtonY(float uiScale) {
-        return optionsRenderDistanceSliderY(uiScale) + 210.0f * uiScale;
+        return optionsRowY(3, uiScale);
     }
 
     private float optionsLanguageButtonY(float uiScale) {
-        return optionsRenderDistanceSliderY(uiScale) + 270.0f * uiScale;
+        return optionsRowY(3, uiScale);
     }
 
     private float optionsBackButtonY(float uiScale) {
-        return optionsRenderDistanceSliderY(uiScale) + 330.0f * uiScale;
+        return optionsRowY(4, uiScale);
     }
 
     int getDeathOptionAt(double cursorX, double cursorY) {
@@ -374,19 +420,21 @@ final class OpenGlRenderer {
     int getMainMenuOptionAt(double cursorX, double cursorY, int menuScreen) {
         float uiScale = Math.max(1.0f, getUiScale());
         if (menuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
-            float actionWidth = 280.0f * uiScale;
+            float actionWidth = optionsControlWidth(uiScale);
             float actionHeight = 46.0f * uiScale;
-            float x = framebufferWidth * 0.5f - actionWidth * 0.5f;
+            float graphicsX = optionsControlX(6, uiScale);
             float graphicsY = optionsGraphicsButtonY(uiScale);
-            if (cursorX >= x && cursorX <= x + actionWidth && cursorY >= graphicsY && cursorY <= graphicsY + actionHeight) {
-                return 3;
+            if (cursorX >= graphicsX && cursorX <= graphicsX + actionWidth && cursorY >= graphicsY && cursorY <= graphicsY + actionHeight) {
+                return 6;
             }
+            float languageX = optionsControlX(7, uiScale);
             float languageY = optionsLanguageButtonY(uiScale);
-            if (cursorX >= x && cursorX <= x + actionWidth && cursorY >= languageY && cursorY <= languageY + actionHeight) {
-                return 4;
+            if (cursorX >= languageX && cursorX <= languageX + actionWidth && cursorY >= languageY && cursorY <= languageY + actionHeight) {
+                return 7;
             }
+            float x = framebufferWidth * 0.5f - actionWidth * 0.5f;
             float y = optionsBackButtonY(uiScale);
-            return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 5 : -1;
+            return cursorX >= x && cursorX <= x + actionWidth && cursorY >= y && cursorY <= y + actionHeight ? 8 : -1;
         }
         String[] actions = menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER ? GameConfig.singleplayerActions()
             : (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD ? GameConfig.createWorldActions()
@@ -473,7 +521,7 @@ final class OpenGlRenderer {
         float panelWidth = Math.min(720.0f * uiScale, framebufferWidth - 120.0f * uiScale);
         float x = framebufferWidth * 0.5f - panelWidth * 0.5f;
         float nameY = 126.0f * uiScale;
-        float seedY = 330.0f * uiScale;
+        float seedY = 386.0f * uiScale;
         float fieldHeight = 36.0f * uiScale;
         if (mouseX >= x && mouseX <= x + panelWidth && mouseY >= nameY && mouseY <= nameY + fieldHeight) {
             return 0;
@@ -490,12 +538,17 @@ final class OpenGlRenderer {
         float buttonHeight = 44.0f * uiScale;
         float gap = 18.0f * uiScale;
         float startX = framebufferWidth * 0.5f - (buttonWidth * 2.0f + gap) * 0.5f;
-        float y = 224.0f * uiScale;
+        float firstRowY = 224.0f * uiScale;
         for (int i = 0; i < 2; i++) {
             float x = startX + i * (buttonWidth + gap);
-            if (mouseX >= x && mouseX <= x + buttonWidth && mouseY >= y && mouseY <= y + buttonHeight) {
+            if (mouseX >= x && mouseX <= x + buttonWidth && mouseY >= firstRowY && mouseY <= firstRowY + buttonHeight) {
                 return i;
             }
+        }
+        float secondRowY = 282.0f * uiScale;
+        float secondRowWidth = buttonWidth * 2.0f + gap;
+        if (mouseX >= startX && mouseX <= startX + secondRowWidth && mouseY >= secondRowY && mouseY <= secondRowY + buttonHeight) {
+            return 2;
         }
         return -1;
     }
@@ -634,7 +687,7 @@ final class OpenGlRenderer {
         }
     }
 
-    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, double partialTicks, ChatSystem chat) {
+    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, double partialTicks, ChatSystem chat) {
         if (!resourcesReady || framebufferWidth <= 0 || framebufferHeight <= 0) {
             return;
         }
@@ -649,7 +702,7 @@ final class OpenGlRenderer {
         glDisable(GL_CULL_FACE);
 
         updateCameraEffects(sprinting, fovDegrees, deltaTime);
-        boolean menuPanorama = mainMenuActive && loadedWorldName != null && !loadedWorldName.isBlank();
+        boolean menuPanorama = mainMenuActive && loadedWorldName != null && !loadedWorldName.trim().isEmpty();
         setupProjection();
         if (menuPanorama) {
             setupMenuPanoramaCamera(player, deltaTime);
@@ -682,7 +735,7 @@ final class OpenGlRenderer {
             renderBreakingOverlay(breakingBlock, breakingProgress);
             renderWorldTint(player);
         }
-        renderOverlay(player, inventory, hoveredBlock, paused, inventoryOpen, inventoryScreenMode, chestContainer, furnace, deathScreenActive, deathSelection, mainMenuActive, mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, activeMenuTextField, renameWorldName, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, showDebugInfo, hideHud, pauseSelection, gameModeSwitcherActive, gameModeSelection, selectedBlock, selectedSlot, creativeTab, creativeScrollOffset, creativeMode, thirdPersonView, renderDistanceChunks, fovDegrees, timeOfDay, mouseX, mouseY, chat);
+        renderOverlay(player, inventory, hoveredBlock, paused, inventoryOpen, inventoryScreenMode, chestContainer, furnace, deathScreenActive, deathSelection, mainMenuActive, mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset, activeMenuTextField, renameWorldName, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, showDebugInfo, hideHud, pauseSelection, gameModeSwitcherActive, gameModeSelection, selectedBlock, selectedSlot, creativeTab, creativeScrollOffset, creativeMode, thirdPersonView, renderDistanceChunks, fovDegrees, timeOfDay, mouseX, mouseY, chat);
         logOpenGlError("render");
     }
 
@@ -745,6 +798,8 @@ final class OpenGlRenderer {
         chunkShaderFancyGraphicsLocation = glGetUniformLocation(program, "u_FancyGraphics");
         chunkShaderFogColorLocation = glGetUniformLocation(program, "uFogColor");
         chunkShaderFogDensityLocation = glGetUniformLocation(program, "uFogDensity");
+        chunkShaderBrightnessLocation = glGetUniformLocation(program, "uBrightness");
+        chunkShaderRevealLocation = glGetUniformLocation(program, "uReveal");
         return program;
     }
 
@@ -762,7 +817,7 @@ final class OpenGlRenderer {
 
     private String readShaderSource(String filename) {
         try {
-            return Files.readString(Path.of(filename), StandardCharsets.UTF_8);
+            return new String(Files.readAllBytes(Paths.get(filename)), StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to read shader " + filename, exception);
         }
@@ -779,7 +834,7 @@ final class OpenGlRenderer {
         float skyBlue = clampColor(0.12f + daylight * 0.80f);
 
         currentDaylight = daylight;
-        currentSceneBrightness = 0.55f + currentDaylight * 0.45f;
+        currentSceneBrightness = (0.55f + currentDaylight * 0.45f) * Settings.brightnessMultiplier();
         currentSkyRed = skyRed;
         currentSkyGreen = skyGreen;
         currentSkyBlue = skyBlue;
@@ -985,22 +1040,18 @@ final class OpenGlRenderer {
         }
 
         bindChunkShader(transparentPass);
-        for (Chunk chunk : loadedChunkSnapshot) {
-            int chunkX = chunk.chunkX;
-            int chunkY = chunk.chunkY;
-            int chunkZ = chunk.chunkZ;
-            if (chunk.isEmpty()) {
+        long nowNanos = System.nanoTime();
+        for (ChunkMesh mesh : chunkMeshes.values()) {
+            if (mesh == null || !mesh.resident) {
                 continue;
             }
+            int chunkX = mesh.chunkX;
+            int chunkY = mesh.chunkY;
+            int chunkZ = mesh.chunkZ;
             if (Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ)) > chunkRenderRadius) {
                 continue;
             }
             if (!shouldRenderChunk(playerChunkX, playerChunkZ, chunkRenderRadius, chunkX, chunkY, chunkZ)) {
-                continue;
-            }
-
-            ChunkMesh mesh = chunkMeshes.get(chunkKey(chunkX, chunkY, chunkZ));
-            if (mesh == null || !mesh.resident) {
                 continue;
             }
             int vertexCount = transparentPass ? mesh.transparentVertexCount : mesh.opaqueVertexCount;
@@ -1010,17 +1061,21 @@ final class OpenGlRenderer {
                 if (transparentPass) {
                     transparentMeshes.add(mesh);
                 } else {
+                    setChunkReveal(mesh, nowNanos);
                     drawChunkBuffer(mesh, vaoId, vboId, vertexCount);
                 }
             }
         }
 
         if (transparentPass) {
-            transparentMeshes.sort((a, b) -> Double.compare(
-                chunkDistanceSquaredToCamera(b),
-                chunkDistanceSquaredToCamera(a)
-            ));
+            if (transparentMeshes.size() > 1) {
+                transparentMeshes.sort((a, b) -> Double.compare(
+                    chunkDistanceSquaredToCamera(b),
+                    chunkDistanceSquaredToCamera(a)
+                ));
+            }
             for (ChunkMesh mesh : transparentMeshes) {
+                setChunkReveal(mesh, nowNanos);
                 drawChunkBuffer(mesh, mesh.transparentVaoId, mesh.transparentVboId, mesh.transparentVertexCount);
             }
         }
@@ -1052,7 +1107,21 @@ final class OpenGlRenderer {
         glUniform3f(chunkShaderCameraPositionLocation, (float) renderCameraX, (float) renderCameraY, (float) renderCameraZ);
         glUniform3f(chunkShaderFogColorLocation, currentSkyRed, currentSkyGreen, currentSkyBlue);
         float visibleBlocks = Math.max(GameConfig.CHUNK_SIZE * GameConfig.MIN_RENDER_DISTANCE, currentRenderDistanceChunks * GameConfig.CHUNK_SIZE);
-        glUniform1f(chunkShaderFogDensityLocation, 1.25f / visibleBlocks);
+        glUniform1f(chunkShaderFogDensityLocation, 1.75f / visibleBlocks);
+        glUniform1f(chunkShaderBrightnessLocation, Settings.brightnessMultiplier());
+        glUniform1f(chunkShaderRevealLocation, 1.0f);
+    }
+
+    private void setChunkReveal(ChunkMesh mesh, long nowNanos) {
+        if (chunkShaderRevealLocation < 0) {
+            return;
+        }
+        if (mesh.revealStartNanos <= 0L) {
+            glUniform1f(chunkShaderRevealLocation, 1.0f);
+            return;
+        }
+        float reveal = (float) clamp((nowNanos - mesh.revealStartNanos) / 650_000_000.0, 0.0, 1.0);
+        glUniform1f(chunkShaderRevealLocation, reveal);
     }
 
     private void updateViewProjectionMatrixUniform() {
@@ -1123,23 +1192,23 @@ final class OpenGlRenderer {
         float red = clampColor(0.05f + daylight * 0.50f + night * 0.03f);
         float green = clampColor(0.07f + daylight * 0.64f + night * 0.04f);
         float blue = clampColor(0.11f + daylight * 0.82f + night * 0.10f);
-        FloatBuffer fogColor = BufferUtils.createFloatBuffer(4);
-        fogColor.put(red).put(green).put(blue).put(1.0f).flip();
+        fogColorScratch.clear();
+        fogColorScratch.put(red).put(green).put(blue).put(1.0f).flip();
 
         float visibleBlocks = Math.max(GameConfig.CHUNK_SIZE * GameConfig.MIN_RENDER_DISTANCE, renderDistanceChunks * GameConfig.CHUNK_SIZE);
         glEnable(GL_FOG);
         glFogi(GL_FOG_MODE, GL_LINEAR);
-        glFogfv(GL_FOG_COLOR, fogColor);
-        glFogf(GL_FOG_START, visibleBlocks * 0.52f);
-        glFogf(GL_FOG_END, visibleBlocks * 0.94f);
+        glFogfv(GL_FOG_COLOR, fogColorScratch);
+        glFogf(GL_FOG_START, visibleBlocks * 0.36f);
+        glFogf(GL_FOG_END, visibleBlocks * 0.86f);
     }
 
-    private boolean shouldRenderZombie(PlayerState player, Zombie zombie) {
+    private boolean shouldRenderMob(PlayerState player, MobEntity mob) {
         return isSphereVisible(
             player,
-            zombie.x,
-            zombie.y + GameConfig.ZOMBIE_HEIGHT * 0.5,
-            zombie.z,
+            mob.x,
+            mob.y + GameConfig.ZOMBIE_HEIGHT * 0.5,
+            mob.z,
             0.9,
             Math.min(GameConfig.MAX_RENDER_DISTANCE, GameConfig.ZOMBIE_RENDER_DISTANCE)
         );
@@ -1290,7 +1359,11 @@ final class OpenGlRenderer {
                         || block == GameConfig.OAK_FENCE
                         || block == GameConfig.OAK_FENCE_GATE
                         || block == GameConfig.OAK_LEAVES
-                        || block == GameConfig.PINE_LEAVES;
+                        || block == GameConfig.PINE_LEAVES
+                        || block == GameConfig.BIRCH_LEAVES
+                        || block == GameConfig.OAK_DOOR
+                        || block == GameConfig.RED_BED
+                        || block == GameConfig.TORCH;
                     IntVertexBuilder targetBuilder = (!stableOpaqueBlock && world.isTransparentBlock(block)) ? transparentBuilder : opaqueBuilder;
                     if (block == GameConfig.OAK_DOOR) {
                         emitDoorBlock(targetBuilder, localX, localY, localZ, x, y, z, blockState);
@@ -1306,6 +1379,10 @@ final class OpenGlRenderer {
                     }
                     if (block == GameConfig.RED_BED) {
                         emitBedBlock(targetBuilder, localX, localY, localZ, x, y, z, blockState);
+                        continue;
+                    }
+                    if (world.isStairBlock(block)) {
+                        emitStairBlock(targetBuilder, localX, localY, localZ, x, y, z, block, blockState);
                         continue;
                     }
                     if (world.isCrossPlant(block)) {
@@ -1405,7 +1482,7 @@ final class OpenGlRenderer {
     private void emitOreFaceOverlay(IntVertexBuilder builder, double minX, double minY, double minZ,
                                     double maxX, double maxY, double maxZ, Face face, byte block, float ambientShade) {
         int color = oreAccentColorPacked(block, face.brightness * ambientShade);
-        double lift = 0.004;
+        double lift = 0.018;
         appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, 0.18, 0.20, 0.20, lift, color);
         appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, 0.56, 0.16, 0.16, lift, color);
         appendOrePatch(builder, minX, minY, minZ, maxX, maxY, maxZ, face, 0.34, 0.48, 0.24, lift, color);
@@ -1481,10 +1558,54 @@ final class OpenGlRenderer {
 
     private void emitBedBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, BlockState state) {
         float ambient = world.getAmbientShade(worldX, worldY, worldZ);
+        int facing = Blocks.bedFacing(state);
+        boolean head = Blocks.isBedHead(state);
+        boolean metadataFootPointsAtHead = !head
+            && world.getBlock(worldX + facingDx(facing), worldY, worldZ + facingDz(facing)) == GameConfig.RED_BED
+            && Blocks.isBedHead(world.getBlockState(worldX + facingDx(facing), worldY, worldZ + facingDz(facing)));
+        boolean renderPillow = head || (state != null && state.data == 0 && !metadataFootPointsAtHead);
+        boolean eastWest = facing == 1 || facing == 3;
         int blanket = packColor(0.78f * ambient, 0.10f * ambient, 0.10f * ambient, 1.0f);
+        int frame = packColor(0.46f * ambient, 0.27f * ambient, 0.11f * ambient, 1.0f);
         int pillow = packColor(0.92f, 0.90f, 0.82f, 1.0f);
-        appendCuboid(builder, x + 0.04, y + 0.06, z + 0.04, x + 0.96, y + 0.52, z + 0.96, blanket);
-        appendCuboid(builder, x + 0.16, y + 0.54, z + 0.16, x + 0.84, y + 0.66, z + 0.46, pillow);
+
+        appendCuboid(builder, x + 0.05, y + 0.10, z + 0.05, x + 0.95, y + 0.32, z + 0.95, frame);
+        appendCuboid(builder, x + 0.04, y + 0.30, z + 0.04, x + 0.96, y + 0.58, z + 0.96, blanket);
+        appendBedLegs(builder, x, y, z, frame, eastWest);
+        if (renderPillow) {
+            appendBedPillow(builder, x, y, z, facing, pillow);
+        }
+    }
+
+    private void appendBedPillow(IntVertexBuilder builder, int x, int y, int z, int facing, int color) {
+        switch (facing) {
+            case 1:
+                appendCuboid(builder, x + 0.60, y + 0.59, z + 0.16, x + 0.92, y + 0.72, z + 0.84, color);
+                break;
+            case 2:
+                appendCuboid(builder, x + 0.16, y + 0.59, z + 0.60, x + 0.84, y + 0.72, z + 0.92, color);
+                break;
+            case 3:
+                appendCuboid(builder, x + 0.08, y + 0.59, z + 0.16, x + 0.40, y + 0.72, z + 0.84, color);
+                break;
+            default:
+                appendCuboid(builder, x + 0.16, y + 0.59, z + 0.08, x + 0.84, y + 0.72, z + 0.40, color);
+                break;
+        }
+    }
+
+    private void appendBedLegs(IntVertexBuilder builder, int x, int y, int z, int color, boolean eastWest) {
+        if (eastWest) {
+            appendCuboid(builder, x + 0.10, y, z + 0.12, x + 0.24, y + 0.30, z + 0.26, color);
+            appendCuboid(builder, x + 0.10, y, z + 0.74, x + 0.24, y + 0.30, z + 0.88, color);
+            appendCuboid(builder, x + 0.76, y, z + 0.12, x + 0.90, y + 0.30, z + 0.26, color);
+            appendCuboid(builder, x + 0.76, y, z + 0.74, x + 0.90, y + 0.30, z + 0.88, color);
+        } else {
+            appendCuboid(builder, x + 0.12, y, z + 0.10, x + 0.26, y + 0.30, z + 0.24, color);
+            appendCuboid(builder, x + 0.74, y, z + 0.10, x + 0.88, y + 0.30, z + 0.24, color);
+            appendCuboid(builder, x + 0.12, y, z + 0.76, x + 0.26, y + 0.30, z + 0.90, color);
+            appendCuboid(builder, x + 0.74, y, z + 0.76, x + 0.88, y + 0.30, z + 0.90, color);
+        }
     }
 
     private void emitFenceBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ) {
@@ -1541,6 +1662,27 @@ final class OpenGlRenderer {
             }
             appendCuboid(builder, x + 0.42, y + 0.58, z + 0.20, x + 0.58, y + 0.76, z + 0.80, color);
             appendCuboid(builder, x + 0.42, y + 0.26, z + 0.20, x + 0.58, y + 0.44, z + 0.80, color);
+        }
+    }
+
+    private void emitStairBlock(IntVertexBuilder builder, int x, int y, int z, int worldX, int worldY, int worldZ, byte block, BlockState state) {
+        float ambient = world.getAmbientShade(worldX, worldY, worldZ);
+        int color = colorForFace(block, Face.TOP, ambient, worldX, worldY, worldZ);
+        int facing = Blocks.stairFacing(state);
+        appendCuboid(builder, x, y, z, x + 1.0, y + 0.50, z + 1.0, color);
+        switch (facing) {
+            case 1:
+                appendCuboid(builder, x + 0.50, y + 0.50, z, x + 1.0, y + 1.0, z + 1.0, color);
+                break;
+            case 2:
+                appendCuboid(builder, x, y + 0.50, z + 0.50, x + 1.0, y + 1.0, z + 1.0, color);
+                break;
+            case 3:
+                appendCuboid(builder, x, y + 0.50, z, x + 0.50, y + 1.0, z + 1.0, color);
+                break;
+            default:
+                appendCuboid(builder, x, y + 0.50, z, x + 1.0, y + 1.0, z + 0.50, color);
+                break;
         }
     }
 
@@ -1872,7 +2014,7 @@ final class OpenGlRenderer {
             blue = lerp(blue, 0.24f, taiga);
         }
         float brightness = face.brightness * ambientShade;
-        if (block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES) {
+        if (block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES) {
             brightness = Math.max(0.82f, face.brightness * (0.90f + ambientShade * 0.10f));
         } else if (block == GameConfig.SNOW_LAYER) {
             brightness *= 0.88f;
@@ -1928,10 +2070,18 @@ final class OpenGlRenderer {
                 return face == Face.TOP || face == Face.BOTTOM ? packColor(0.58f, 0.48f, 0.30f, 1.0f) : packColor(0.38f, 0.27f, 0.16f, 1.0f);
             case GameConfig.PINE_LEAVES:
                 return packColor(0.14f, 0.38f, 0.18f, 1.0f);
+            case GameConfig.BIRCH_LOG:
+                return face == Face.TOP || face == Face.BOTTOM ? packColor(0.78f, 0.70f, 0.50f, 1.0f) : packColor(0.78f, 0.76f, 0.68f, 1.0f);
+            case GameConfig.BIRCH_LEAVES:
+                return packColor(0.44f, 0.68f, 0.25f, 1.0f);
+            case GameConfig.SNOW_BLOCK:
+                return packColor(0.86f, 0.91f, 0.95f, 1.0f);
             case GameConfig.SNOW_LAYER:
                 return packColor(0.78f, 0.86f, 0.92f, 1.0f);
             case GameConfig.CACTUS:
                 return face == Face.TOP || face == Face.BOTTOM ? packColor(0.38f, 0.62f, 0.25f, 1.0f) : packColor(0.22f, 0.54f, 0.20f, 1.0f);
+            case GameConfig.DEAD_BUSH:
+                return packColor(0.46f, 0.30f, 0.16f, 1.0f);
             case GameConfig.TALL_GRASS:
                 return packColor(0.42f, 0.77f, 0.31f, 1.0f);
             case GameConfig.SEAGRASS:
@@ -1941,7 +2091,18 @@ final class OpenGlRenderer {
             case GameConfig.YELLOW_FLOWER:
                 return packColor(0.95f, 0.82f, 0.20f, 1.0f);
             case InventoryItems.OAK_PLANKS:
+            case GameConfig.OAK_STAIRS:
                 return packColor(0.73f, 0.58f, 0.34f, 1.0f);
+            case GameConfig.PINE_PLANKS:
+            case GameConfig.PINE_STAIRS:
+                return packColor(0.50f, 0.34f, 0.18f, 1.0f);
+            case GameConfig.BIRCH_PLANKS:
+            case GameConfig.BIRCH_STAIRS:
+                return packColor(0.82f, 0.72f, 0.46f, 1.0f);
+            case GameConfig.STONE_STAIRS:
+                return packColor(0.58f, 0.58f, 0.60f, 1.0f);
+            case GameConfig.COBBLESTONE_STAIRS:
+                return packColor(0.48f, 0.48f, 0.48f, 1.0f);
             case GameConfig.OAK_FENCE:
             case GameConfig.OAK_FENCE_GATE:
                 return packColor(0.56f, 0.38f, 0.20f, 1.0f);
@@ -2099,6 +2260,38 @@ final class OpenGlRenderer {
         meshBuildsReady.remove(meshKey);
     }
 
+    private void pruneDistantMeshBookkeeping(int playerChunkX, int playerChunkZ, int unloadChunkRadius) {
+        pruneMeshKeySet(dirtyChunkMeshes, playerChunkX, playerChunkZ, unloadChunkRadius);
+        pruneMeshKeySet(immediateChunkMeshes, playerChunkX, playerChunkZ, unloadChunkRadius);
+        pruneMeshKeyMap(meshBuildCooldownUntilNanos, playerChunkX, playerChunkZ, unloadChunkRadius);
+        pruneMeshKeyMap(meshBuildsReady, playerChunkX, playerChunkZ, unloadChunkRadius);
+    }
+
+    private void pruneMeshKeySet(HashSet<Long> keys, int playerChunkX, int playerChunkZ, int unloadChunkRadius) {
+        Iterator<Long> iterator = keys.iterator();
+        while (iterator.hasNext()) {
+            long key = iterator.next();
+            if (shouldPruneMeshKey(key, playerChunkX, playerChunkZ, unloadChunkRadius)) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private void pruneMeshKeyMap(ConcurrentHashMap<Long, ?> keys, int playerChunkX, int playerChunkZ, int unloadChunkRadius) {
+        for (Long key : keys.keySet()) {
+            if (shouldPruneMeshKey(key, playerChunkX, playerChunkZ, unloadChunkRadius)) {
+                keys.remove(key);
+            }
+        }
+    }
+
+    private boolean shouldPruneMeshKey(long key, int playerChunkX, int playerChunkZ, int unloadChunkRadius) {
+        int chunkX = chunkXFromKey(key);
+        int chunkZ = chunkZFromKey(key);
+        int horizontalDistance = Math.max(Math.abs(chunkX - playerChunkX), Math.abs(chunkZ - playerChunkZ));
+        return horizontalDistance > unloadChunkRadius || !world.isChunkLoaded(chunkX, chunkZ);
+    }
+
     private void deleteMeshBuffer(int vaoId, int vboId) {
         if (vaoId != 0) {
             deleteVertexArrayObject(vaoId);
@@ -2194,6 +2387,7 @@ final class OpenGlRenderer {
             }
             if (mesh == null) {
                 mesh = new ChunkMesh(result.chunkX, result.chunkY, result.chunkZ);
+                mesh.revealStartNanos = System.nanoTime();
                 chunkMeshes.put(result.meshKey, mesh);
             }
 
@@ -2283,6 +2477,7 @@ final class OpenGlRenderer {
             dropChunkMesh(meshKey);
         }
         staleMeshKeys.clear();
+        pruneDistantMeshBookkeeping(playerChunkX, playerChunkZ, unloadChunkRadius);
     }
 
     private void queueMeshBuildCandidate(MeshBuildCandidate candidate) {
@@ -2416,7 +2611,8 @@ final class OpenGlRenderer {
 
     private boolean isWavingFoliageFace(byte block, Face face) {
         return block == GameConfig.OAK_LEAVES
-            || block == GameConfig.PINE_LEAVES;
+            || block == GameConfig.PINE_LEAVES
+            || block == GameConfig.BIRCH_LEAVES;
     }
 
     private long greedyKey(BlockState state, int color, int ao) {
@@ -2555,25 +2751,25 @@ final class OpenGlRenderer {
             return MAX_IMMEDIATE_CHUNK_UPLOADS_PER_FRAME;
         }
         if (backlog > 4096) {
-            if (debugFps >= 55.0 || debugFps <= 0.0) {
+            if (debugFps >= 45.0 || debugFps <= 0.0) {
                 return MAX_BACKLOG_CHUNK_UPLOADS_PER_FRAME;
             }
-            return 1;
+            return debugFps >= 32.0 ? 12 : 4;
         }
         if (backlog > 1024) {
-            if (debugFps >= 55.0 || debugFps <= 0.0) {
-                return 3;
+            if (debugFps >= 45.0 || debugFps <= 0.0) {
+                return 18;
             }
-            return 1;
+            return debugFps >= 32.0 ? 10 : 4;
         }
         if (backlog > 512) {
-            return debugFps >= 45.0 || debugFps <= 0.0 ? 2 : 1;
+            return debugFps >= 45.0 || debugFps <= 0.0 ? 12 : 6;
         }
         if (debugFps >= 55.0 || debugFps <= 0.0) {
-            return 2;
+            return 6;
         }
         if (debugFps >= 45.0) {
-            return 1;
+            return 4;
         }
         return MAX_CHUNK_UPLOADS_PER_FRAME;
     }
@@ -2595,45 +2791,57 @@ final class OpenGlRenderer {
         return (packedX << 38) | (packedZ << 12) | packedY;
     }
 
+    private int chunkXFromKey(long key) {
+        return (int) (key >> 38);
+    }
+
+    private int chunkZFromKey(long key) {
+        int packed = (int) ((key >> 12) & 0x3FFFFFFL);
+        return packed >= 0x2000000 ? packed - 0x4000000 : packed;
+    }
+
     private int worldToChunk(int coordinate) {
         return Math.floorDiv(coordinate, GameConfig.CHUNK_SIZE);
     }
 
     private void renderZombies(PlayerState player) {
-        for (Zombie zombie : world.getZombies()) {
-            if (!shouldRenderZombie(player, zombie)) {
+        for (MobEntity mob : world.getMobs()) {
+            if (!shouldRenderMob(player, mob)) {
                 continue;
             }
             glPushMatrix();
             glTranslated(
-                interpolatedX(zombie) - renderCameraX,
-                interpolatedY(zombie) - renderCameraY,
-                interpolatedZ(zombie) - renderCameraZ
+                interpolatedX(mob) - renderCameraX,
+                interpolatedY(mob) - renderCameraY,
+                interpolatedZ(mob) - renderCameraZ
             );
-            glRotated(-Math.toDegrees(zombie.bodyYaw) - 90.0, 0.0, 1.0, 0.0);
+            glRotated(-Math.toDegrees(mob.bodyYaw) - 90.0, 0.0, 1.0, 0.0);
 
-            double armSwing = Math.sin(zombie.walkCycle) * 28.0;
-            double legSwing = Math.sin(zombie.walkCycle) * 34.0;
+            double armSwing = Math.sin(mob.walkCycle) * 28.0;
+            double legSwing = Math.sin(mob.walkCycle) * 34.0;
             double headTurn = Math.toDegrees(Math.atan2(
-                Math.sin(zombie.targetBodyYaw - zombie.bodyYaw),
-                Math.cos(zombie.targetBodyYaw - zombie.bodyYaw)
+                Math.sin(mob.targetBodyYaw - mob.bodyYaw),
+                Math.cos(mob.targetBodyYaw - mob.bodyYaw)
             ));
             headTurn = Math.max(-35.0, Math.min(35.0, headTurn));
-            float[] skinColor = mobSkinColor(zombie.kind);
-            float[] torsoColor = mobTorsoColor(zombie.kind);
-            float[] limbColor = mobLimbColor(zombie.kind);
-            float[] legColor = mobLegColor(zombie.kind);
-            boolean skeleton = zombie.kind == MobKind.SKELETON;
+            float[] skinColor = mobSkinColor(mob.kind);
+            float[] torsoColor = mobTorsoColor(mob.kind);
+            float[] limbColor = mobLimbColor(mob.kind);
+            float[] legColor = mobLegColor(mob.kind);
+            boolean skeleton = mob.kind == MobKind.SKELETON;
 
-            if (zombie.kind == MobKind.PIG || zombie.kind == MobKind.SHEEP || zombie.kind == MobKind.COW) {
-                renderQuadrupedMob(zombie, legSwing, headTurn, skinColor, torsoColor, legColor);
-            } else if (zombie.kind == MobKind.VILLAGER) {
+            if (mob.kind == MobKind.PIG || mob.kind == MobKind.SHEEP || mob.kind == MobKind.COW) {
+                if (mob.isBaby()) {
+                    glScalef(0.58f, 0.58f, 0.58f);
+                }
+                renderQuadrupedMob(mob, legSwing, headTurn, skinColor, torsoColor, legColor);
+            } else if (mob.kind == MobKind.VILLAGER) {
                 renderVillagerMob(armSwing, legSwing, headTurn, skinColor, torsoColor, limbColor, legColor);
             } else {
                 renderHumanoidMob(armSwing, legSwing, headTurn, skinColor, torsoColor, limbColor, legColor, skeleton);
             }
 
-            if (zombie.fireTimer > 0.0) {
+            if (mob.fireTimer > 0.0) {
                 drawCuboid(-0.30, 0.02, -0.30, 0.30, 1.65, 0.30, 1.0f, 0.34f, 0.06f);
             }
 
@@ -2707,30 +2915,30 @@ final class OpenGlRenderer {
         glPopMatrix();
     }
 
-    private void renderQuadrupedMob(Zombie zombie, double legSwing, double headTurn, float[] skinColor, float[] torsoColor, float[] legColor) {
-        double bodyMinY = zombie.kind == MobKind.SHEEP ? 0.56 : 0.52;
-        double bodyMaxY = zombie.kind == MobKind.SHEEP ? 1.18 : 1.08;
-        double bodyMinX = zombie.kind == MobKind.COW ? -0.36 : -0.31;
-        double bodyMaxX = zombie.kind == MobKind.COW ? 0.36 : 0.31;
-        double bodyMinZ = zombie.kind == MobKind.PIG ? -0.52 : -0.58;
-        double bodyMaxZ = zombie.kind == MobKind.PIG ? 0.42 : 0.48;
+    private void renderQuadrupedMob(MobEntity mob, double legSwing, double headTurn, float[] skinColor, float[] torsoColor, float[] legColor) {
+        double bodyMinY = mob.kind == MobKind.SHEEP ? 0.56 : 0.52;
+        double bodyMaxY = mob.kind == MobKind.SHEEP ? 1.18 : 1.08;
+        double bodyMinX = mob.kind == MobKind.COW ? -0.36 : -0.31;
+        double bodyMaxX = mob.kind == MobKind.COW ? 0.36 : 0.31;
+        double bodyMinZ = mob.kind == MobKind.PIG ? -0.52 : -0.58;
+        double bodyMaxZ = mob.kind == MobKind.PIG ? 0.42 : 0.48;
 
         drawCuboid(bodyMinX, bodyMinY, bodyMinZ, bodyMaxX, bodyMaxY, bodyMaxZ, torsoColor[0], torsoColor[1], torsoColor[2]);
-        if (zombie.kind == MobKind.SHEEP) {
+        if (mob.kind == MobKind.SHEEP) {
             drawCuboid(-0.40, 0.54, -0.62, 0.40, 1.23, 0.50, 0.95f, 0.95f, 0.92f);
         }
 
         glPushMatrix();
-        glTranslated(0.0, zombie.kind == MobKind.COW ? 0.98 : 0.94, zombie.kind == MobKind.PIG ? -0.66 : -0.72);
+        glTranslated(0.0, mob.kind == MobKind.COW ? 0.98 : 0.94, mob.kind == MobKind.PIG ? -0.66 : -0.72);
         glRotated(-headTurn * 0.75, 0.0, 1.0, 0.0);
-        if (zombie.kind == MobKind.PIG) {
+        if (mob.kind == MobKind.PIG) {
             drawCuboid(-0.22, -0.18, -0.20, 0.22, 0.18, 0.20, skinColor[0], skinColor[1], skinColor[2]);
             drawCuboid(-0.12, -0.08, -0.34, 0.12, 0.07, -0.19, 0.96f, 0.70f, 0.76f);
             drawCuboid(-0.11, -0.01, -0.35, -0.06, 0.04, -0.345, 0.54f, 0.22f, 0.28f);
             drawCuboid(0.06, -0.01, -0.35, 0.11, 0.04, -0.345, 0.54f, 0.22f, 0.28f);
-        } else if (zombie.kind == MobKind.SHEEP) {
-            drawCuboid(-0.19, -0.18, -0.18, 0.19, 0.18, 0.20, 0.25f, 0.23f, 0.20f);
+        } else if (mob.kind == MobKind.SHEEP) {
             drawCuboid(-0.23, -0.22, -0.22, 0.23, 0.22, 0.23, 0.94f, 0.94f, 0.90f);
+            drawCuboid(-0.15, -0.12, -0.31, 0.15, 0.12, -0.20, 0.25f, 0.23f, 0.20f);
         } else {
             drawCuboid(-0.23, -0.20, -0.22, 0.23, 0.20, 0.22, skinColor[0], skinColor[1], skinColor[2]);
             drawCuboid(-0.14, -0.09, -0.35, 0.14, 0.07, -0.18, 0.66f, 0.52f, 0.38f);
@@ -2739,7 +2947,7 @@ final class OpenGlRenderer {
             drawCuboid(-0.33, -0.10, -0.06, -0.21, 0.06, 0.10, 0.28f, 0.18f, 0.10f);
             drawCuboid(0.21, -0.10, -0.06, 0.33, 0.06, 0.10, 0.28f, 0.18f, 0.10f);
         }
-        renderQuadrupedEyes(zombie.kind);
+        renderQuadrupedEyes(mob.kind);
         glPopMatrix();
 
         renderQuadrupedLeg(-0.21, 0.58, -0.38, -legSwing, legColor);
@@ -2757,15 +2965,16 @@ final class OpenGlRenderer {
     }
 
     private void renderQuadrupedEyes(MobKind kind) {
-        double eyeMinY = kind == MobKind.SHEEP ? 0.025 : 0.020;
-        double eyeMaxY = kind == MobKind.SHEEP ? 0.075 : 0.085;
-        double eyeMinZ = kind == MobKind.PIG ? -0.215 : -0.235;
-        double eyeMaxZ = kind == MobKind.PIG ? -0.195 : -0.215;
-        double inner = kind == MobKind.SHEEP ? 0.050 : 0.060;
-        double outer = kind == MobKind.SHEEP ? 0.090 : 0.115;
-        float eye = kind == MobKind.SHEEP ? 0.10f : 0.02f;
-        drawCuboid(-outer, eyeMinY, eyeMinZ, -inner, eyeMaxY, eyeMaxZ, eye, eye, eye);
-        drawCuboid(inner, eyeMinY, eyeMinZ, outer, eyeMaxY, eyeMaxZ, eye, eye, eye);
+        if (kind == MobKind.SHEEP) {
+            drawCuboid(-0.115, 0.025, -0.325, -0.055, 0.085, -0.300, 0.03f, 0.03f, 0.03f);
+            drawCuboid(0.055, 0.025, -0.325, 0.115, 0.085, -0.300, 0.03f, 0.03f, 0.03f);
+        } else if (kind == MobKind.PIG) {
+            drawCuboid(-0.145, 0.045, -0.365, -0.085, 0.115, -0.338, 0.03f, 0.03f, 0.035f);
+            drawCuboid(0.085, 0.045, -0.365, 0.145, 0.115, -0.338, 0.03f, 0.03f, 0.035f);
+        } else {
+            drawCuboid(-0.155, 0.055, -0.375, -0.090, 0.130, -0.348, 0.025f, 0.025f, 0.02f);
+            drawCuboid(0.090, 0.055, -0.375, 0.155, 0.130, -0.348, 0.025f, 0.025f, 0.02f);
+        }
     }
 
     private float[] mobSkinColor(MobKind kind) {
@@ -3269,6 +3478,7 @@ final class OpenGlRenderer {
             case GameConfig.RED_FLOWER:
             case GameConfig.YELLOW_FLOWER:
             case GameConfig.SEAGRASS:
+            case GameConfig.DEAD_BUSH:
                 return new double[]{0.18, 0.0, 0.18, 0.82, 0.86, 0.82};
             case GameConfig.RAIL:
                 return new double[]{0.0, 0.0, 0.0, 1.0, 0.075, 1.0};
@@ -3385,7 +3595,7 @@ final class OpenGlRenderer {
         glEnd();
     }
 
-    private void renderOverlay(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, ChatSystem chat) {
+    private void renderOverlay(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, ChatSystem chat) {
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -3423,7 +3633,7 @@ final class OpenGlRenderer {
             renderChat(chat);
         }
         if (mainMenuActive) {
-            renderMainMenu(mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, activeMenuTextField, renameWorldName, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, renderDistanceChunks, fovDegrees);
+            renderMainMenu(mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset, activeMenuTextField, renameWorldName, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, renderDistanceChunks, fovDegrees);
         }
         if (deathScreenActive) {
             renderDeathScreen(deathSelection);
@@ -3545,7 +3755,7 @@ final class OpenGlRenderer {
     }
 
     private void drawHotbar(PlayerInventory inventory, int selectedSlot) {
-        float uiScale = getUiScale();
+        float uiScale = getHudInventoryScale();
         float slotSize = 31.0f * uiScale;
         float spacing = 0.0f;
         float totalWidth = slotSize * 9.0f + spacing * 8.0f;
@@ -3582,14 +3792,14 @@ final class OpenGlRenderer {
     }
 
     private void drawHealthBar(double health, PlayerInventory inventory) {
-        float uiScale = getUiScale();
+        float uiScale = getHudInventoryScale();
         float heartScale = 1.52f * uiScale;
         float spacing = 0.9f * uiScale;
         float slotSize = 31.0f * uiScale;
         float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f - hotbarWidth * 0.5f;
-        float y = framebufferHeight - 58.0f * uiScale;
+        float y = framebufferHeight - 44.0f * uiScale - 14.0f * getUiScale();
 
         for (int heart = 0; heart < 10; heart++) {
             double threshold = (heart + 1) * 2.0;
@@ -3605,14 +3815,14 @@ final class OpenGlRenderer {
             return;
         }
 
-        float uiScale = getUiScale();
+        float uiScale = getHudInventoryScale();
         float scale = 1.42f * uiScale;
         float spacing = 1.1f * uiScale;
         float slotSize = 31.0f * uiScale;
         float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f - hotbarWidth * 0.5f;
-        float y = framebufferHeight - 76.0f * uiScale;
+        float y = framebufferHeight - 44.0f * uiScale - 32.0f * getUiScale();
 
         for (int shield = 0; shield < 10; shield++) {
             int point = (shield + 1) * 2;
@@ -3623,14 +3833,14 @@ final class OpenGlRenderer {
     }
 
     private void drawHungerBar(double hunger) {
-        float uiScale = getUiScale();
+        float uiScale = getHudInventoryScale();
         float scale = 1.32f * uiScale;
         float spacing = 1.2f * uiScale;
         float slotSize = 31.0f * uiScale;
         float slotSpacing = 0.0f;
         float hotbarWidth = slotSize * 9.0f + slotSpacing * 8.0f;
         float startX = framebufferWidth * 0.5f + hotbarWidth * 0.5f - 10.0f * (scale * 7.0f + spacing);
-        float y = framebufferHeight - 58.0f * uiScale;
+        float y = framebufferHeight - 44.0f * uiScale - 14.0f * getUiScale();
         for (int food = 0; food < 10; food++) {
             double threshold = (food + 1) * 2.0;
             boolean filled = hunger >= threshold;
@@ -3863,14 +4073,15 @@ final class OpenGlRenderer {
         }
     }
 
-    private void drawSettingsSlider(float y, float uiScale, String label, int value, int min, int max, boolean selected) {
-        float sliderWidth = 320.0f * uiScale;
+    private void drawSettingsSlider(int optionIndex, float y, float uiScale, String label, int value, int min, int max, boolean selected) {
+        float sliderWidth = optionsControlWidth(uiScale);
         float sliderHeight = 8.0f * uiScale;
-        float x = framebufferWidth * 0.5f - sliderWidth * 0.5f;
+        float x = optionsControlX(optionIndex, uiScale);
         float knobT = (value - min) / (float) Math.max(1, max - min);
         float knobX = x + knobT * sliderWidth;
         String text = label + ": " + value;
-        drawCenteredShadowText(y - 12.0f * uiScale, uiScale * 0.85f, text, selected ? 1.0f : 0.86f, selected ? 0.94f : 0.86f, selected ? 0.68f : 0.86f);
+        float textScale = text.length() > 25 ? uiScale * 0.70f : uiScale * 0.78f;
+        drawShadowText(x + sliderWidth * 0.5f - measureTextWidth(text, textScale) * 0.5f, y - 12.0f * uiScale, textScale, text, selected ? 1.0f : 0.86f, selected ? 0.94f : 0.86f, selected ? 0.68f : 0.86f);
         drawRect(x, y, sliderWidth, sliderHeight, 0.20f, 0.22f, 0.24f, 0.95f);
         drawRect(x, y, sliderWidth * knobT, sliderHeight, 0.82f, 0.78f, 0.52f, 0.98f);
         drawRect(knobX - 5.0f * uiScale, y - 7.0f * uiScale, 10.0f * uiScale, 22.0f * uiScale, 0.92f, 0.90f, 0.72f, 0.98f);
@@ -3885,9 +4096,9 @@ final class OpenGlRenderer {
         drawCenteredMenuButtons(GameConfig.deathOptions(), deathSelection, 236.0f, 0.88f, 0.88f, 0.88f);
     }
 
-    private void renderMainMenu(int menuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int scrollOffset, String loadedWorldName, int renderDistanceChunks, int fovDegrees) {
+    private void renderMainMenu(int menuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, List<WorldInfo> worlds, int selectedWorldIndex, int scrollOffset, String loadedWorldName, int renderDistanceChunks, int fovDegrees) {
         float uiScale = Math.max(1.0f, getUiScale());
-        if (loadedWorldName != null && !loadedWorldName.isBlank()) {
+        if (loadedWorldName != null && !loadedWorldName.trim().isEmpty()) {
             drawRect(0.0f, 0.0f, framebufferWidth, framebufferHeight, 0.02f, 0.025f, 0.03f,
                 menuScreen == GameConfig.MENU_SCREEN_MAIN ? 0.36f : 0.58f);
         } else {
@@ -3897,7 +4108,7 @@ final class OpenGlRenderer {
         if (menuScreen == GameConfig.MENU_SCREEN_SINGLEPLAYER) {
             renderSingleplayerMenu(mainMenuSelection, mainMenuWorldActionsEnabled, worlds, selectedWorldIndex, scrollOffset);
         } else if (menuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
-            renderCreateWorldMenu(mainMenuSelection, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, activeMenuTextField);
+            renderCreateWorldMenu(mainMenuSelection, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset, activeMenuTextField);
         } else if (menuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
             renderRenameWorldMenu(mainMenuSelection, renameWorldName, activeMenuTextField);
         } else if (menuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
@@ -3990,22 +4201,27 @@ final class OpenGlRenderer {
         float uiScale = Math.max(1.0f, getUiScale());
         drawCenteredShadowText(Math.max(42.0f * uiScale, optionsRenderDistanceSliderY(uiScale) - 82.0f * uiScale), uiScale * 1.05f, Settings.isRussian() ? "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438" : "Options", 0.96f, 0.96f, 0.96f);
 
-        drawSettingsSlider(optionsRenderDistanceSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0414\u0430\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u043f\u0440\u043e\u0440\u0438\u0441\u043e\u0432\u043a\u0438" : "Render Distance", renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, mainMenuSelection == 0);
-        drawSettingsSlider(optionsFovSliderY(uiScale), uiScale, Settings.isRussian() ? "\u041f\u043e\u043b\u0435 \u0437\u0440\u0435\u043d\u0438\u044f" : "FOV", fovDegrees, 55, 100, mainMenuSelection == 1);
-        drawSettingsSlider(optionsInventoryUiSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0420\u0430\u0437\u043c\u0435\u0440 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u044f" : "Inventory UI Size", Settings.inventoryUiSize, 1, 4, mainMenuSelection == 2);
+        drawSettingsSlider(0, optionsRenderDistanceSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0414\u0430\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u043f\u0440\u043e\u0440\u0438\u0441\u043e\u0432\u043a\u0438" : "Render Distance", renderDistanceChunks, GameConfig.MIN_RENDER_DISTANCE, GameConfig.MAX_RENDER_DISTANCE_CHUNKS, mainMenuSelection == 0);
+        drawSettingsSlider(1, optionsFovSliderY(uiScale), uiScale, Settings.isRussian() ? "\u041f\u043e\u043b\u0435 \u0437\u0440\u0435\u043d\u0438\u044f" : "FOV", fovDegrees, 55, 100, mainMenuSelection == 1);
+        drawSettingsSlider(2, optionsBrightnessSliderY(uiScale), uiScale, Settings.isRussian() ? "\u042f\u0440\u043a\u043e\u0441\u0442\u044c" : "Brightness", Settings.brightness, 0, 100, mainMenuSelection == 2);
+        drawSettingsSlider(3, optionsVolumeSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0417\u0432\u0443\u043a" : "Sound", Settings.masterVolume, 0, 100, mainMenuSelection == 3);
+        drawSettingsSlider(4, optionsFpsSliderY(uiScale), uiScale, Settings.isRussian() ? "\u041b\u0438\u043c\u0438\u0442 FPS" : "FPS Limit", Settings.savedMaxFps, 30, 240, mainMenuSelection == 4);
+        drawSettingsSlider(5, optionsInventoryUiSliderY(uiScale), uiScale, Settings.isRussian() ? "\u0420\u0430\u0437\u043c\u0435\u0440 \u0438\u043d\u0432\u0435\u043d\u0442\u0430\u0440\u044f" : "Inventory UI Size", Settings.inventoryUiSize, 1, 4, mainMenuSelection == 5);
 
-        float actionWidth = 280.0f * uiScale;
+        float actionWidth = optionsControlWidth(uiScale);
         float actionHeight = 46.0f * uiScale;
-        float actionsX = framebufferWidth * 0.5f - actionWidth * 0.5f;
-        drawMenuButton(actionsX, optionsGraphicsButtonY(uiScale), actionWidth, actionHeight,
+        float graphicsX = optionsControlX(6, uiScale);
+        drawMenuButton(graphicsX, optionsGraphicsButtonY(uiScale), actionWidth, actionHeight,
             (Settings.isRussian() ? "\u0413\u0440\u0430\u0444\u0438\u043a\u0430: " : "Graphics: ") + (Settings.goodGraphics() ? (Settings.isRussian() ? "\u0425\u043e\u0440\u043e\u0448\u043e" : "Fancy") : (Settings.isRussian() ? "\u0411\u044b\u0441\u0442\u0440\u043e" : "Fast")),
-            mainMenuSelection == 3, true, uiScale * 0.80f);
-        drawMenuButton(actionsX, optionsLanguageButtonY(uiScale), actionWidth, actionHeight,
+            mainMenuSelection == 6, true, uiScale * 0.80f);
+        float languageX = optionsControlX(7, uiScale);
+        drawMenuButton(languageX, optionsLanguageButtonY(uiScale), actionWidth, actionHeight,
             (Settings.isRussian() ? "\u042f\u0437\u044b\u043a: \u0420\u0443\u0441\u0441\u043a\u0438\u0439" : "Language: English"),
-            mainMenuSelection == 4, true, uiScale * 0.80f);
+            mainMenuSelection == 7, true, uiScale * 0.80f);
 
+        float actionsX = framebufferWidth * 0.5f - actionWidth * 0.5f;
         float boxY = optionsBackButtonY(uiScale);
-        boolean selected = mainMenuSelection == 5;
+        boolean selected = mainMenuSelection == 8;
         drawRect(actionsX, boxY, actionWidth, actionHeight,
             selected ? 0.86f : 0.58f,
             selected ? 0.82f : 0.58f,
@@ -4015,7 +4231,7 @@ final class OpenGlRenderer {
         String backLabel = Settings.isRussian() ? "\u041d\u0430\u0437\u0430\u0434" : "Back";
         drawText(actionsX + actionWidth * 0.5f - measureTextWidth(backLabel, uiScale * 0.9f) * 0.5f, boxY + 29.0f * uiScale, uiScale * 0.9f, backLabel, 0.10f, 0.10f, 0.12f);
     }
-    private void renderCreateWorldMenu(int mainMenuSelection, String worldName, String seedText, int gameMode, int difficulty, int activeTextField) {
+    private void renderCreateWorldMenu(int mainMenuSelection, String worldName, String seedText, int gameMode, int difficulty, int terrainPreset, int activeTextField) {
         float uiScale = Math.max(1.0f, getUiScale());
         drawCenteredShadowText(46.0f * uiScale, uiScale * 1.0f, Settings.isRussian() ? "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043d\u043e\u0432\u044b\u0439 \u043c\u0438\u0440" : "Create New World", 0.96f, 0.96f, 0.96f);
 
@@ -4030,11 +4246,14 @@ final class OpenGlRenderer {
         float startX = framebufferWidth * 0.5f - (buttonWidth * 2.0f + gap) * 0.5f;
         drawMenuButton(startX, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "\u0420\u0435\u0436\u0438\u043c: " : "Game Mode: ") + gameModeName(gameMode), false, true, uiScale * 0.80f);
         drawMenuButton(startX + buttonWidth + gap, 224.0f * uiScale, buttonWidth, buttonHeight, (Settings.isRussian() ? "\u0421\u043b\u043e\u0436\u043d\u043e\u0441\u0442\u044c: " : "Difficulty: ") + GameConfig.difficultyOptions()[Math.max(0, Math.min(difficulty, GameConfig.difficultyOptions().length - 1))], false, true, uiScale * 0.80f);
-        drawShadowText(startX, 286.0f * uiScale, uiScale * 0.62f, gameModeHelp(gameMode), 0.70f, 0.72f, 0.76f);
+        float terrainButtonWidth = buttonWidth * 2.0f + gap;
+        int terrainIndex = Math.max(0, Math.min(terrainPreset, GameConfig.terrainPresetOptions().length - 1));
+        drawMenuButton(startX, 282.0f * uiScale, terrainButtonWidth, buttonHeight, (Settings.isRussian() ? "\u0422\u0438\u043f \u043c\u0438\u0440\u0430: " : "World Type: ") + GameConfig.terrainPresetOptions()[terrainIndex], false, true, uiScale * 0.80f);
+        drawShadowText(startX, 340.0f * uiScale, uiScale * 0.62f, gameModeHelp(gameMode), 0.70f, 0.72f, 0.76f);
 
-        drawShadowText(panelX, 308.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Seed \u0433\u0435\u043d\u0435\u0440\u0430\u0442\u043e\u0440\u0430 \u043c\u0438\u0440\u0430" : "Seed for the World Generator", 0.82f, 0.82f, 0.82f);
-        drawTextField(panelX, 330.0f * uiScale, panelWidth, 36.0f * uiScale, seedText, activeTextField == 1);
-        drawShadowText(panelX, 382.0f * uiScale, uiScale * 0.66f, Settings.isRussian() ? "\u041e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u043f\u0443\u0441\u0442\u044b\u043c \u0434\u043b\u044f \u0441\u043b\u0443\u0447\u0430\u0439\u043d\u043e\u0433\u043e seed" : "Leave blank for a random seed", 0.72f, 0.72f, 0.74f);
+        drawShadowText(panelX, 364.0f * uiScale, uiScale * 0.78f, Settings.isRussian() ? "Seed \u0433\u0435\u043d\u0435\u0440\u0430\u0442\u043e\u0440\u0430 \u043c\u0438\u0440\u0430" : "Seed for the World Generator", 0.82f, 0.82f, 0.82f);
+        drawTextField(panelX, 386.0f * uiScale, panelWidth, 36.0f * uiScale, seedText, activeTextField == 1);
+        drawShadowText(panelX, 438.0f * uiScale, uiScale * 0.66f, Settings.isRussian() ? "\u041e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u043f\u0443\u0441\u0442\u044b\u043c \u0434\u043b\u044f \u0441\u043b\u0443\u0447\u0430\u0439\u043d\u043e\u0433\u043e seed" : "Leave blank for a random seed", 0.72f, 0.72f, 0.74f);
 
         drawBottomButtons(GameConfig.createWorldActions(), mainMenuSelection, 240.0f * uiScale, 46.0f * uiScale, uiScale);
     }
@@ -5034,6 +5253,14 @@ final class OpenGlRenderer {
                     : new float[]{0.38f, 0.27f, 0.16f};
             case GameConfig.PINE_LEAVES:
                 return new float[]{0.14f, 0.38f, 0.18f};
+            case GameConfig.BIRCH_LOG:
+                return face == Face.TOP || face == Face.BOTTOM
+                    ? new float[]{0.78f, 0.70f, 0.50f}
+                    : new float[]{0.78f, 0.76f, 0.68f};
+            case GameConfig.BIRCH_LEAVES:
+                return new float[]{0.44f, 0.68f, 0.25f};
+            case GameConfig.SNOW_BLOCK:
+                return new float[]{0.86f, 0.91f, 0.95f};
             case GameConfig.SNOW_LAYER:
                 return new float[]{0.78f, 0.86f, 0.92f};
             case GameConfig.CACTUS:
@@ -5042,6 +5269,8 @@ final class OpenGlRenderer {
                     : new float[]{0.22f, 0.54f, 0.20f};
             case GameConfig.TALL_GRASS:
                 return new float[]{0.42f, 0.77f, 0.31f};
+            case GameConfig.DEAD_BUSH:
+                return new float[]{0.46f, 0.30f, 0.16f};
             case GameConfig.SEAGRASS:
                 return new float[]{0.18f, 0.55f, 0.36f};
             case GameConfig.RED_FLOWER:
@@ -5049,7 +5278,18 @@ final class OpenGlRenderer {
             case GameConfig.YELLOW_FLOWER:
                 return new float[]{0.95f, 0.82f, 0.20f};
             case InventoryItems.OAK_PLANKS:
+            case GameConfig.OAK_STAIRS:
                 return new float[]{0.73f, 0.58f, 0.34f};
+            case GameConfig.PINE_PLANKS:
+            case GameConfig.PINE_STAIRS:
+                return new float[]{0.50f, 0.34f, 0.18f};
+            case GameConfig.BIRCH_PLANKS:
+            case GameConfig.BIRCH_STAIRS:
+                return new float[]{0.82f, 0.72f, 0.46f};
+            case GameConfig.STONE_STAIRS:
+                return new float[]{0.58f, 0.58f, 0.60f};
+            case GameConfig.COBBLESTONE_STAIRS:
+                return new float[]{0.48f, 0.48f, 0.48f};
             case GameConfig.OAK_FENCE:
             case GameConfig.OAK_FENCE_GATE:
                 return new float[]{0.56f, 0.38f, 0.20f};
@@ -5414,6 +5654,10 @@ final class OpenGlRenderer {
 
     private float getUiScale() {
         return Math.max(1.4f, framebufferHeight / 720.0f * 1.4f);
+    }
+
+    private float getHudInventoryScale() {
+        return getUiScale() * Settings.inventoryUiScale() / 1.18f;
     }
 
     private float getInventoryUiScale() {

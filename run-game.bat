@@ -6,10 +6,10 @@ if not exist out\TinyCraft.class (
     echo Trying to compile TinyCraft...
 
     if not exist out mkdir out
-    javac -encoding UTF-8 --release 21 -cp "lib/*" -d out *.java
+    javac -encoding UTF-8 --release 8 -cp "lib/*" -d out *.java
     if errorlevel 1 (
         echo.
-        echo Compilation failed. Install Java JDK 21 or newer and try again.
+        echo Compilation failed. Install Java JDK 8 or newer and try again.
         pause
         exit /b 1
     )

@@ -92,7 +92,11 @@ final class InventoryItems {
         GameConfig.OAK_LEAVES,
         GameConfig.PINE_LOG,
         GameConfig.PINE_LEAVES,
+        GameConfig.BIRCH_LOG,
+        GameConfig.BIRCH_LEAVES,
         GameConfig.CACTUS,
+        GameConfig.DEAD_BUSH,
+        GameConfig.SNOW_BLOCK,
         GameConfig.SNOW_LAYER,
         GameConfig.SEAGRASS,
         GameConfig.TALL_GRASS,
@@ -102,6 +106,13 @@ final class InventoryItems {
         GameConfig.DEEPSLATE,
         GameConfig.OBSIDIAN,
         OAK_PLANKS,
+        GameConfig.PINE_PLANKS,
+        GameConfig.BIRCH_PLANKS,
+        GameConfig.OAK_STAIRS,
+        GameConfig.PINE_STAIRS,
+        GameConfig.BIRCH_STAIRS,
+        GameConfig.STONE_STAIRS,
+        GameConfig.COBBLESTONE_STAIRS,
         GameConfig.OAK_FENCE,
         GameConfig.OAK_FENCE_GATE,
         GameConfig.CHEST,
@@ -203,7 +214,16 @@ final class InventoryItems {
                 GameConfig.GRAVEL,
                 GameConfig.CLAY,
                 GameConfig.OAK_LOG,
+                GameConfig.PINE_LOG,
+                GameConfig.BIRCH_LOG,
                 InventoryItems.OAK_PLANKS,
+                GameConfig.PINE_PLANKS,
+                GameConfig.BIRCH_PLANKS,
+                GameConfig.OAK_STAIRS,
+                GameConfig.PINE_STAIRS,
+                GameConfig.BIRCH_STAIRS,
+                GameConfig.STONE_STAIRS,
+                GameConfig.COBBLESTONE_STAIRS,
                 GameConfig.OAK_FENCE,
                 GameConfig.OAK_FENCE_GATE,
                 GameConfig.CHEST,
@@ -227,7 +247,11 @@ final class InventoryItems {
                 GameConfig.OAK_LEAVES,
                 GameConfig.PINE_LOG,
                 GameConfig.PINE_LEAVES,
+                GameConfig.BIRCH_LOG,
+                GameConfig.BIRCH_LEAVES,
                 GameConfig.CACTUS,
+                GameConfig.DEAD_BUSH,
+                GameConfig.SNOW_BLOCK,
                 GameConfig.SNOW_LAYER,
                 GameConfig.SEAGRASS,
                 GameConfig.TALL_GRASS,
@@ -387,8 +411,16 @@ final class InventoryItems {
                 return "Pine Log";
             case GameConfig.PINE_LEAVES:
                 return "Pine Leaves";
+            case GameConfig.BIRCH_LOG:
+                return "Birch Log";
+            case GameConfig.BIRCH_LEAVES:
+                return "Birch Leaves";
             case GameConfig.CACTUS:
                 return "Cactus";
+            case GameConfig.DEAD_BUSH:
+                return "Dead Bush";
+            case GameConfig.SNOW_BLOCK:
+                return "Snow Block";
             case GameConfig.SNOW_LAYER:
                 return "Snow Layer";
             case GameConfig.SEAGRASS:
@@ -407,10 +439,24 @@ final class InventoryItems {
                 return "Obsidian";
             case OAK_PLANKS:
                 return "Oak Planks";
+            case GameConfig.PINE_PLANKS:
+                return "Spruce Planks";
+            case GameConfig.BIRCH_PLANKS:
+                return "Birch Planks";
+            case GameConfig.OAK_STAIRS:
+                return "Oak Stairs";
+            case GameConfig.PINE_STAIRS:
+                return "Spruce Stairs";
+            case GameConfig.BIRCH_STAIRS:
+                return "Birch Stairs";
+            case GameConfig.STONE_STAIRS:
+                return "Stone Stairs";
+            case GameConfig.COBBLESTONE_STAIRS:
+                return "Cobblestone Stairs";
             case GameConfig.OAK_FENCE:
                 return "Oak Fence";
             case GameConfig.OAK_FENCE_GATE:
-                return "Дубовая калитка";
+                return "Oak Fence Gate";
             case GameConfig.CHEST:
                 return "Chest";
             case GameConfig.CRAFTING_TABLE:
@@ -594,7 +640,11 @@ final class InventoryItems {
             case GameConfig.OAK_LEAVES: return "Дубовая листва";
             case GameConfig.PINE_LOG: return "Сосновое бревно";
             case GameConfig.PINE_LEAVES: return "Сосновая листва";
+            case GameConfig.BIRCH_LOG: return "Березовое бревно";
+            case GameConfig.BIRCH_LEAVES: return "Березовая листва";
             case GameConfig.CACTUS: return "Кактус";
+            case GameConfig.DEAD_BUSH: return "Мертвый куст";
+            case GameConfig.SNOW_BLOCK: return "Блок снега";
             case GameConfig.SNOW_LAYER: return "Слой снега";
             case GameConfig.SEAGRASS: return "Водоросли";
             case GameConfig.TALL_GRASS: return "Высокая трава";
@@ -607,6 +657,13 @@ final class InventoryItems {
             case GameConfig.DEEPSLATE_COAL_ORE: return "Угольная руда в глубинном сланце";
             case GameConfig.OBSIDIAN: return "Обсидиан";
             case OAK_PLANKS: return "Дубовые доски";
+            case GameConfig.PINE_PLANKS: return "Сосновые доски";
+            case GameConfig.BIRCH_PLANKS: return "Березовые доски";
+            case GameConfig.OAK_STAIRS: return "Дубовые ступени";
+            case GameConfig.PINE_STAIRS: return "Сосновые ступени";
+            case GameConfig.BIRCH_STAIRS: return "Березовые ступени";
+            case GameConfig.STONE_STAIRS: return "Каменные ступени";
+            case GameConfig.COBBLESTONE_STAIRS: return "Булыжниковые ступени";
             case GameConfig.OAK_FENCE: return "Дубовый забор";
             case GameConfig.CHEST: return "Сундук";
             case GameConfig.CRAFTING_TABLE: return "Верстак";
@@ -1029,10 +1086,32 @@ final class CraftingRecipe {
 final class CraftingRecipes {
     private static final CraftingRecipe[] RECIPES = {
         CraftingRecipe.shapeless(InventoryItems.OAK_PLANKS, 4, GameConfig.OAK_LOG),
-        CraftingRecipe.shapeless(InventoryItems.OAK_PLANKS, 4, GameConfig.PINE_LOG),
+        CraftingRecipe.shapeless(GameConfig.PINE_PLANKS, 4, GameConfig.PINE_LOG),
+        CraftingRecipe.shapeless(GameConfig.BIRCH_PLANKS, 4, GameConfig.BIRCH_LOG),
         CraftingRecipe.shaped(1, 2, InventoryItems.STICK, 4,
             InventoryItems.OAK_PLANKS,
             InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(1, 2, InventoryItems.STICK, 4,
+            GameConfig.PINE_PLANKS,
+            GameConfig.PINE_PLANKS),
+        CraftingRecipe.shaped(1, 2, InventoryItems.STICK, 4,
+            GameConfig.BIRCH_PLANKS,
+            GameConfig.BIRCH_PLANKS),
+        CraftingRecipe.shaped(3, 2, GameConfig.OAK_STAIRS, 4,
+            InventoryItems.OAK_PLANKS, GameConfig.AIR, GameConfig.AIR,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
+        CraftingRecipe.shaped(3, 2, GameConfig.PINE_STAIRS, 4,
+            GameConfig.PINE_PLANKS, GameConfig.AIR, GameConfig.AIR,
+            GameConfig.PINE_PLANKS, GameConfig.PINE_PLANKS, GameConfig.PINE_PLANKS),
+        CraftingRecipe.shaped(3, 2, GameConfig.BIRCH_STAIRS, 4,
+            GameConfig.BIRCH_PLANKS, GameConfig.AIR, GameConfig.AIR,
+            GameConfig.BIRCH_PLANKS, GameConfig.BIRCH_PLANKS, GameConfig.BIRCH_PLANKS),
+        CraftingRecipe.shaped(3, 2, GameConfig.STONE_STAIRS, 4,
+            GameConfig.STONE, GameConfig.AIR, GameConfig.AIR,
+            GameConfig.STONE, GameConfig.STONE, GameConfig.STONE),
+        CraftingRecipe.shaped(3, 2, GameConfig.COBBLESTONE_STAIRS, 4,
+            GameConfig.COBBLESTONE, GameConfig.AIR, GameConfig.AIR,
+            GameConfig.COBBLESTONE, GameConfig.COBBLESTONE, GameConfig.COBBLESTONE),
         CraftingRecipe.shaped(2, 2, GameConfig.CRAFTING_TABLE, 1,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),
@@ -1129,6 +1208,10 @@ final class CraftingRecipes {
         CraftingRecipe.shaped(3, 2, InventoryItems.ITEM_BUCKET, 1,
             InventoryItems.IRON_INGOT, GameConfig.AIR, InventoryItems.IRON_INGOT,
             GameConfig.AIR, InventoryItems.IRON_INGOT, GameConfig.AIR),
+        CraftingRecipe.shaped(3, 3, InventoryItems.SHIELD, 1,
+            InventoryItems.OAK_PLANKS, InventoryItems.IRON_INGOT, InventoryItems.OAK_PLANKS,
+            InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS,
+            GameConfig.AIR, InventoryItems.OAK_PLANKS, GameConfig.AIR),
         CraftingRecipe.shaped(3, 2, GameConfig.RED_BED, 1,
             InventoryItems.WOOL, InventoryItems.WOOL, InventoryItems.WOOL,
             InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS, InventoryItems.OAK_PLANKS),

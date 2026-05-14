@@ -4,7 +4,7 @@
     {
       "label": "compile TinyCraft",
       "type": "shell",
-      "command": "javac -encoding UTF-8 --release 21 -cp \"lib/*\" -d out *.java",
+      "command": "javac -encoding UTF-8 --release 8 -cp \"lib/*\" -d out *.java",
       "options": {
         "cwd": "${workspaceFolder}"
       },
