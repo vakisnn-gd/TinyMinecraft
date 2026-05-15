@@ -1,4 +1,4 @@
-# TinyCraft
+﻿# TinyCraft
 
 TinyCraft - небольшая Java/LWJGL voxel-песочница в стиле Minecraft. В игре уже есть чанковый мир, биомы, горы, пещеры, шахты, деревни, мобы, инвентарь, крафт, печки, сундуки, жидкости, команды и экспериментальный LAN-мультиплеер без внешних аккаунтов.
 
@@ -14,7 +14,7 @@ TinyCraft - небольшая Java/LWJGL voxel-песочница в стиле
 
 ![Mountain biome](docs/screenshots/snapshot7-mountains.png)
 
-![Village house interior](docs/screenshots/snapshot7-interior.png)
+![Mineshaft interior](docs/screenshots/snapshot7-mineshaft.png)
 
 ## Быстрый Старт
 
@@ -94,7 +94,7 @@ javac -encoding UTF-8 --release 8 -cp "lib/*" -d out *.java
 ### Окно 1: Хост
 
 ```powershell
-cd "C:\Users\Римидалв\Desktop\MinecraftTest"
+cd "C:\Path\To\TinyCraft"
 java -cp "out;lib/*" TinyCraft
 ```
 
@@ -112,7 +112,7 @@ java -cp "out;lib/*" TinyCraft
 Чтобы не получить `Duplicate player uuid`, клиент должен запускаться из отдельной рабочей папки с другим `profile.properties`.
 
 ```powershell
-cd "C:\Users\Римидалв\Desktop\MinecraftTest"
+cd "C:\Path\To\TinyCraft"
 $clientDir="$env:TEMP\TinyCraftClientProfile"
 New-Item -ItemType Directory -Force -Path $clientDir, "$clientDir\lib" | Out-Null
 Copy-Item -LiteralPath "TinyCraft.java" -Destination "$clientDir\TinyCraft.java" -Force
@@ -121,7 +121,7 @@ Set-Content -Encoding ASCII -Path "$clientDir\profile.properties" -Value @(
   "name=ClientTest"
 )
 Set-Location $clientDir
-java -cp "C:\Users\Римидалв\Desktop\MinecraftTest\out;C:\Users\Римидалв\Desktop\MinecraftTest\lib/*" TinyCraft
+java -cp "C:\Path\To\TinyCraft\out;C:\Path\To\TinyCraft\lib/*" TinyCraft
 ```
 
 В игре:
