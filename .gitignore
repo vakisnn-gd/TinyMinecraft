@@ -6,6 +6,7 @@ release/
 # Local game data
 saves/
 options.txt
+profile.properties
 
 # Generated runtime assets
 terrain.png
@@ -15,6 +16,10 @@ terrain.png
 .vscode/
 !.vscode/
 !.vscode/settings.json
+.vs/
+.settings/
+.classpath
+.project
 *.iml
 
 # OS files

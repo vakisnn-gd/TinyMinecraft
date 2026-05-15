@@ -1,5 +1,7 @@
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -13,6 +15,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -130,6 +133,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final BackgroundSaveService backgroundSaveService = new BackgroundSaveService();
     private final int[] permutation = new int[512];
     private final ArrayList<MobEntity> mobs = new ArrayList<>();
+    private final HashMap<UUID, RemotePlayerState> remotePlayers = new HashMap<>();
     private final HashSet<Long> populatedVillageCells = new HashSet<>();
     private final ArrayList<DroppedItem> droppedItems = new ArrayList<>();
     private final ArrayList<FallingBlock> fallingBlocks = new ArrayList<>();
@@ -149,6 +153,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final HashSet<Long> dirtyChunkSections = new HashSet<>();
     private final HashSet<Long> pendingMeshDirtySections = new HashSet<>();
     private final ColumnUpdateList simulationDirtyColumns = new ColumnUpdateList(64);
+    private final ColumnUpdateList networkDirtyBlocks = new ColumnUpdateList(128);
     private final ArrayList<Long> readyColumnKeys = new ArrayList<>();
     private final MutableVec2 mobSteering = new MutableVec2();
     private final MutableVec2 zombieSeparation = new MutableVec2();
@@ -157,6 +162,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private final HashMap<Long, CachedFluidFlow> waterFlowCache = new HashMap<>();
     private Random worldRandom;
     private WorldGenerator worldGenerator;
+    private boolean networkMirrorMode;
     private double simulationAccumulator;
     private double hostileMobSpawnCooldown;
     private double worldTime = 0.30;
@@ -215,11 +221,16 @@ final class VoxelWorld implements StructureTemplates.Target {
         return seed;
     }
 
+    TerrainPreset getTerrainPreset() {
+        return terrainPreset;
+    }
+
     void configureWorld(Path worldDirectory, long seed) {
         configureWorld(worldDirectory, seed, TerrainPreset.LEGACY);
     }
 
     void configureWorld(Path worldDirectory, long seed, TerrainPreset terrainPreset) {
+        networkMirrorMode = false;
         if (this.worldDirectory != null && !this.worldDirectory.equals(worldDirectory)) {
             flushLoadedColumns();
             saveMobs();
@@ -260,12 +271,68 @@ final class VoxelWorld implements StructureTemplates.Target {
         loadMobs();
     }
 
+    void setNetworkMirrorMode(boolean networkMirrorMode) {
+        this.networkMirrorMode = networkMirrorMode;
+        if (networkMirrorMode) {
+            for (Future<ChunkColumn> future : pendingColumns.values()) {
+                future.cancel(true);
+            }
+            pendingColumns.clear();
+            generationExecutor.purge();
+        }
+    }
+
+    boolean isNetworkMirrorMode() {
+        return networkMirrorMode;
+    }
+
     List<MobEntity> getMobs() {
         return mobs;
     }
 
     List<DroppedItem> getDroppedItems() {
         return droppedItems;
+    }
+
+    List<RemotePlayerState> getRemotePlayers() {
+        return new ArrayList<>(remotePlayers.values());
+    }
+
+    void updateRemotePlayer(UUID uuid, String name, double x, double y, double z, double yaw, double pitch,
+                            byte heldItem, boolean sneaking, boolean spectatorMode) {
+        if (uuid == null) {
+            return;
+        }
+        RemotePlayerState remote = remotePlayers.get(uuid);
+        if (remote == null) {
+            remote = new RemotePlayerState(uuid, name);
+            remotePlayers.put(uuid, remote);
+        }
+        remote.capturePreviousPosition();
+        remote.x = x;
+        remote.y = y;
+        remote.z = z;
+        remote.yaw = yaw;
+        remote.pitch = pitch;
+        remote.heldItem = heldItem;
+        remote.sneaking = sneaking;
+        remote.spectatorMode = spectatorMode;
+        remote.name = name == null ? remote.name : name;
+        remote.lastUpdateMillis = System.currentTimeMillis();
+    }
+
+    void removeRemotePlayer(UUID uuid) {
+        if (uuid != null) {
+            remotePlayers.remove(uuid);
+        }
+    }
+
+    void clearRemotePlayers() {
+        remotePlayers.clear();
+    }
+
+    boolean hasLoadedColumnAt(double x, double z) {
+        return loadedColumns.containsKey(columnKey(worldToChunk((int) Math.floor(x)), worldToChunk((int) Math.floor(z))));
     }
 
     List<FallingBlock> getFallingBlocks() {
@@ -380,6 +447,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         dirtyChunkSections.clear();
         pendingMeshDirtySections.clear();
         simulationDirtyColumns.clear();
+        networkDirtyBlocks.clear();
         waterFlowCache.clear();
         mobs.clear();
         populatedVillageCells.clear();
@@ -388,9 +456,60 @@ final class VoxelWorld implements StructureTemplates.Target {
         saveContainers();
         chestContainers.clear();
         furnaces.clear();
+        remotePlayers.clear();
         worldDirectory = null;
         saveDirectory = null;
         regionStorage = null;
+        networkMirrorMode = false;
+    }
+
+    void clearRuntimeWorld() {
+        for (Future<ChunkColumn> future : pendingColumns.values()) {
+            future.cancel(true);
+        }
+        pendingColumns.clear();
+        loadedColumns.clear();
+        activeWaterCells.clear();
+        activeLavaCells.clear();
+        activeSandCells.clear();
+        clearDynamicBlockQueues();
+        leafDecayTimers.clear();
+        fallingBlockSources.clear();
+        dirtyChunkSections.clear();
+        pendingMeshDirtySections.clear();
+        simulationDirtyColumns.clear();
+        networkDirtyBlocks.clear();
+        waterFlowCache.clear();
+        mobs.clear();
+        populatedVillageCells.clear();
+        droppedItems.clear();
+        fallingBlocks.clear();
+        chestContainers.clear();
+        furnaces.clear();
+        remotePlayers.clear();
+        simulationAccumulator = 0.0;
+        hostileMobSpawnCooldown = 20.0;
+        worldTickCounter = 0L;
+        worldTime = 0.30;
+        mobUpdateCounter = 0L;
+        droppedItemUpdateCounter = 0L;
+        streamingWarmupFrames = 0;
+        lastStreamingChunkX = Integer.MIN_VALUE;
+        lastStreamingChunkZ = Integer.MIN_VALUE;
+        streamingProfileLastLogNs = 0L;
+        streamingProfileFrames = 0;
+        streamingProfileSubmittedColumns = 0;
+        streamingProfileIntegratedColumns = 0;
+        streamingProfilePrepareNs = 0L;
+        streamingProfileDrainNs = 0L;
+        streamingProfileEnsureNs = 0L;
+        streamingProfileUnloadNs = 0L;
+        generationProfileColumns = 0;
+        generationProfileNs = 0L;
+        worldDirectory = null;
+        saveDirectory = null;
+        regionStorage = null;
+        networkMirrorMode = false;
     }
 
     void generateWorld() {
@@ -408,7 +527,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         dirtyChunkSections.clear();
         pendingMeshDirtySections.clear();
         simulationDirtyColumns.clear();
+        networkDirtyBlocks.clear();
         mobs.clear();
+        remotePlayers.clear();
         populatedVillageCells.clear();
         droppedItems.clear();
         fallingBlocks.clear();
@@ -452,9 +573,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         int streamingRadius = getStreamingRadius(player);
         cancelFarPendingColumns(playerChunkX, playerChunkZ, streamingRadius + 4);
         long drainStartNs = profile ? System.nanoTime() : 0L;
-        int integratedColumns = drainGeneratedColumns();
+        int integratedColumns = networkMirrorMode ? 0 : drainGeneratedColumns();
         long ensureStartNs = profile ? System.nanoTime() : 0L;
-        int submittedColumns = ensureColumnsAround(playerChunkX, playerChunkZ, streamingRadius, false);
+        int submittedColumns = networkMirrorMode ? 0 : ensureColumnsAround(playerChunkX, playerChunkZ, streamingRadius, false);
         long unloadStartNs = profile ? System.nanoTime() : 0L;
         unloadFarColumns(playerChunkX, playerChunkZ, streamingRadius + 2);
         cancelFarPendingColumns(playerChunkX, playerChunkZ, streamingRadius + 4);
@@ -473,6 +594,9 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     void primeStreamingAround(PlayerState player) {
         if (player == null) {
+            return;
+        }
+        if (networkMirrorMode) {
             return;
         }
         int playerChunkX = worldToChunk((int) Math.floor(player.x));
@@ -529,6 +653,19 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         return simulationDirtyColumns;
+    }
+
+    ColumnUpdateList drainNetworkDirtyBlocks() {
+        ColumnUpdateList drained = new ColumnUpdateList(Math.max(1, networkDirtyBlocks.size()));
+        for (int i = 0; i < networkDirtyBlocks.size(); i++) {
+            drained.add(networkDirtyBlocks.xAt(i), networkDirtyBlocks.yAt(i), networkDirtyBlocks.zAt(i));
+        }
+        networkDirtyBlocks.clear();
+        return drained;
+    }
+
+    void clearNetworkDirtyBlocks() {
+        networkDirtyBlocks.clear();
     }
 
     double getWorldTime() {
@@ -622,6 +759,16 @@ final class VoxelWorld implements StructureTemplates.Target {
             return Integer.MIN_VALUE;
         }
         return surfaceY;
+    }
+
+    double safeStandingYAt(double x, double z) {
+        int blockX = (int) Math.floor(x);
+        int blockZ = (int) Math.floor(z);
+        int groundY = findExactSpawnAt(blockX, blockZ);
+        if (groundY == Integer.MIN_VALUE) {
+            groundY = getSurfaceHeight(blockX, blockZ);
+        }
+        return getStandingY(x, z, groundY + 1.0);
     }
 
     private int findSpawnGroundY(int x, int z) {
@@ -2458,6 +2605,124 @@ final class VoxelWorld implements StructureTemplates.Target {
         return chunk.getBlockStateLocal(localBlockCoordinate(x), GameConfig.localYForWorldY(y), localBlockCoordinate(z));
     }
 
+    void applyNetworkBlockState(int x, int y, int z, BlockState state, int fluidDistance) {
+        if (!isInside(x, y, z)) {
+            return;
+        }
+        ensureColumnLoadedSync(worldToChunk(x), worldToChunk(z));
+        Chunk chunk = getChunkForBlock(x, y, z);
+        if (chunk == null) {
+            return;
+        }
+        int localX = localBlockCoordinate(x);
+        int localY = GameConfig.localYForWorldY(y);
+        int localZ = localBlockCoordinate(z);
+        chunk.setSerializedCellState((localY * Chunk.SIZE + localZ) * Chunk.SIZE + localX, state, fluidDistance);
+        markDirtyBlock(x, y, z);
+        refreshSurfaceHeight(x, z);
+        refreshDynamicCellsAround(x, y, z);
+    }
+
+    void writeNetworkColumn(int chunkX, int chunkZ, DataOutputStream output) throws IOException {
+        ensureColumnLoadedSync(chunkX, chunkZ);
+        ChunkColumn column = loadedColumns.get(columnKey(chunkX, chunkZ));
+        output.writeInt(chunkX);
+        output.writeInt(chunkZ);
+        if (column == null) {
+            output.writeBoolean(false);
+            return;
+        }
+        output.writeBoolean(true);
+        for (int i = 0; i < column.surfaceHeights.length; i++) {
+            output.writeShort(column.surfaceHeights[i]);
+        }
+        output.writeInt(GameConfig.SECTION_COUNT);
+        for (int chunkY = 0; chunkY < GameConfig.SECTION_COUNT; chunkY++) {
+            ChunkSectionSnapshot snapshot = column.sections[chunkY].snapshot();
+            ByteArrayOutputStream sectionBytes = new ByteArrayOutputStream();
+            DataOutputStream sectionOutput = new DataOutputStream(sectionBytes);
+            int runs = 0;
+            int index = 0;
+            while (index < Chunk.VOLUME) {
+                int localX = index & (Chunk.SIZE - 1);
+                int localY = index / (Chunk.SIZE * Chunk.SIZE);
+                int localZ = (index / Chunk.SIZE) & (Chunk.SIZE - 1);
+                BlockState state = snapshot.getBlockStateLocal(localX, localY, localZ);
+                String id = Blocks.serializedId(state);
+                int distance = snapshot.getFluidDistanceLocal(localX, localY, localZ);
+                int count = 1;
+                while (index + count < Chunk.VOLUME) {
+                    int nextIndex = index + count;
+                    int nextLocalX = nextIndex & (Chunk.SIZE - 1);
+                    int nextLocalY = nextIndex / (Chunk.SIZE * Chunk.SIZE);
+                    int nextLocalZ = (nextIndex / Chunk.SIZE) & (Chunk.SIZE - 1);
+                    if (distance != snapshot.getFluidDistanceLocal(nextLocalX, nextLocalY, nextLocalZ)
+                        || !id.equals(Blocks.serializedId(snapshot.getBlockStateLocal(nextLocalX, nextLocalY, nextLocalZ)))) {
+                        break;
+                    }
+                    count++;
+                }
+                sectionOutput.writeInt(count);
+                sectionOutput.writeUTF(id);
+                sectionOutput.writeByte(distance);
+                runs++;
+                index += count;
+            }
+            sectionOutput.flush();
+            output.writeInt(chunkY);
+            output.writeInt(runs);
+            output.writeInt(sectionBytes.size());
+            output.write(sectionBytes.toByteArray());
+        }
+    }
+
+    long readNetworkColumn(DataInputStream input) throws IOException {
+        int chunkX = input.readInt();
+        int chunkZ = input.readInt();
+        boolean present = input.readBoolean();
+        if (!present) {
+            return columnKey(chunkX, chunkZ);
+        }
+        ChunkColumn column = new ChunkColumn(chunkX, chunkZ);
+        for (int i = 0; i < column.surfaceHeights.length; i++) {
+            column.surfaceHeights[i] = input.readShort();
+        }
+        int sectionCount = input.readInt();
+        for (int section = 0; section < sectionCount; section++) {
+            int chunkY = input.readInt();
+            int runs = input.readInt();
+            int sectionBytes = input.readInt();
+            if (chunkY < 0 || chunkY >= GameConfig.SECTION_COUNT || sectionBytes < 0 || sectionBytes > MultiplayerProtocol.MAX_PACKET_BYTES) {
+                throw new IOException("invalid network chunk section");
+            }
+            byte[] payload = new byte[sectionBytes];
+            input.readFully(payload);
+            DataInputStream sectionInput = new DataInputStream(new ByteArrayInputStream(payload));
+            Chunk chunk = column.sections[chunkY];
+            int index = 0;
+            for (int run = 0; run < runs; run++) {
+                int count = sectionInput.readInt();
+                String id = sectionInput.readUTF();
+                int distance = sectionInput.readByte();
+                BlockState state = Blocks.stateFromNamespacedId(id);
+                for (int i = 0; i < count && index < Chunk.VOLUME; i++) {
+                    chunk.setSerializedCellState(index++, state, distance);
+                }
+            }
+        }
+        column.generated = true;
+        ChunkColumn previous = loadedColumns.put(columnKey(chunkX, chunkZ), column);
+        if (previous != null) {
+            removeColumnDynamicBlocks(previous);
+        }
+        registerColumnDynamicBlocks(column);
+        for (int chunkY = 0; chunkY < GameConfig.SECTION_COUNT; chunkY++) {
+            markDirtySection(chunkX, chunkY, chunkZ);
+        }
+        markColumnAndLoadedNeighborsDirty(chunkX, chunkZ);
+        return columnKey(chunkX, chunkZ);
+    }
+
     public BlockState getTemplateBlock(int x, int y, int z) {
         return getBlockState(x, y, z);
     }
@@ -3951,6 +4216,9 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (loaded != null) {
             return;
         }
+        if (networkMirrorMode) {
+            return;
+        }
 
         Future<ChunkColumn> future = pendingColumns.get(key);
         if (future != null) {
@@ -3977,6 +4245,9 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private boolean submitColumnTask(int chunkX, int chunkZ) {
+        if (networkMirrorMode) {
+            return false;
+        }
         long key = columnKey(chunkX, chunkZ);
         if (loadedColumns.containsKey(key) || pendingColumns.containsKey(key)) {
             return false;
@@ -3996,6 +4267,49 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
         generationExecutor.execute(task);
         return true;
+    }
+
+    UUID findRemotePlayerInReach(PlayerState player) {
+        if (player == null) {
+            return null;
+        }
+        double originX = player.x;
+        double originY = player.y + player.eyeHeight();
+        double originZ = player.z;
+        double horizontalLength = Math.cos(player.pitch);
+        double dirX = Math.cos(player.yaw) * horizontalLength;
+        double dirY = Math.sin(player.pitch);
+        double dirZ = Math.sin(player.yaw) * horizontalLength;
+        double reach = 3.4;
+        RemotePlayerState best = null;
+        double bestProjection = Double.POSITIVE_INFINITY;
+        for (RemotePlayerState remote : remotePlayers.values()) {
+            if (remote.health <= 0.0 || remote.spectatorMode) {
+                continue;
+            }
+            double centerX = remote.x;
+            double centerY = remote.y + remote.height() * 0.55;
+            double centerZ = remote.z;
+            double toX = centerX - originX;
+            double toY = centerY - originY;
+            double toZ = centerZ - originZ;
+            double projection = toX * dirX + toY * dirY + toZ * dirZ;
+            if (projection < 0.0 || projection > reach || projection >= bestProjection) {
+                continue;
+            }
+            double closestX = originX + dirX * projection;
+            double closestY = originY + dirY * projection;
+            double closestZ = originZ + dirZ * projection;
+            double dx = centerX - closestX;
+            double dy = centerY - closestY;
+            double dz = centerZ - closestZ;
+            double hitRadius = remote.radius() + 0.34;
+            if (dx * dx + dy * dy + dz * dz <= hitRadius * hitRadius) {
+                best = remote;
+                bestProjection = projection;
+            }
+        }
+        return best == null ? null : best.uuid;
     }
 
     private int chunkPriority(int chunkX, int chunkZ) {
@@ -4069,6 +4383,9 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private ChunkColumn loadOrGenerateColumn(int chunkX, int chunkZ) {
+        if (networkMirrorMode) {
+            return null;
+        }
         if (regionStorage != null) {
             ChunkColumn loaded = regionStorage.loadColumn(chunkX, chunkZ);
             if (loaded != null) {
@@ -4648,6 +4965,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (!GameConfig.isWorldYInside(y)) {
             return;
         }
+        networkDirtyBlocks.add(x, y, z);
         int chunkX = worldToChunk(x);
         int chunkY = GameConfig.sectionIndexForY(y);
         int chunkZ = worldToChunk(z);

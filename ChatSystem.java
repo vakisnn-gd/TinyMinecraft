@@ -34,6 +34,8 @@ final class ChatSystem {
         String heightTest();
 
         String blockInfo();
+
+        void sendChat(String message);
     }
 
     private static final int MAX_MESSAGES = 8;
@@ -69,10 +71,10 @@ final class ChatSystem {
                 return;
             }
         }
-        if (codepoint < 32 || codepoint > 126 || input.length() >= MAX_INPUT_LENGTH) {
+        if (Character.isISOControl(codepoint) || !Character.isValidCodePoint(codepoint) || input.length() >= MAX_INPUT_LENGTH) {
             return;
         }
-        input.append((char) codepoint);
+        input.appendCodePoint(codepoint);
     }
 
     void backspace() {
@@ -93,7 +95,7 @@ final class ChatSystem {
         if (submitted.charAt(0) == '/') {
             executeCommand(submitted, target);
         } else {
-            addMessage("<Player> " + submitted);
+            target.sendChat(submitted);
         }
     }
 

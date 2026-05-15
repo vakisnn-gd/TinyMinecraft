@@ -95,7 +95,7 @@ import static org.lwjgl.glfw.GLFW.glfwWindowHint;
 import static org.lwjgl.glfw.GLFW.glfwWindowShouldClose;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
-public class TinyCraft {
+public class TinyCraft implements MultiplayerManager.Listener {
     private final long bootstrapSeed = System.nanoTime() ^ new Random().nextLong();
     private final PlayerState player = new PlayerState();
     private final VoxelWorld world = new VoxelWorld(bootstrapSeed);
@@ -108,6 +108,8 @@ public class TinyCraft {
     private final MutableVec3 playerFluidFlow = new MutableVec3();
     private final FrameProfiler frameProfiler = new FrameProfiler();
     private final ChatSystem chat = new ChatSystem();
+    private final LocalProfile localProfile = LocalProfile.loadOrCreate();
+    private final MultiplayerManager multiplayer = new MultiplayerManager(localProfile, this);
 
     private GLFWErrorCallback errorCallback;
     private long window;
@@ -143,6 +145,9 @@ public class TinyCraft {
     private boolean gameModeSwitcherActive;
     private boolean mouseInitialized;
     private boolean worldLoaded;
+    private boolean multiplayerWorldLoading;
+    private double multiplayerSpawnX;
+    private double multiplayerSpawnZ;
     private boolean mainMenuWorldActionsEnabled;
     private double lastMouseX;
     private double lastMouseY;
@@ -171,6 +176,12 @@ public class TinyCraft {
     private String createWorldName = "New World";
     private String createWorldSeed = "";
     private String renameWorldName = "";
+    private String multiplayerHost = "127.0.0.1";
+    private String multiplayerPort = Integer.toString(MultiplayerProtocol.DEFAULT_PORT);
+    private String multiplayerName = localProfile.name;
+    private String multiplayerStatus = "Offline";
+    private int lanGameMode = 0;
+    private boolean lanAllowCheats = false;
     private RayHit hoveredBlock;
     private int breakingBlockX = -1;
     private int breakingBlockY = -1;
@@ -660,6 +671,11 @@ public class TinyCraft {
                                     stateInfo
                                 );
                             }
+
+                            @Override
+                            public void sendChat(String message) {
+                                TinyCraft.this.sendChatMessage(message);
+                            }
                         });
                     } else if (key == GLFW_KEY_BACKSPACE) {
                         chat.backspace();
@@ -917,6 +933,22 @@ public class TinyCraft {
                             createWorldTerrainPreset = (createWorldTerrainPreset + 1) % GameConfig.TERRAIN_PRESET_OPTIONS.length;
                             return;
                         }
+                    } else if (mainMenuScreen == GameConfig.MENU_SCREEN_MULTIPLAYER) {
+                        int field = renderer.getMultiplayerFieldAt(mouseX, mouseY);
+                        if (field != -1) {
+                            activeMenuTextField = field;
+                            return;
+                        }
+                    } else if (mainMenuScreen == GameConfig.MENU_SCREEN_OPEN_LAN) {
+                        int toggle = renderer.getLanToggleAt(mouseX, mouseY);
+                        if (toggle == 0) {
+                            lanGameMode = (lanGameMode + 1) % GameConfig.GAME_MODE_OPTIONS.length;
+                            return;
+                        }
+                        if (toggle == 1) {
+                            lanAllowCheats = !lanAllowCheats;
+                            return;
+                        }
                     } else if (mainMenuScreen == GameConfig.MENU_SCREEN_RENAME_WORLD) {
                         int field = renderer.getRenameWorldFieldAt(mouseX, mouseY);
                         if (field != -1) {
@@ -982,6 +1014,21 @@ public class TinyCraft {
                     resetBreakingProgress();
                     return;
                 }
+                if (action == GLFW_PRESS && multiplayer.isMultiplayerActive()) {
+                    java.util.UUID targetUuid = world.findRemotePlayerInReach(player);
+                    if (targetUuid != null) {
+                        multiplayer.sendPlayerAttack(targetUuid, attackDamageForHeldItem());
+                        player.handSwingTimer = 0.22;
+                        spendHunger(0.12);
+                        if (!creativeMode) {
+                            inventory.damageSelectedItem(selectedSlot, 1);
+                            syncSelectedHotbarItem();
+                        }
+                        leftMouseHeld = false;
+                        resetBreakingProgress();
+                        return;
+                    }
+                }
                 if (creativeMode) {
                     if (action == GLFW_PRESS) {
                         breakHoveredInstantly();
@@ -1038,6 +1085,11 @@ public class TinyCraft {
                     return;
                 }
                 if (world.placeBlock(hit, heldItem, player)) {
+                    if (multiplayer.isClient()) {
+                        multiplayer.sendBlockPlace(hit, heldItem);
+                    } else if (multiplayer.isHosting()) {
+                        multiplayer.broadcastBlockNeighborhood(world, hit.previousX, hit.previousY, hit.previousZ);
+                    }
                     if (!creativeMode) {
                         inventory.consumeSelectedItem(selectedSlot);
                         syncSelectedHotbarItem();
@@ -1057,6 +1109,7 @@ public class TinyCraft {
             long updateStartNs = System.nanoTime();
 
             glfwPollEvents();
+            multiplayer.drainEvents();
             renderer.updateFramebufferSize(window);
 
             boolean simulateWorld = shouldRunWorldSimulation();
@@ -1111,6 +1164,12 @@ public class TinyCraft {
                 createWorldTerrainPreset,
                 activeMenuTextField,
                 renameWorldName,
+                multiplayerName,
+                multiplayerHost,
+                multiplayerPort,
+                multiplayerStatus,
+                lanGameMode,
+                lanAllowCheats,
                 availableWorlds,
                 selectedWorldIndex,
                 mainMenuScrollOffset,
@@ -1170,6 +1229,14 @@ public class TinyCraft {
     }
 
     private void runWorldSimulationTick(double tickDelta) {
+        if (multiplayerWorldLoading && multiplayer.isClient()) {
+            capturePreviousPlayerForInterpolation();
+            world.setRenderDistanceChunks(renderDistanceChunks);
+            multiplayer.tickClient(world, player, inventory.getSelectedItemId(selectedSlot), renderDistanceChunks, tickDelta);
+            hoveredBlock = null;
+            resetBreakingProgress();
+            return;
+        }
         capturePreviousPlayerForInterpolation();
         capturePreviousEntityPositions();
         world.setRenderDistanceChunks(renderDistanceChunks);
@@ -1179,6 +1246,11 @@ public class TinyCraft {
         updatePlayer(tickDelta);
         world.updateDroppedItems(player, inventory, tickDelta);
         world.updateMobs(player, tickDelta);
+        if (multiplayer.isHosting()) {
+            multiplayer.tickHost(world, player, inventory.getSelectedItemId(selectedSlot), tickDelta);
+        } else if (multiplayer.isClient()) {
+            multiplayer.tickClient(world, player, inventory.getSelectedItemId(selectedSlot), renderDistanceChunks, tickDelta);
+        }
         if (!deathScreenActive && !creativeMode && !spectatorMode && player.health <= 0) {
             enterDeathScreen();
         }
@@ -1195,6 +1267,11 @@ public class TinyCraft {
         ColumnUpdateList dirtyColumns = world.updateWorldTicks(player, tickDelta);
         for (int i = 0; i < dirtyColumns.size(); i++) {
             renderer.rebuildChunkSectionAroundBlockThrottled(dirtyColumns.xAt(i), dirtyColumns.yAt(i), dirtyColumns.zAt(i));
+        }
+        if (multiplayer.isHosting()) {
+            multiplayer.broadcastBlockUpdates(world, world.drainNetworkDirtyBlocks());
+        } else {
+            world.clearNetworkDirtyBlocks();
         }
         updateWaterAmbientAudio(tickDelta);
         if (!inventoryOpen && !chat.isActive() && !deathScreenActive && !mainMenuActive && !spectatorMode) {
@@ -2004,6 +2081,91 @@ public class TinyCraft {
         }
     }
 
+    private void sendChatMessage(String message) {
+        if (multiplayer.isMultiplayerActive()) {
+            multiplayer.sendChat(message);
+            return;
+        }
+        chat.addMessage("<" + localProfile.name + "> " + message);
+    }
+
+    @Override
+    public void onMultiplayerStatus(String status) {
+        multiplayerStatus = status == null ? "Offline" : status;
+        if (chat != null && multiplayer.isMultiplayerActive()) {
+            chat.addMessage("[MP] " + multiplayerStatus);
+        }
+    }
+
+    @Override
+    public void onMultiplayerChat(String message) {
+        chat.addMessage(message);
+    }
+
+    @Override
+    public void onClientWelcome(long seed, TerrainPreset terrainPreset, double x, double y, double z, double worldTime) {
+        resetClientMirrorWorldState();
+        multiplayerWorldLoading = true;
+        multiplayerSpawnX = x;
+        multiplayerSpawnZ = z;
+        world.configureWorld(RuntimePaths.resolve(GameConfig.SAVE_ROOT_DIRECTORY, "Multiplayer Client"), seed, terrainPreset);
+        world.setNetworkMirrorMode(true);
+        world.initializeNoise();
+        world.setWorldTime(worldTime);
+        player.setPosition(x, y, z);
+        player.yaw = PlayerState.DEFAULT_YAW;
+        player.pitch = PlayerState.DEFAULT_PITCH;
+        resetPlayerStateForNewWorld();
+        player.setPosition(x, y, z);
+        currentWorldDifficulty = 2;
+        worldLoaded = true;
+        loadedWorldName = "Multiplayer";
+        mainMenuActive = false;
+        paused = false;
+        inventoryOpen = false;
+        deathScreenActive = false;
+        multiplayer.requestInitialClientChunks(x, z);
+        updateCursorMode();
+    }
+
+    @Override
+    public void onClientChunkColumn(int chunkX, int chunkZ) {
+        if (multiplayerWorldLoading && world.hasLoadedColumnAt(multiplayerSpawnX, multiplayerSpawnZ)) {
+            multiplayerWorldLoading = false;
+            resetRenderInterpolation();
+        }
+    }
+
+    @Override
+    public void onClientBlockUpdate(int x, int y, int z) {
+        renderer.forceRebuildBlockEdit(x, y, z);
+    }
+
+    @Override
+    public void onClientDisconnected(String reason) {
+        String message = reason == null || reason.trim().isEmpty() ? "Connection Lost" : reason;
+        resetClientMirrorWorldState();
+        multiplayerWorldLoading = false;
+        multiplayerStatus = message;
+        mainMenuActive = true;
+        mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+        mainMenuSelection = 1;
+        paused = false;
+        inventoryOpen = false;
+        deathScreenActive = false;
+        activeMenuTextField = -1;
+        chat.addMessage("[MP] " + message);
+        updateCursorMode();
+    }
+
+    @Override
+    public void onClientHealth(double health) {
+        player.health = clamp(health, 0.0, GameConfig.MAX_HEALTH);
+        if (player.health <= 0.0) {
+            enterDeathScreen();
+        }
+    }
+
     private boolean useHeldFood(byte heldItem) {
         int foodValue = InventoryItems.foodValue(heldItem);
         if (foodValue <= 0 || creativeMode || spectatorMode || player.hunger >= GameConfig.MAX_HUNGER) {
@@ -2036,6 +2198,11 @@ public class TinyCraft {
             return false;
         }
         if (world.placeBlock(hit, heldItem, player)) {
+            if (multiplayer.isClient()) {
+                multiplayer.sendBlockPlace(hit, heldItem);
+            } else if (multiplayer.isHosting()) {
+                multiplayer.broadcastBlockNeighborhood(world, hit.previousX, hit.previousY, hit.previousZ);
+            }
             if (!creativeMode) {
                 inventory.consumeSelectedItem(selectedSlot);
                 inventory.addItem(InventoryItems.ITEM_BUCKET, 1);
@@ -2099,6 +2266,11 @@ public class TinyCraft {
         int blockY = hoveredBlock.y;
         int blockZ = hoveredBlock.z;
         if (world.breakBlock(hoveredBlock)) {
+            if (multiplayer.isClient()) {
+                multiplayer.sendBlockBreak(blockX, blockY, blockZ);
+            } else if (multiplayer.isHosting()) {
+                multiplayer.broadcastBlockNeighborhood(world, blockX, blockY, blockZ);
+            }
             player.handSwingTimer = 0.18;
             byte droppedItem = droppedItemForBrokenBlock(targetBlock);
             if (droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock)) {
@@ -2569,6 +2741,11 @@ public class TinyCraft {
         }
         byte targetBlock = hit == null ? GameConfig.AIR : world.getBlock(hit.x, hit.y, hit.z);
         if (world.breakBlock(hit)) {
+            if (multiplayer.isClient()) {
+                multiplayer.sendBlockBreak(hit.x, hit.y, hit.z);
+            } else if (multiplayer.isHosting()) {
+                multiplayer.broadcastBlockNeighborhood(world, hit.x, hit.y, hit.z);
+            }
             player.handSwingTimer = 0.18;
             audio.playBreak(targetBlock, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
             renderer.forceRebuildBlockEdit(hit.x, hit.y, hit.z);
@@ -2783,8 +2960,33 @@ public class TinyCraft {
             return;
         }
         if (pauseSelection == 2) {
+            openLanScreenFromPause();
+            return;
+        }
+        if (pauseSelection == 3) {
             enterMainMenu();
         }
+    }
+
+    private void openLanScreenFromPause() {
+        if (multiplayer.isClient()) {
+            chat.addMessage("[MP] Client cannot open this world to LAN.");
+            togglePause();
+            return;
+        }
+        if (multiplayer.isHosting()) {
+            chat.addMessage("[MP] " + multiplayer.status());
+            togglePause();
+            return;
+        }
+        lanGameMode = creativeMode ? 1 : (spectatorMode ? 2 : 0);
+        lanAllowCheats = creativeMode || spectatorMode;
+        paused = false;
+        mainMenuActive = true;
+        mainMenuScreen = GameConfig.MENU_SCREEN_OPEN_LAN;
+        mainMenuSelection = 0;
+        activeMenuTextField = -1;
+        updateCursorMode();
     }
 
     private void applyOptionsSlider(int slider, double percent) {
@@ -2833,13 +3035,13 @@ public class TinyCraft {
             mainMenuActive = false;
             paused = true;
             mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
-            pauseSelection = 3;
+            pauseSelection = 1;
             optionsOpenedFromPause = false;
             updateCursorMode();
             return;
         }
         mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
-        mainMenuSelection = 1;
+        mainMenuSelection = 2;
         optionsOpenedFromPause = false;
     }
 
@@ -3090,6 +3292,14 @@ public class TinyCraft {
                 mainMenuScreen = GameConfig.MENU_SCREEN_SINGLEPLAYER;
                 mainMenuSelection = 1;
                 activeMenuTextField = -1;
+            } else if (mainMenuScreen == GameConfig.MENU_SCREEN_OPEN_LAN) {
+                mainMenuScreen = GameConfig.MENU_SCREEN_MULTIPLAYER;
+                mainMenuSelection = 0;
+                activeMenuTextField = -1;
+            } else if (mainMenuScreen == GameConfig.MENU_SCREEN_MULTIPLAYER) {
+                mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+                mainMenuSelection = 1;
+                activeMenuTextField = -1;
             } else {
                 mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
                 mainMenuSelection = 0;
@@ -3163,6 +3373,46 @@ public class TinyCraft {
             return;
         }
 
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_MULTIPLAYER) {
+            if (activeMenuTextField >= 0) {
+                if (key == GLFW_KEY_TAB) {
+                    activeMenuTextField = (activeMenuTextField + 1) % 3;
+                } else if (key == GLFW_KEY_ENTER) {
+                    activateMainMenuOption();
+                }
+                return;
+            }
+            if (key == GLFW_KEY_TAB) {
+                activeMenuTextField = 0;
+            } else if (key == GLFW_KEY_A) {
+                mainMenuSelection = (mainMenuSelection + GameConfig.MULTIPLAYER_ACTIONS.length - 1) % GameConfig.MULTIPLAYER_ACTIONS.length;
+            } else if (key == GLFW_KEY_D) {
+                mainMenuSelection = (mainMenuSelection + 1) % GameConfig.MULTIPLAYER_ACTIONS.length;
+            } else if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
+                activeMenuTextField = activeMenuTextField <= 0 ? 2 : activeMenuTextField - 1;
+            } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
+                activeMenuTextField = (activeMenuTextField + 1) % 3;
+            } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                activateMainMenuOption();
+            }
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_OPEN_LAN) {
+            if (key == GLFW_KEY_A) {
+                mainMenuSelection = (mainMenuSelection + GameConfig.LAN_ACTIONS.length - 1) % GameConfig.LAN_ACTIONS.length;
+            } else if (key == GLFW_KEY_D) {
+                mainMenuSelection = (mainMenuSelection + 1) % GameConfig.LAN_ACTIONS.length;
+            } else if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
+                lanGameMode = (lanGameMode + GameConfig.GAME_MODE_OPTIONS.length - 1) % GameConfig.GAME_MODE_OPTIONS.length;
+            } else if (key == GLFW_KEY_S || key == GLFW_KEY_DOWN) {
+                lanAllowCheats = !lanAllowCheats;
+            } else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_SPACE) {
+                activateMainMenuOption();
+            }
+            return;
+        }
+
         if (mainMenuScreen == GameConfig.MENU_SCREEN_OPTIONS) {
             if (key == GLFW_KEY_W || key == GLFW_KEY_UP) {
                 mainMenuSelection = (mainMenuSelection + 8) % 9;
@@ -3213,6 +3463,16 @@ public class TinyCraft {
             }
             return true;
         }
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_MULTIPLAYER) {
+            if (activeMenuTextField == 0 && !multiplayerName.isEmpty()) {
+                multiplayerName = multiplayerName.substring(0, multiplayerName.length() - 1);
+            } else if (activeMenuTextField == 1 && !multiplayerHost.isEmpty()) {
+                multiplayerHost = multiplayerHost.substring(0, multiplayerHost.length() - 1);
+            } else if (activeMenuTextField == 2 && !multiplayerPort.isEmpty()) {
+                multiplayerPort = multiplayerPort.substring(0, multiplayerPort.length() - 1);
+            }
+            return true;
+        }
         return false;
     }
 
@@ -3238,6 +3498,16 @@ public class TinyCraft {
             }
             return true;
         }
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_MULTIPLAYER) {
+            if (activeMenuTextField == 0 && multiplayerName.length() < LocalProfile.MAX_NAME_LENGTH && isProfileNameCharacter(character)) {
+                multiplayerName += character;
+            } else if (activeMenuTextField == 1 && multiplayerHost.length() < 64 && isHostCharacter(character)) {
+                multiplayerHost += character;
+            } else if (activeMenuTextField == 2 && multiplayerPort.length() < 5 && Character.isDigit(character)) {
+                multiplayerPort += character;
+            }
+            return true;
+        }
         return false;
     }
 
@@ -3247,6 +3517,14 @@ public class TinyCraft {
 
     private boolean isSeedCharacter(char character) {
         return Character.isLetterOrDigit(character) || character == '-' || character == '_';
+    }
+
+    private boolean isProfileNameCharacter(char character) {
+        return Character.isLetterOrDigit(character) || character == '_' || character == '-';
+    }
+
+    private boolean isHostCharacter(char character) {
+        return Character.isLetterOrDigit(character) || character == '.' || character == '-' || character == '_' || character == ':';
     }
 
     private void activateMainMenuOption() {
@@ -3261,6 +3539,9 @@ public class TinyCraft {
                     lastWorldSlotClickTime = -1.0;
                     return;
                 case 1:
+                    openMultiplayerScreen();
+                    return;
+                case 2:
                     mainMenuScreen = GameConfig.MENU_SCREEN_OPTIONS;
                     mainMenuSelection = 0;
                     optionsOpenedFromPause = false;
@@ -3301,6 +3582,16 @@ public class TinyCraft {
                     mainMenuSelection = 0;
                     return;
             }
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_MULTIPLAYER) {
+            activateMultiplayerOption();
+            return;
+        }
+
+        if (mainMenuScreen == GameConfig.MENU_SCREEN_OPEN_LAN) {
+            activateOpenLanOption();
+            return;
         }
 
         if (mainMenuScreen == GameConfig.MENU_SCREEN_CREATE_WORLD) {
@@ -3406,6 +3697,7 @@ public class TinyCraft {
         world.prepareForPlayer(player);
         world.primeStreamingAround(player);
         warmupWorldStreaming(worldInfo.name);
+        world.clearNetworkDirtyBlocks();
         long meshBuildStart = System.nanoTime();
         renderer.buildAllChunkMeshes();
         FrameProfiler.logTask("renderer.buildAllChunkMeshes", System.nanoTime() - meshBuildStart);
@@ -3502,6 +3794,8 @@ public class TinyCraft {
     }
 
     private void enterMainMenu() {
+        multiplayer.stop();
+        world.clearRemotePlayers();
         if (worldLoaded) {
             syncPlayerModeState();
             saveCurrentWorldMetadata();
@@ -3837,6 +4131,147 @@ public class TinyCraft {
         activeMenuTextField = 0;
         mainMenuScreen = GameConfig.MENU_SCREEN_RENAME_WORLD;
         mainMenuSelection = 0;
+    }
+
+    private void openMultiplayerScreen() {
+        multiplayerName = localProfile.name;
+        if (multiplayerHost == null || multiplayerHost.trim().isEmpty()) {
+            multiplayerHost = "127.0.0.1";
+        }
+        if (multiplayerPort == null || multiplayerPort.trim().isEmpty()) {
+            multiplayerPort = Integer.toString(MultiplayerProtocol.DEFAULT_PORT);
+        }
+        multiplayerStatus = multiplayer.status();
+        activeMenuTextField = 0;
+        mainMenuScreen = GameConfig.MENU_SCREEN_MULTIPLAYER;
+        mainMenuSelection = 1;
+    }
+
+    private void activateMultiplayerOption() {
+        saveMultiplayerProfileName();
+        if (mainMenuSelection == 0) {
+            lanGameMode = creativeMode ? 1 : (spectatorMode ? 2 : 0);
+            lanAllowCheats = creativeMode || spectatorMode;
+            mainMenuScreen = GameConfig.MENU_SCREEN_OPEN_LAN;
+            mainMenuSelection = 0;
+            activeMenuTextField = -1;
+            return;
+        }
+        if (mainMenuSelection == 1) {
+            resetClientMirrorWorldState();
+            multiplayer.connect(multiplayerHost.trim(), parseMultiplayerPort());
+            return;
+        }
+        mainMenuScreen = GameConfig.MENU_SCREEN_MAIN;
+        mainMenuSelection = 1;
+        activeMenuTextField = -1;
+    }
+
+    private void activateOpenLanOption() {
+        if (mainMenuSelection == 0) {
+            if (!worldLoaded) {
+                if (!createFreshLanHostWorld()) {
+                    multiplayerStatus = "Host failed: cannot create LAN world";
+                    return;
+                }
+            }
+            setGameMode(lanGameMode);
+            multiplayer.startHost(world, player, parseMultiplayerPort());
+            mainMenuActive = false;
+            paused = false;
+            inventoryOpen = false;
+            deathScreenActive = false;
+            activeMenuTextField = -1;
+            updateCursorMode();
+            return;
+        }
+        mainMenuScreen = GameConfig.MENU_SCREEN_MULTIPLAYER;
+        mainMenuSelection = 0;
+        activeMenuTextField = -1;
+    }
+
+    private void resetClientMirrorWorldState() {
+        renderer.clearWorldMeshes();
+        world.clearRuntimeWorld();
+        multiplayerWorldLoading = false;
+        worldLoaded = false;
+        loadedWorldName = null;
+        hoveredBlock = null;
+        activeChestContainer = null;
+        activeFurnace = null;
+        inventoryOpen = false;
+        inventoryScreenMode = GameConfig.INVENTORY_SCREEN_PLAYER;
+        resetMovement();
+        resetBreakingProgress();
+        resetRenderInterpolation();
+        resetPlayerFluidState();
+    }
+
+    private boolean createFreshLanHostWorld() {
+        if (worldLoaded) {
+            return true;
+        }
+        String worldName = uniqueWorldName("world_lan_" + System.currentTimeMillis());
+        long seed = System.nanoTime() ^ new Random().nextLong();
+        TerrainPreset terrainPreset = TerrainPreset.NEW_WORLD_DEFAULT;
+        Path worldDirectory = RuntimePaths.resolve(GameConfig.SAVE_ROOT_DIRECTORY, worldName);
+        try {
+            writeWorldMetadata(worldDirectory, seed, lanGameMode, 2, terrainPreset);
+        } catch (IOException ignored) {
+            return false;
+        }
+        renderer.clearWorldMeshes();
+        world.clearRuntimeWorld();
+        showLoadingScreen(loadingTerrainText(), worldName);
+        long worldGenerationStart = System.nanoTime();
+        world.configureWorld(worldDirectory, seed, terrainPreset);
+        world.initializeNoise();
+        world.generateWorld();
+        FrameProfiler.logTask("world.generateWorld", System.nanoTime() - worldGenerationStart);
+        resetInventoryScreenStateForWorldLoad();
+        inventory.clearAll();
+        resetPlayerStateForNewWorld();
+        world.placePlayerAtSpawn(player);
+        currentWorldDifficulty = 2;
+        setGameMode(lanGameMode);
+        world.prepareForPlayer(player);
+        world.primeStreamingAround(player);
+        warmupWorldStreaming(worldName);
+        world.clearNetworkDirtyBlocks();
+        renderer.buildAllChunkMeshes();
+        loadedWorldName = worldName;
+        worldLoaded = true;
+        deathScreenActive = false;
+        inventoryDroppedOnDeath = false;
+        player.health = Math.max(0.5, player.health);
+        player.hunger = clamp(player.hunger, 0.0, GameConfig.MAX_HUNGER);
+        player.verticalVelocity = 0.0;
+        player.isGrounded = true;
+        resetRenderInterpolation();
+        resetPlayerDamageTimers();
+        resetPlayerFluidState();
+        resetMovement();
+        resetBreakingProgress();
+        syncPlayerModeState();
+        syncSelectedHotbarItem();
+        refreshAvailableWorlds();
+        selectWorldByName(worldName);
+        return true;
+    }
+
+    private void saveMultiplayerProfileName() {
+        localProfile.setName(multiplayerName);
+        multiplayerName = localProfile.name;
+    }
+
+    private int parseMultiplayerPort() {
+        try {
+            int parsed = Integer.parseInt(multiplayerPort.trim());
+            return clamp(parsed, 1, 65535);
+        } catch (Exception ignored) {
+            multiplayerPort = Integer.toString(MultiplayerProtocol.DEFAULT_PORT);
+            return MultiplayerProtocol.DEFAULT_PORT;
+        }
     }
 
     private String loadingTerrainText() {

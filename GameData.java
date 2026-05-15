@@ -211,24 +211,30 @@ final class GameConfig {
     static final int MENU_SCREEN_OPTIONS = 2;
     static final int MENU_SCREEN_CREATE_WORLD = 3;
     static final int MENU_SCREEN_RENAME_WORLD = 4;
+    static final int MENU_SCREEN_MULTIPLAYER = 5;
+    static final int MENU_SCREEN_OPEN_LAN = 6;
     static final int INVENTORY_SCREEN_PLAYER = 0;
     static final int INVENTORY_SCREEN_WORKBENCH = 1;
     static final int INVENTORY_SCREEN_CHEST = 2;
     static final int INVENTORY_SCREEN_FURNACE = 3;
 
-    static final String[] PAUSE_OPTIONS = {"Вернуться в игру", "Настройки...", "Сохранить и выйти в меню"};
+    static final String[] PAUSE_OPTIONS = {"Вернуться в игру", "Настройки...", "Открыть для LAN", "Сохранить и выйти в меню"};
     static final String[] DEATH_OPTIONS = {"Возродиться", "Выйти в меню"};
-    static final String[] WORLD_MENU_ACTIONS = {"Одиночная игра", "Настройки", "Выйти"};
+    static final String[] WORLD_MENU_ACTIONS = {"Одиночная игра", "Мультиплеер", "Настройки", "Выйти"};
     static final String[] SINGLEPLAYER_ACTIONS = {"Играть", "Создать", "Переимен.", "Удалить", "Назад"};
+    static final String[] MULTIPLAYER_ACTIONS = {"Открыть мир", "Подключиться", "Назад"};
+    static final String[] LAN_ACTIONS = {"Открыть мир для LAN", "Отмена"};
     static final String[] CREATE_WORLD_ACTIONS = {"Создать мир", "Отмена"};
     static final String[] RENAME_WORLD_ACTIONS = {"Переименовать", "Отмена"};
     static final String[] CREATIVE_TABS = {"Блоки", "Природа", "Инструменты", "Жидкости"};
     static final String[] GAME_MODE_OPTIONS = {"Выживание", "Творческий", "Наблюдатель"};
     static final String[] DIFFICULTY_OPTIONS = {"Мирная", "Легкая", "Обычная", "Сложная"};
-    static final String[] PAUSE_OPTIONS_EN = {"Back to Game", "Options...", "Save and Quit to Title"};
+    static final String[] PAUSE_OPTIONS_EN = {"Back to Game", "Options...", "Open to LAN", "Save and Quit to Title"};
     static final String[] DEATH_OPTIONS_EN = {"Respawn", "Exit to Menu"};
-    static final String[] WORLD_MENU_ACTIONS_EN = {"Singleplayer", "Options", "Quit"};
+    static final String[] WORLD_MENU_ACTIONS_EN = {"Singleplayer", "Multiplayer", "Options", "Quit"};
     static final String[] SINGLEPLAYER_ACTIONS_EN = {"Play", "Create New", "Rename", "Delete", "Back"};
+    static final String[] MULTIPLAYER_ACTIONS_EN = {"Open World", "Connect", "Back"};
+    static final String[] LAN_ACTIONS_EN = {"Start LAN World", "Cancel"};
     static final String[] CREATE_WORLD_ACTIONS_EN = {"Create New World", "Cancel"};
     static final String[] RENAME_WORLD_ACTIONS_EN = {"Rename", "Cancel"};
     static final String[] CREATIVE_TABS_EN = {"Blocks", "Nature", "Tools", "Fluids"};
@@ -358,6 +364,14 @@ final class GameConfig {
 
     static String[] singleplayerActions() {
         return Settings.isRussian() ? SINGLEPLAYER_ACTIONS : SINGLEPLAYER_ACTIONS_EN;
+    }
+
+    static String[] multiplayerActions() {
+        return Settings.isRussian() ? MULTIPLAYER_ACTIONS : MULTIPLAYER_ACTIONS_EN;
+    }
+
+    static String[] lanActions() {
+        return Settings.isRussian() ? LAN_ACTIONS : LAN_ACTIONS_EN;
     }
 
     static String[] createWorldActions() {
@@ -731,6 +745,34 @@ final class PlayerState extends Entity {
 
     double eyeHeight() {
         return sneaking ? GameConfig.PLAYER_SNEAK_EYE_HEIGHT : GameConfig.EYE_HEIGHT;
+    }
+}
+
+final class RemotePlayerState extends Entity {
+    final java.util.UUID uuid;
+    String name;
+    double yaw = PlayerState.DEFAULT_YAW;
+    double pitch = PlayerState.DEFAULT_PITCH;
+    byte heldItem = GameConfig.AIR;
+    boolean sneaking;
+    boolean spectatorMode;
+    long lastUpdateMillis;
+
+    RemotePlayerState(java.util.UUID uuid, String name) {
+        super(0.5, GameConfig.SURFACE_Y + 1.0, 0.5, GameConfig.MAX_HEALTH);
+        this.uuid = uuid;
+        this.name = name == null ? "Player" : name;
+        this.lastUpdateMillis = System.currentTimeMillis();
+    }
+
+    @Override
+    double radius() {
+        return GameConfig.PLAYER_RADIUS;
+    }
+
+    @Override
+    double height() {
+        return sneaking ? GameConfig.PLAYER_SNEAK_HEIGHT : GameConfig.PLAYER_HEIGHT;
     }
 }
 

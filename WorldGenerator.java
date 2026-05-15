@@ -99,8 +99,6 @@ final class WorldGenerator {
             return 0L;
         }
         long now = System.nanoTime();
-        double millis = (now - stageStart) / 1_000_000.0;
-        System.out.println(String.format(java.util.Locale.ROOT, "WorldGenerator[%d,%d] %s %.3f ms", chunkX, chunkZ, stage, millis));
         return now;
     }
 
