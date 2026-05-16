@@ -3,6 +3,13 @@
   "configurations": [
     {
       "type": "java",
+      "name": "TinyCraftServer",
+      "request": "launch",
+      "mainClass": "TinyCraftServer",
+      "projectName": "MinecraftTest"
+    },
+    {
+      "type": "java",
       "name": "TinyCraft",
       "request": "launch",
       "mainClass": "TinyCraft",

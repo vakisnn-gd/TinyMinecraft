@@ -903,6 +903,75 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
     }
 
+    boolean loadNetworkPlayerState(UUID uuid, PlayerState player) {
+        if (uuid == null || player == null || worldDirectory == null) {
+            return false;
+        }
+        Path playerPath = networkPlayerPath(uuid);
+        if (!Files.isRegularFile(playerPath)) {
+            return false;
+        }
+        try (DataInputStream input = new DataInputStream(new BufferedInputStream(Files.newInputStream(playerPath)))) {
+            double savedX = input.readDouble();
+            double savedY = input.readDouble();
+            double savedZ = input.readDouble();
+            double savedYaw = input.readDouble();
+            double savedPitch = input.readDouble();
+            if (!Double.isFinite(savedX) || !Double.isFinite(savedY) || !Double.isFinite(savedZ)
+                || !Double.isFinite(savedYaw) || !Double.isFinite(savedPitch)) {
+                return false;
+            }
+            player.setPosition(savedX, savedY, savedZ);
+            player.yaw = savedYaw;
+            player.pitch = savedPitch;
+            if (input.available() >= 2) {
+                int savedMode = input.readUnsignedByte();
+                player.creativeMode = savedMode == 1;
+                player.spectatorMode = savedMode == 2;
+                player.flightEnabled = input.readBoolean();
+            }
+            if (input.available() >= 16) {
+                player.health = clamp(input.readDouble(), 0.0, GameConfig.MAX_HEALTH);
+                player.hunger = clamp(input.readDouble(), 0.0, GameConfig.MAX_HUNGER);
+            }
+            return true;
+        } catch (IOException exception) {
+            if (GameConfig.ENABLE_DEBUG_LOGS) {
+                System.out.println("VoxelWorld: failed to load network player state: " + exception.getMessage());
+            }
+            return false;
+        }
+    }
+
+    void saveNetworkPlayerState(UUID uuid, PlayerState player) {
+        if (uuid == null || player == null || worldDirectory == null) {
+            return;
+        }
+        try {
+            Path playersDirectory = worldDirectory.resolve("players");
+            Files.createDirectories(playersDirectory);
+            try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(networkPlayerPath(uuid))))) {
+                output.writeDouble(player.x);
+                output.writeDouble(player.y);
+                output.writeDouble(player.z);
+                output.writeDouble(player.yaw);
+                output.writeDouble(player.pitch);
+                output.writeByte(player.spectatorMode ? 2 : (player.creativeMode ? 1 : 0));
+                output.writeBoolean(player.flightEnabled);
+                output.writeDouble(clamp(player.health, 0.0, GameConfig.MAX_HEALTH));
+                output.writeDouble(clamp(player.hunger, 0.0, GameConfig.MAX_HUNGER));
+            }
+        } catch (IOException exception) {
+            if (GameConfig.ENABLE_DEBUG_LOGS) {
+                System.out.println("VoxelWorld: failed to save network player state: " + exception.getMessage());
+            }
+        }
+    }
+
+    private Path networkPlayerPath(UUID uuid) {
+        return worldDirectory.resolve("players").resolve(uuid.toString() + ".dat");
+    }
+
     private void loadContainers() {
         chestContainers.clear();
         furnaces.clear();

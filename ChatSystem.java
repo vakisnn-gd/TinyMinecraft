@@ -128,6 +128,10 @@ final class ChatSystem {
         }
 
         String command = parts[0].toLowerCase(Locale.ROOT);
+        if ("list".equals(command) || "ping".equals(command) || "msg".equals(command) || "kick".equals(command)) {
+            target.sendChat(submitted);
+            return;
+        }
         if ("tp".equals(command)) {
             executeTeleport(parts, target);
             return;
