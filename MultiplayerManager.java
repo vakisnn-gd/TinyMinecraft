@@ -9,8 +9,12 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -24,12 +28,16 @@ final class MultiplayerManager {
         void onClientBlockUpdate(int x, int y, int z);
         void onClientDisconnected(String reason);
         void onClientHealth(double health);
+        void onClientInventoryAdd(byte itemId, int count, int durabilityDamage);
     }
 
     private static final int CONNECT_TIMEOUT_MS = 6000;
     private static final double PLAYER_SEND_INTERVAL = 0.05;
     private static final double HOST_BROADCAST_INTERVAL = 0.08;
-    private static final double ENTITY_SNAPSHOT_INTERVAL = 0.35;
+    private static final double ENTITY_SNAPSHOT_INTERVAL = 0.08;
+    private static final double PLAYER_LIST_INTERVAL = 1.0;
+    private static final double PING_INTERVAL = 1.0;
+    private static final double PING_TIMEOUT_SECONDS = 5.0;
     private static final double CLIENT_CHUNK_REQUEST_INTERVAL = 0.15;
     private static final int CLIENT_CHUNK_REQUESTS_PER_TICK = 4;
     private static final int INITIAL_CHUNK_SYNC_RADIUS = 3;
@@ -43,6 +51,8 @@ final class MultiplayerManager {
     private final ConcurrentHashMap<UUID, ServerClient> serverClients = new ConcurrentHashMap<>();
     private final HashSet<Long> requestedClientColumns = new HashSet<>();
     private final ArrayDeque<Long> clientColumnQueue = new ArrayDeque<>();
+    private final GameClientSession clientSession = new GameClientSession();
+    private final ArrayList<PlayerListEntry> playerListSnapshot = new ArrayList<>();
 
     private volatile boolean hostRunning;
     private volatile boolean clientRunning;
@@ -51,11 +61,18 @@ final class MultiplayerManager {
     private Thread acceptThread;
     private Connection clientConnection;
     private PlayerState activeHostPlayer;
+    private int maxPlayers = 8;
+    private boolean allowPvp = true;
+    private int dedicatedChunkLogBudget = 64;
     private String status = "Offline";
     private double clientPlayerSendTimer;
     private double hostBroadcastTimer;
     private double entitySnapshotTimer;
+    private double playerListTimer;
+    private double pingTimer;
     private double clientChunkRequestTimer;
+    private long pendingClientPingTime = -1L;
+    private long lastClientPongMillis;
     private volatile boolean clientDisconnectEventQueued;
 
     MultiplayerManager(LocalProfile profile, Listener listener) {
@@ -96,9 +113,36 @@ final class MultiplayerManager {
             return false;
         }
         activeWorld = world;
+        activeHostPlayer = hostPlayer;
+        maxPlayers = 8;
+        allowPvp = true;
+        playerListSnapshot.clear();
         hostRunning = true;
         setStatus("Hosting on port " + port);
         acceptThread = new Thread(() -> acceptLoop(world, hostPlayer), "TinyCraft LAN host");
+        acceptThread.setDaemon(true);
+        acceptThread.start();
+        return true;
+    }
+
+    boolean startDedicatedHost(final VoxelWorld world, int port, int maxPlayers, boolean allowPvp) {
+        stop();
+        try {
+            serverSocket = new ServerSocket();
+            serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
+        } catch (IOException exception) {
+            setStatus("Dedicated host failed: " + exception.getMessage());
+            return false;
+        }
+        activeWorld = world;
+        activeHostPlayer = null;
+        this.maxPlayers = Math.max(1, maxPlayers);
+        this.allowPvp = allowPvp;
+        dedicatedChunkLogBudget = 64;
+        playerListSnapshot.clear();
+        hostRunning = true;
+        setStatus("Listening on 0.0.0.0:" + port);
+        acceptThread = new Thread(() -> acceptLoop(world, null), "TinyCraft dedicated listener");
         acceptThread.setDaemon(true);
         acceptThread.start();
         return true;
@@ -110,6 +154,10 @@ final class MultiplayerManager {
         clientDisconnectEventQueued = false;
         requestedClientColumns.clear();
         clientColumnQueue.clear();
+        playerListSnapshot.clear();
+        clientSession.replacePlayerList(playerListSnapshot);
+        pendingClientPingTime = -1L;
+        lastClientPongMillis = 0L;
         setStatus("Connecting to " + host + ":" + port);
         Thread thread = new Thread(() -> clientConnectLoop(host, port), "TinyCraft LAN client");
         thread.setDaemon(true);
@@ -118,6 +166,11 @@ final class MultiplayerManager {
     }
 
     void stop() {
+        boolean hadNetworkState = hostRunning
+            || clientRunning
+            || clientConnection != null
+            || serverSocket != null
+            || !serverClients.isEmpty();
         hostRunning = false;
         clientRunning = false;
         closeQuietly(clientConnection);
@@ -137,7 +190,11 @@ final class MultiplayerManager {
         pendingChunkRequests.clear();
         requestedClientColumns.clear();
         clientColumnQueue.clear();
-        setStatus("Offline");
+        playerListSnapshot.clear();
+        clientSession.replacePlayerList(playerListSnapshot);
+        if (hadNetworkState || !"Offline".equals(status)) {
+            setStatus("Offline");
+        }
     }
 
     void tickHost(VoxelWorld world, PlayerState hostPlayer, byte hostHeldItem, double deltaTime) {
@@ -147,8 +204,11 @@ final class MultiplayerManager {
         activeWorld = world;
         activeHostPlayer = hostPlayer;
         processHostRequests(world);
+        processRemoteClientItemPickups(world);
         hostBroadcastTimer += deltaTime;
         entitySnapshotTimer += deltaTime;
+        playerListTimer += deltaTime;
+        pingTimer += deltaTime;
         if (hostBroadcastTimer >= HOST_BROADCAST_INTERVAL) {
             hostBroadcastTimer = 0.0;
             broadcastPlayerState(profile.uuid, profile.name, hostPlayer, hostHeldItem);
@@ -162,6 +222,47 @@ final class MultiplayerManager {
             broadcastMobSnapshot(world);
             broadcastDroppedItemSnapshot(world);
         }
+        if (pingTimer >= PING_INTERVAL) {
+            pingTimer = 0.0;
+            pingServerClients();
+        }
+        if (playerListTimer >= PLAYER_LIST_INTERVAL) {
+            playerListTimer = 0.0;
+            broadcastPlayerList(hostPlayer, hostHeldItem);
+        }
+    }
+
+    void tickDedicated(VoxelWorld world, double deltaTime) {
+        if (!hostRunning) {
+            return;
+        }
+        activeWorld = world;
+        processHostRequests(world);
+        processRemoteClientItemPickups(world);
+        hostBroadcastTimer += deltaTime;
+        entitySnapshotTimer += deltaTime;
+        playerListTimer += deltaTime;
+        pingTimer += deltaTime;
+        if (hostBroadcastTimer >= HOST_BROADCAST_INTERVAL) {
+            hostBroadcastTimer = 0.0;
+            broadcastWorldTime(world.getWorldTime());
+            for (ServerClient client : serverClients.values()) {
+                broadcastPlayerState(client.uuid, client.name, client.player, client.heldItem);
+            }
+        }
+        if (entitySnapshotTimer >= ENTITY_SNAPSHOT_INTERVAL) {
+            entitySnapshotTimer = 0.0;
+            broadcastMobSnapshot(world);
+            broadcastDroppedItemSnapshot(world);
+        }
+        if (pingTimer >= PING_INTERVAL) {
+            pingTimer = 0.0;
+            pingServerClients();
+        }
+        if (playerListTimer >= PLAYER_LIST_INTERVAL) {
+            playerListTimer = 0.0;
+            broadcastPlayerList(null, GameConfig.AIR);
+        }
     }
 
     void tickClient(VoxelWorld world, PlayerState player, byte heldItem, int renderDistanceChunks, double deltaTime) {
@@ -171,6 +272,7 @@ final class MultiplayerManager {
         activeWorld = world;
         clientPlayerSendTimer += deltaTime;
         clientChunkRequestTimer += deltaTime;
+        pingTimer += deltaTime;
         if (clientPlayerSendTimer >= PLAYER_SEND_INTERVAL) {
             clientPlayerSendTimer = 0.0;
             sendPlayerState(clientConnection, profile.uuid, profile.name, player, heldItem);
@@ -182,6 +284,13 @@ final class MultiplayerManager {
                 long key = clientColumnQueue.removeFirst();
                 sendChunkRequest(clientConnection, unpackColumnX(key), unpackColumnZ(key));
             }
+        }
+        if (pingTimer >= PING_INTERVAL) {
+            pingTimer = 0.0;
+            sendClientPing();
+        }
+        if (lastClientPongMillis > 0L && System.currentTimeMillis() - lastClientPongMillis > (long) (PING_TIMEOUT_SECONDS * 1000.0)) {
+            clientSession.setPingMs(-1);
         }
     }
 
@@ -205,7 +314,8 @@ final class MultiplayerManager {
             return;
         }
         if (hostRunning) {
-            String formatted = "<" + profile.name + "> " + message;
+            String senderName = profile == null ? "Server" : profile.name;
+            String formatted = "<" + senderName + "> " + message;
             emitChat(formatted);
             broadcastChat(formatted);
         } else if (clientRunning && clientConnection != null) {
@@ -213,7 +323,155 @@ final class MultiplayerManager {
         }
     }
 
-    void sendBlockBreak(int x, int y, int z) {
+    void sendCommand(String commandLine) {
+        if (commandLine == null || commandLine.trim().isEmpty()) {
+            return;
+        }
+        if (hostRunning) {
+            handleServerCommand(profile == null ? null : profile.uuid, profile == null ? "Server" : profile.name, commandLine);
+        } else if (clientRunning && clientConnection != null) {
+            send(clientConnection, MultiplayerProtocol.COMMAND, output -> output.writeUTF(commandLine));
+        }
+    }
+
+    List<PlayerListEntry> playerListSnapshot() {
+        ArrayList<PlayerListEntry> copy = new ArrayList<>(playerListSnapshot);
+        final UUID localUuid = profile == null ? null : profile.uuid;
+        Collections.sort(copy, new Comparator<PlayerListEntry>() {
+            @Override
+            public int compare(PlayerListEntry a, PlayerListEntry b) {
+                boolean aLocal = localUuid != null && localUuid.equals(a.uuid);
+                boolean bLocal = localUuid != null && localUuid.equals(b.uuid);
+                if (aLocal != bLocal) {
+                    return aLocal ? -1 : 1;
+                }
+                return a.name.compareToIgnoreCase(b.name);
+            }
+        });
+        return Collections.unmodifiableList(copy);
+    }
+
+    int pingMs() {
+        return clientSession.pingMs();
+    }
+
+    String playerListText() {
+        List<PlayerListEntry> entries = playerListSnapshot();
+        if (entries.isEmpty()) {
+            return "Players: (none)";
+        }
+        StringBuilder builder = new StringBuilder("Players: ");
+        for (int i = 0; i < entries.size(); i++) {
+            PlayerListEntry entry = entries.get(i);
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(entry.name).append(" (").append(formatPing(entry.pingMs)).append(")");
+        }
+        return builder.toString();
+    }
+
+    String pingText() {
+        return "Ping: " + formatPing(clientSession.pingMs());
+    }
+
+    private String formatPing(int pingMs) {
+        return pingMs < 0 ? "? ms" : pingMs + " ms";
+    }
+
+    private void handleServerCommand(UUID senderUuid, String senderName, String commandLine) {
+        String raw = commandLine == null ? "" : commandLine.trim();
+        if (raw.startsWith("/")) {
+            raw = raw.substring(1).trim();
+        }
+        if (raw.isEmpty()) {
+            return;
+        }
+        String[] parts = raw.split("\\s+", 3);
+        String command = parts[0].toLowerCase(Locale.ROOT);
+        if ("list".equals(command)) {
+            sendCommandFeedback(senderUuid, playerListText());
+        } else if ("ping".equals(command)) {
+            sendCommandFeedback(senderUuid, "Ping: " + pingFor(senderUuid));
+        } else if ("msg".equals(command)) {
+            if (parts.length < 3) {
+                sendCommandFeedback(senderUuid, "Usage: /msg <player> <message>");
+            } else {
+                sendPrivateMessage(senderUuid, senderName, parts[1], parts[2]);
+            }
+        } else if ("kick".equals(command)) {
+            if (profile != null && (senderUuid == null || !profile.uuid.equals(senderUuid))) {
+                sendCommandFeedback(senderUuid, "Only the host can use /kick.");
+                return;
+            }
+            if (parts.length < 2) {
+                sendCommandFeedback(senderUuid, "Usage: /kick <player> [reason]");
+            } else {
+                String[] kickParts = raw.split("\\s+", 3);
+                kickPlayer(kickParts[1], kickParts.length >= 3 ? kickParts[2] : "Kicked by host.");
+            }
+        } else {
+            sendCommandFeedback(senderUuid, "Unknown multiplayer command: /" + parts[0]);
+        }
+    }
+
+    private String pingFor(UUID uuid) {
+        if (uuid != null && profile != null && profile.uuid.equals(uuid)) {
+            return "0 ms";
+        }
+        ServerClient client = uuid == null ? null : serverClients.get(uuid);
+        return client == null ? "? ms" : formatPing(client.pingMs);
+    }
+
+    private void sendPrivateMessage(UUID senderUuid, String senderName, String targetName, String message) {
+        ServerClient target = findClientByName(targetName);
+        if (target == null) {
+            sendCommandFeedback(senderUuid, "Player not found: " + targetName);
+            return;
+        }
+        String from = senderName == null || senderName.trim().isEmpty() ? "Server" : senderName;
+        String formatted = "[PM] <" + from + "> " + message;
+        send(target.connection, MultiplayerProtocol.CHAT, output -> output.writeUTF(formatted));
+        sendCommandFeedback(senderUuid, "[PM to " + target.name + "] " + message);
+    }
+
+    private void kickPlayer(String targetName, String reason) {
+        ServerClient target = findClientByName(targetName);
+        if (target == null) {
+            emitChat("Player not found: " + targetName);
+            return;
+        }
+        sendDisconnect(target.connection, reason == null || reason.trim().isEmpty() ? "Kicked." : reason);
+        closeQuietly(target.connection);
+    }
+
+    private ServerClient findClientByName(String name) {
+        if (name == null) {
+            return null;
+        }
+        for (ServerClient client : serverClients.values()) {
+            if (client.name.equalsIgnoreCase(name)) {
+                return client;
+            }
+        }
+        return null;
+    }
+
+    private void sendCommandFeedback(UUID targetUuid, String message) {
+        if (message == null || message.trim().isEmpty()) {
+            return;
+        }
+        if (targetUuid == null || (profile != null && profile.uuid.equals(targetUuid))) {
+            emitChat(message);
+            return;
+        }
+        ServerClient client = serverClients.get(targetUuid);
+        if (client != null) {
+            send(client.connection, MultiplayerProtocol.CHAT, output -> output.writeUTF(message));
+        }
+    }
+
+    void sendBlockBreak(int x, int y, int z, byte heldItem) {
         if (clientRunning && clientConnection != null) {
             send(clientConnection, MultiplayerProtocol.BLOCK_ACTION, output -> {
                 output.writeByte(MultiplayerProtocol.BLOCK_BREAK);
@@ -223,7 +481,7 @@ final class MultiplayerManager {
                 output.writeInt(x);
                 output.writeInt(y);
                 output.writeInt(z);
-                output.writeByte(GameConfig.AIR);
+                output.writeByte(heldItem);
             });
         }
     }
@@ -254,8 +512,66 @@ final class MultiplayerManager {
                 output.writeInt(damage);
             });
         } else if (hostRunning) {
-            applyPlayerAttack(profile.uuid, targetUuid, damage);
+            if (profile != null) {
+                applyPlayerAttack(profile.uuid, targetUuid, damage);
+            }
         }
+    }
+
+    void sendMobAttack(int damage, double knockback) {
+        if (damage <= 0) {
+            return;
+        }
+        if (clientRunning && clientConnection != null) {
+            send(clientConnection, MultiplayerProtocol.MOB_ATTACK, output -> {
+                output.writeInt(damage);
+                output.writeDouble(knockback);
+            });
+        }
+    }
+
+    void broadcastServerMessage(String message) {
+        if (message == null || message.trim().isEmpty()) {
+            return;
+        }
+        String formatted = "[Server] " + message.trim();
+        emitChat(formatted);
+        broadcastChat(formatted);
+    }
+
+    int connectedPlayerCount() {
+        return serverClients.size();
+    }
+
+    String connectedPlayerNames() {
+        StringBuilder builder = new StringBuilder();
+        for (ServerClient client : serverClients.values()) {
+            if (builder.length() > 0) {
+                builder.append(", ");
+            }
+            builder.append(client.name);
+        }
+        return builder.length() == 0 ? "(none)" : builder.toString();
+    }
+
+    void saveConnectedPlayers(VoxelWorld world) {
+        if (world == null) {
+            return;
+        }
+        for (ServerClient client : serverClients.values()) {
+            world.saveNetworkPlayerState(client.uuid, client.player);
+        }
+    }
+
+    void kickByName(String targetName, String reason) {
+        kickPlayer(targetName, reason);
+    }
+
+    PlayerState firstConnectedPlayer() {
+        for (ServerClient client : serverClients.values()) {
+            return client.player;
+        }
+        return activeHostPlayer;
     }
 
     void broadcastBlockNeighborhood(VoxelWorld world, int x, int y, int z) {
@@ -312,14 +628,27 @@ final class MultiplayerManager {
                 sendDisconnect(connection, "Incompatible multiplayer protocol.");
                 return;
             }
-            if (profile.uuid.equals(uuid) || serverClients.containsKey(uuid)) {
+            if ((profile != null && profile.uuid.equals(uuid)) || serverClients.containsKey(uuid)) {
                 sendDisconnect(connection, "Duplicate player uuid.");
                 return;
             }
+            if (serverClients.size() >= maxPlayers) {
+                sendDisconnect(connection, "Server is full.");
+                return;
+            }
             ServerClient client = new ServerClient(uuid, name, connection);
-            client.player.setPosition(hostPlayer.x + 1.5, hostPlayer.y, hostPlayer.z + 1.5);
-            client.player.y = world.safeStandingYAt(client.player.x, client.player.z);
+            if (world.loadNetworkPlayerState(uuid, client.player)) {
+                client.player.capturePreviousPosition();
+            } else if (hostPlayer != null) {
+                client.player.setPosition(hostPlayer.x + 1.5, hostPlayer.y, hostPlayer.z + 1.5);
+                client.player.y = world.safeStandingYAt(client.player.x, client.player.z);
+            } else {
+                world.placePlayerAtSpawn(client.player);
+            }
             serverClients.put(uuid, client);
+            if (profile == null) {
+                System.out.println("Join: " + client.name + " " + client.uuid);
+            }
             mainThreadEvents.add(() -> world.updateRemotePlayer(
                 client.uuid,
                 client.name,
@@ -354,15 +683,22 @@ final class MultiplayerManager {
         } catch (IOException exception) {
             if (hostRunning) {
                 setStatus("Client disconnected: " + exception.getMessage());
+                if (profile == null) {
+                    System.out.println("Client error: " + exception.getMessage());
+                }
             }
         } finally {
             closeQuietly(connection);
             if (uuid != null) {
                 ServerClient removed = serverClients.remove(uuid);
                 if (removed != null) {
+                    world.saveNetworkPlayerState(removed.uuid, removed.player);
                     mainThreadEvents.add(() -> world.removeRemotePlayer(removed.uuid));
                     broadcastDespawn(uuid);
                     emitChat(removed.name + " left the world.");
+                    if (profile == null) {
+                        System.out.println("Leave: " + removed.name + " " + removed.uuid);
+                    }
                 }
             }
         }
@@ -385,6 +721,21 @@ final class MultiplayerManager {
             UUID targetUuid = MultiplayerProtocol.readUuid(input);
             int damage = input.readInt();
             applyPlayerAttack(client.uuid, targetUuid, damage);
+        } else if (packet.type == MultiplayerProtocol.MOB_ATTACK) {
+            int damage = input.readInt();
+            double knockback = input.readDouble();
+            applyMobAttack(client, damage, knockback);
+        } else if (packet.type == MultiplayerProtocol.PING) {
+            long timestamp = input.readLong();
+            send(client.connection, MultiplayerProtocol.PONG, output -> output.writeLong(timestamp));
+        } else if (packet.type == MultiplayerProtocol.PONG) {
+            long timestamp = input.readLong();
+            if (client.pendingPingTime == timestamp) {
+                client.pingMs = (int) Math.max(0L, Math.min(9999L, System.currentTimeMillis() - timestamp));
+                client.pendingPingTime = -1L;
+            }
+        } else if (packet.type == MultiplayerProtocol.COMMAND) {
+            handleServerCommand(client.uuid, client.name, input.readUTF());
         } else if (packet.type == MultiplayerProtocol.DISCONNECT) {
             closeQuietly(client.connection);
         }
@@ -396,6 +747,7 @@ final class MultiplayerManager {
         if (!client.uuid.equals(packetUuid)) {
             throw new IOException("player uuid mismatch");
         }
+        client.name = packetName;
         client.player.capturePreviousPosition();
         client.player.x = input.readDouble();
         client.player.y = input.readDouble();
@@ -405,7 +757,13 @@ final class MultiplayerManager {
         client.heldItem = input.readByte();
         client.player.sneaking = input.readBoolean();
         client.player.spectatorMode = input.readBoolean();
-        client.player.health = input.readDouble();
+        double packetHealth = input.readDouble();
+        long now = System.currentTimeMillis();
+        boolean allowHealthIncrease = client.player.health <= 0.0
+            || now - client.lastServerDamageMillis > 1500L;
+        if (packetHealth <= client.player.health || allowHealthIncrease) {
+            client.player.health = packetHealth;
+        }
         mainThreadEvents.add(() -> client.worldUpdate(packetName));
     }
 
@@ -416,6 +774,13 @@ final class MultiplayerManager {
             final ChunkRequest request = chunkRequest;
             ServerClient client = request.client;
             if (client.connection.open) {
+                if (profile == null && dedicatedChunkLogBudget > 0) {
+                    dedicatedChunkLogBudget--;
+                    System.out.println("Chunk request: " + client.name + " " + request.chunkX + "," + request.chunkZ);
+                    if (dedicatedChunkLogBudget == 0) {
+                        System.out.println("Chunk request logging muted after initial burst.");
+                    }
+                }
                 send(client.connection, MultiplayerProtocol.CHUNK_DATA, output -> world.writeNetworkColumn(request.chunkX, request.chunkZ, output));
             }
             chunks++;
@@ -428,12 +793,23 @@ final class MultiplayerManager {
             }
             boolean changed = false;
             if (action.kind == MultiplayerProtocol.BLOCK_BREAK) {
+                byte targetBlock = world.getBlock(action.x, action.y, action.z);
                 changed = world.breakBlock(new RayHit(action.x, action.y, action.z, action.x, action.y, action.z));
+                if (changed) {
+                    byte droppedItem = droppedItemForBrokenBlock(targetBlock);
+                    if (droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock, action.heldItem)) {
+                        world.spawnDroppedItem(droppedItem, 1, action.x + 0.5, action.y + 0.2, action.z + 0.5);
+                    }
+                }
             } else if (action.kind == MultiplayerProtocol.BLOCK_PLACE) {
                 PlayerState actor = action.client.player;
                 changed = world.placeBlock(new RayHit(action.x, action.y, action.z, action.previousX, action.previousY, action.previousZ), action.heldItem, actor);
             }
             if (changed) {
+                if (profile == null) {
+                    System.out.println("Block action: " + action.client.name + " kind=" + action.kind
+                        + " at " + action.x + "," + action.y + "," + action.z);
+                }
                 broadcastBlockNeighborhood(world, action.x, action.y, action.z);
                 broadcastBlockNeighborhood(world, action.previousX, action.previousY, action.previousZ);
             }
@@ -578,6 +954,42 @@ final class MultiplayerManager {
         } else if (packet.type == MultiplayerProtocol.PLAYER_HEALTH) {
             double health = input.readDouble();
             mainThreadEvents.add(() -> listener.onClientHealth(health));
+        } else if (packet.type == MultiplayerProtocol.INVENTORY_ADD) {
+            byte itemId = input.readByte();
+            int count = input.readInt();
+            int durabilityDamage = input.readInt();
+            mainThreadEvents.add(() -> listener.onClientInventoryAdd(itemId, count, durabilityDamage));
+        } else if (packet.type == MultiplayerProtocol.PING) {
+            long timestamp = input.readLong();
+            send(clientConnection, MultiplayerProtocol.PONG, output -> output.writeLong(timestamp));
+        } else if (packet.type == MultiplayerProtocol.PONG) {
+            long timestamp = input.readLong();
+            if (pendingClientPingTime == timestamp) {
+                int ping = (int) Math.max(0L, Math.min(9999L, System.currentTimeMillis() - timestamp));
+                pendingClientPingTime = -1L;
+                lastClientPongMillis = System.currentTimeMillis();
+                clientSession.setPingMs(ping);
+            }
+        } else if (packet.type == MultiplayerProtocol.PLAYER_LIST) {
+            int count = input.readInt();
+            ArrayList<PlayerListEntry> entries = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                UUID uuid = MultiplayerProtocol.readUuid(input);
+                String name = input.readUTF();
+                int pingMs = input.readInt();
+                double health = input.readDouble();
+                String gameMode = input.readUTF();
+                boolean connected = input.readBoolean();
+                if (profile != null && profile.uuid.equals(uuid) && clientSession.pingMs() >= 0) {
+                    pingMs = clientSession.pingMs();
+                }
+                entries.add(new PlayerListEntry(uuid, name, pingMs, health, gameMode, connected));
+            }
+            mainThreadEvents.add(() -> {
+                playerListSnapshot.clear();
+                playerListSnapshot.addAll(entries);
+                clientSession.replacePlayerList(entries);
+            });
         }
     }
 
@@ -633,6 +1045,79 @@ final class MultiplayerManager {
         });
     }
 
+    private void sendClientPing() {
+        if (clientConnection == null || !clientConnection.open || pendingClientPingTime >= 0L) {
+            return;
+        }
+        pendingClientPingTime = System.currentTimeMillis();
+        send(clientConnection, MultiplayerProtocol.PING, output -> output.writeLong(pendingClientPingTime));
+    }
+
+    private void pingServerClients() {
+        long now = System.currentTimeMillis();
+        for (ServerClient client : serverClients.values()) {
+            if (client.pendingPingTime >= 0L && now - client.pendingPingTime > (long) (PING_TIMEOUT_SECONDS * 1000.0)) {
+                client.pingMs = -1;
+                client.pendingPingTime = -1L;
+            }
+            if (client.pendingPingTime < 0L && client.connection.open) {
+                client.pendingPingTime = now;
+                send(client.connection, MultiplayerProtocol.PING, output -> output.writeLong(now));
+            }
+        }
+    }
+
+    private void broadcastPlayerList(PlayerState hostPlayer, byte hostHeldItem) {
+        ArrayList<PlayerListEntry> entries = buildPlayerList(hostPlayer, hostHeldItem);
+        playerListSnapshot.clear();
+        playerListSnapshot.addAll(entries);
+        for (ServerClient client : serverClients.values()) {
+            send(client.connection, MultiplayerProtocol.PLAYER_LIST, output -> writePlayerList(output, entries));
+        }
+    }
+
+    private ArrayList<PlayerListEntry> buildPlayerList(PlayerState hostPlayer, byte hostHeldItem) {
+        ArrayList<PlayerListEntry> entries = new ArrayList<>();
+        if (profile != null && hostPlayer != null) {
+            entries.add(new PlayerListEntry(profile.uuid, profile.name, 0, hostPlayer.health, gameModeName(hostPlayer), true));
+        }
+        for (ServerClient client : serverClients.values()) {
+            entries.add(new PlayerListEntry(client.uuid, client.name, client.pingMs, client.player.health, gameModeName(client.player), client.connection.open));
+        }
+        Collections.sort(entries, new Comparator<PlayerListEntry>() {
+            @Override
+            public int compare(PlayerListEntry a, PlayerListEntry b) {
+                return a.name.compareToIgnoreCase(b.name);
+            }
+        });
+        return entries;
+    }
+
+    private void writePlayerList(DataOutputStream output, List<PlayerListEntry> entries) throws IOException {
+        output.writeInt(entries.size());
+        for (PlayerListEntry entry : entries) {
+            MultiplayerProtocol.writeUuid(output, entry.uuid);
+            output.writeUTF(entry.name);
+            output.writeInt(entry.pingMs);
+            output.writeDouble(entry.health);
+            output.writeUTF(entry.gameMode);
+            output.writeBoolean(entry.connected);
+        }
+    }
+
+    private String gameModeName(PlayerState player) {
+        if (player == null) {
+            return "survival";
+        }
+        if (player.spectatorMode) {
+            return "spectator";
+        }
+        if (player.creativeMode) {
+            return "creative";
+        }
+        return "survival";
+    }
+
     private void broadcastPlayerState(UUID uuid, String name, PlayerState player, byte heldItem) {
         for (ServerClient client : serverClients.values()) {
             send(client.connection, MultiplayerProtocol.PLAYER_STATE, output -> {
@@ -659,12 +1144,15 @@ final class MultiplayerManager {
         if (!hostRunning || attackerUuid == null || targetUuid == null || damage <= 0) {
             return;
         }
-        PlayerState attacker = profile.uuid.equals(attackerUuid)
+        PlayerState attacker = profile != null && profile.uuid.equals(attackerUuid)
             ? activeHostPlayer
             : serverClients.containsKey(attackerUuid) ? serverClients.get(attackerUuid).player : null;
-        PlayerState target = profile.uuid.equals(targetUuid)
+        PlayerState target = profile != null && profile.uuid.equals(targetUuid)
             ? activeHostPlayer
             : serverClients.containsKey(targetUuid) ? serverClients.get(targetUuid).player : null;
+        if (!allowPvp && serverClients.containsKey(targetUuid)) {
+            return;
+        }
         if (attacker == null || target == null || target.spectatorMode || target.health <= 0.0) {
             return;
         }
@@ -676,19 +1164,30 @@ final class MultiplayerManager {
         }
         double protectedDamage = Math.max(0.5, damage);
         target.health = Math.max(0.0, target.health - protectedDamage);
-        if (!profile.uuid.equals(targetUuid)) {
+        if (profile == null || !profile.uuid.equals(targetUuid)) {
             ServerClient targetClient = serverClients.get(targetUuid);
             if (targetClient != null) {
+                targetClient.lastServerDamageMillis = System.currentTimeMillis();
                 send(targetClient.connection, MultiplayerProtocol.PLAYER_HEALTH, output -> output.writeDouble(target.health));
             }
         }
-        if (profile.uuid.equals(targetUuid)) {
+        if (profile != null && profile.uuid.equals(targetUuid)) {
             broadcastPlayerState(targetUuid, profile.name, target, GameConfig.AIR);
         } else {
             ServerClient targetClient = serverClients.get(targetUuid);
             if (targetClient != null) {
                 broadcastPlayerState(targetUuid, targetClient.name, target, targetClient.heldItem);
             }
+        }
+    }
+
+    private void applyMobAttack(ServerClient client, int damage, double knockback) {
+        VoxelWorld world = activeWorld;
+        if (!hostRunning || world == null || client == null || !client.connection.open || damage <= 0) {
+            return;
+        }
+        if (world.attackMobInReach(client.player, damage, knockback)) {
+            broadcastMobSnapshot(world);
         }
     }
 
@@ -764,6 +1263,107 @@ final class MultiplayerManager {
         }
     }
 
+    private void processRemoteClientItemPickups(VoxelWorld world) {
+        if (world == null || serverClients.isEmpty()) {
+            return;
+        }
+        List<DroppedItem> items = world.getDroppedItems();
+        double pickupDistance = GameConfig.DROPPED_ITEM_PICKUP_RADIUS;
+        double pickupDistanceSquared = pickupDistance * pickupDistance;
+        for (int i = items.size() - 1; i >= 0; i--) {
+            DroppedItem item = items.get(i);
+            if (item.pickupDelaySeconds > 0.0 || item.count <= 0) {
+                continue;
+            }
+            for (ServerClient client : serverClients.values()) {
+                if (!client.connection.open || client.player.health <= 0.0) {
+                    continue;
+                }
+                double dx = item.x - client.player.x;
+                double dy = (item.y + item.height() * 0.5) - (client.player.y + GameConfig.PLAYER_HEIGHT * 0.5);
+                double dz = item.z - client.player.z;
+                if (dx * dx + dy * dy + dz * dz <= pickupDistanceSquared) {
+                    final byte itemId = item.itemId;
+                    final int count = item.count;
+                    final int durabilityDamage = item.durabilityDamage;
+                    send(client.connection, MultiplayerProtocol.INVENTORY_ADD, output -> {
+                        output.writeByte(itemId);
+                        output.writeInt(count);
+                        output.writeInt(durabilityDamage);
+                    });
+                    items.remove(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    private byte droppedItemForBrokenBlock(byte block) {
+        if (!InventoryItems.isCollectible(block)
+            || block == GameConfig.OAK_LEAVES
+            || block == GameConfig.PINE_LEAVES
+            || block == GameConfig.BIRCH_LEAVES
+            || GameConfig.isLiquidBlock(block)) {
+            return GameConfig.AIR;
+        }
+        if (block == GameConfig.COAL_ORE || block == GameConfig.DEEPSLATE_COAL_ORE) {
+            return InventoryItems.COAL_ITEM;
+        }
+        if (block == GameConfig.DIAMOND_ORE || block == GameConfig.DEEPSLATE_DIAMOND_ORE) {
+            return InventoryItems.DIAMOND_ITEM;
+        }
+        if (block == GameConfig.STONE) {
+            return GameConfig.COBBLESTONE;
+        }
+        return block;
+    }
+
+    private boolean canHarvestBlock(byte block, byte heldItem) {
+        if (block == GameConfig.OBSIDIAN) {
+            return pickaxeTier(heldItem) >= 4;
+        }
+        if (block == GameConfig.DIAMOND_ORE || block == GameConfig.DEEPSLATE_DIAMOND_ORE) {
+            return pickaxeTier(heldItem) >= 3;
+        }
+        if (block == GameConfig.IRON_ORE || block == GameConfig.DEEPSLATE_IRON_ORE) {
+            return pickaxeTier(heldItem) >= 2;
+        }
+        if (isStoneHarvestBlock(block)) {
+            return pickaxeTier(heldItem) >= 1;
+        }
+        return true;
+    }
+
+    private boolean isStoneHarvestBlock(byte block) {
+        return block == GameConfig.STONE
+            || block == GameConfig.COBBLESTONE
+            || block == GameConfig.DEEPSLATE
+            || block == GameConfig.COAL_ORE
+            || block == GameConfig.DEEPSLATE_COAL_ORE
+            || block == GameConfig.IRON_ORE
+            || block == GameConfig.DEEPSLATE_IRON_ORE
+            || block == GameConfig.DIAMOND_ORE
+            || block == GameConfig.DEEPSLATE_DIAMOND_ORE
+            || block == GameConfig.OBSIDIAN;
+    }
+
+    private int pickaxeTier(byte itemId) {
+        switch (itemId) {
+            case InventoryItems.WOODEN_PICKAXE:
+                return 1;
+            case InventoryItems.STONE_PICKAXE:
+                return 2;
+            case InventoryItems.IRON_PICKAXE:
+                return 3;
+            case InventoryItems.DIAMOND_PICKAXE:
+                return 4;
+            case InventoryItems.NETHERITE_PICKAXE:
+                return 5;
+            default:
+                return 0;
+        }
+    }
+
     private void applyMobSnapshot(byte[] payload) {
         try {
             DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload));
@@ -772,14 +1372,25 @@ final class MultiplayerManager {
                 return;
             }
             List<MobEntity> mobs = world.getMobs();
+            ArrayList<MobEntity> previousMobs = new ArrayList<>(mobs);
+            boolean[] reused = new boolean[previousMobs.size()];
             mobs.clear();
             int count = input.readInt();
             for (int i = 0; i < count; i++) {
                 int ordinal = input.readUnsignedByte();
                 MobKind[] kinds = MobKind.values();
                 MobKind kind = ordinal >= 0 && ordinal < kinds.length ? kinds[ordinal] : MobKind.ZOMBIE;
-                MobEntity mob = new MobEntity(kind, input.readDouble(), input.readDouble(), input.readDouble(), 0.0, 0.0, new java.util.Random(1L));
-                mob.bodyYaw = input.readDouble();
+                double x = input.readDouble();
+                double y = input.readDouble();
+                double z = input.readDouble();
+                double bodyYaw = input.readDouble();
+                MobEntity mob = reuseMob(previousMobs, reused, kind, x, y, z);
+                mob.capturePreviousPosition();
+                mob.x = x;
+                mob.y = y;
+                mob.z = z;
+                mob.bodyYaw = bodyYaw;
+                mob.targetBodyYaw = mob.bodyYaw;
                 mob.health = input.readDouble();
                 mob.babyAge = input.readDouble();
                 mobs.add(mob);
@@ -787,6 +1398,33 @@ final class MultiplayerManager {
         } catch (IOException exception) {
             setStatus("Mob sync failed: " + exception.getMessage());
         }
+    }
+
+    private MobEntity reuseMob(List<MobEntity> previousMobs, boolean[] reused, MobKind kind, double x, double y, double z) {
+        int bestIndex = -1;
+        double bestDistanceSquared = 16.0;
+        for (int i = 0; i < previousMobs.size(); i++) {
+            if (reused[i]) {
+                continue;
+            }
+            MobEntity candidate = previousMobs.get(i);
+            if (candidate.kind != kind) {
+                continue;
+            }
+            double dx = candidate.x - x;
+            double dy = candidate.y - y;
+            double dz = candidate.z - z;
+            double distanceSquared = dx * dx + dy * dy + dz * dz;
+            if (distanceSquared < bestDistanceSquared) {
+                bestDistanceSquared = distanceSquared;
+                bestIndex = i;
+            }
+        }
+        if (bestIndex >= 0) {
+            reused[bestIndex] = true;
+            return previousMobs.get(bestIndex);
+        }
+        return new MobEntity(kind, x, y, z, 0.0, 0.0, new java.util.Random(1L));
     }
 
     private void applyDroppedItemSnapshot(byte[] payload) {
@@ -837,12 +1475,17 @@ final class MultiplayerManager {
     }
 
     private void emitChat(String message) {
-        mainThreadEvents.add(() -> listener.onMultiplayerChat(message));
+        if (listener != null) {
+            mainThreadEvents.add(() -> listener.onMultiplayerChat(message));
+        }
     }
 
     private void setStatus(String nextStatus) {
         status = nextStatus == null ? "Offline" : nextStatus;
-        mainThreadEvents.add(() -> listener.onMultiplayerStatus(status));
+        if (listener != null) {
+            final String deliveredStatus = status;
+            mainThreadEvents.add(() -> listener.onMultiplayerStatus(deliveredStatus));
+        }
     }
 
     private byte[] readRemaining(DataInputStream input) throws IOException {
@@ -896,10 +1539,13 @@ final class MultiplayerManager {
 
     private final class ServerClient {
         final UUID uuid;
-        final String name;
+        String name;
         final Connection connection;
         final PlayerState player = new PlayerState();
         byte heldItem = GameConfig.AIR;
+        int pingMs = -1;
+        long pendingPingTime = -1L;
+        long lastServerDamageMillis = -1L;
 
         ServerClient(UUID uuid, String name, Connection connection) {
             this.uuid = uuid;

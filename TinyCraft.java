@@ -124,6 +124,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
     private boolean jumpQueued;
     private boolean jumpHeld;
     private boolean leftMouseHeld;
+    private boolean leftMousePressQueued;
     private boolean creativeMode;
     private boolean spectatorMode;
     private boolean creativeFlightEnabled;
@@ -140,6 +141,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
     private boolean showDebugInfo;
     private boolean showChunkBorders;
     private boolean hideHud;
+    private boolean tabPlayerListHeld;
     private boolean f3Held;
     private boolean f3ComboConsumed;
     private boolean gameModeSwitcherActive;
@@ -743,6 +745,12 @@ public class TinyCraft implements MultiplayerManager.Listener {
                 return;
             }
 
+            if (key == GLFW_KEY_TAB) {
+                tabPlayerListHeld = pressed && !inventoryOpen && !paused && !mainMenuActive && !deathScreenActive && multiplayer.isMultiplayerActive();
+                resetMovement();
+                return;
+            }
+
             switch (key) {
                 case GLFW_KEY_F1:
                     if (action == GLFW_PRESS) {
@@ -1002,8 +1010,12 @@ public class TinyCraft implements MultiplayerManager.Listener {
             if (button == GLFW_MOUSE_BUTTON_LEFT) {
                 if (action == GLFW_PRESS) {
                     player.handSwingTimer = Math.max(player.handSwingTimer, 0.22);
+                    hoveredBlock = world.raycastBlock(player);
                 }
                 if (action == GLFW_PRESS && world.attackMobInReach(player, attackDamageForHeldItem(), knockbackForHeldItem())) {
+                    if (multiplayer.isClient()) {
+                        multiplayer.sendMobAttack(attackDamageForHeldItem(), knockbackForHeldItem());
+                    }
                     player.handSwingTimer = 0.22;
                     spendHunger(0.12);
                     if (!creativeMode) {
@@ -1037,8 +1049,13 @@ public class TinyCraft implements MultiplayerManager.Listener {
                     return;
                 }
                 leftMouseHeld = action != GLFW_RELEASE;
+                if (action == GLFW_PRESS) {
+                    leftMousePressQueued = true;
+                }
                 if (!leftMouseHeld) {
-                    resetBreakingProgress();
+                    if (!leftMousePressQueued) {
+                        resetBreakingProgress();
+                    }
                 }
             } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
                 RayHit hit = world.raycastBlock(player);
@@ -1194,7 +1211,9 @@ public class TinyCraft implements MultiplayerManager.Listener {
                 mouseY,
                 deltaTime,
                 currentPartialTicks(simulateWorld),
-                chat
+                chat,
+                tabPlayerListHeld && multiplayer.isMultiplayerActive(),
+                multiplayer.playerListSnapshot()
             );
             long frameEndNs = System.nanoTime();
             glfwSwapBuffers(window);
@@ -1240,6 +1259,15 @@ public class TinyCraft implements MultiplayerManager.Listener {
         capturePreviousPlayerForInterpolation();
         capturePreviousEntityPositions();
         world.setRenderDistanceChunks(renderDistanceChunks);
+        if (multiplayer.isClient()) {
+            updatePlayerArmorProtection();
+            updatePlayer(tickDelta);
+            multiplayer.tickClient(world, player, inventory.getSelectedItemId(selectedSlot), renderDistanceChunks, tickDelta);
+            if (!deathScreenActive && !creativeMode && !spectatorMode && player.health <= 0) {
+                enterDeathScreen();
+            }
+            return;
+        }
         world.advanceWorldTime(tickDelta);
         world.prepareForPlayer(player);
         updatePlayerArmorProtection();
@@ -2082,11 +2110,24 @@ public class TinyCraft implements MultiplayerManager.Listener {
     }
 
     private void sendChatMessage(String message) {
+        if (message != null && message.startsWith("/") && isMultiplayerCommand(message)) {
+            multiplayer.sendCommand(message);
+            return;
+        }
         if (multiplayer.isMultiplayerActive()) {
             multiplayer.sendChat(message);
             return;
         }
         chat.addMessage("<" + localProfile.name + "> " + message);
+    }
+
+    private boolean isMultiplayerCommand(String message) {
+        String trimmed = message == null ? "" : message.trim();
+        if (!trimmed.startsWith("/")) {
+            return false;
+        }
+        String command = trimmed.substring(1).trim().split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
+        return "list".equals(command) || "ping".equals(command) || "msg".equals(command) || "kick".equals(command);
     }
 
     @Override
@@ -2166,6 +2207,16 @@ public class TinyCraft implements MultiplayerManager.Listener {
         }
     }
 
+    @Override
+    public void onClientInventoryAdd(byte itemId, int count, int durabilityDamage) {
+        if (count <= 0) {
+            return;
+        }
+        if (!inventory.addItem(itemId, count, durabilityDamage)) {
+            world.spawnDroppedItem(itemId, count, durabilityDamage, player.x, player.y + 0.8, player.z);
+        }
+    }
+
     private boolean useHeldFood(byte heldItem) {
         int foodValue = InventoryItems.foodValue(heldItem);
         if (foodValue <= 0 || creativeMode || spectatorMode || player.hunger >= GameConfig.MAX_HUNGER) {
@@ -2233,7 +2284,10 @@ public class TinyCraft implements MultiplayerManager.Listener {
             return;
         }
 
-        if (!leftMouseHeld) {
+        boolean consumeQueuedPress = leftMousePressQueued;
+        leftMousePressQueued = false;
+
+        if (!leftMouseHeld && !consumeQueuedPress) {
             resetBreakingProgress();
             return;
         }
@@ -2267,13 +2321,13 @@ public class TinyCraft implements MultiplayerManager.Listener {
         int blockZ = hoveredBlock.z;
         if (world.breakBlock(hoveredBlock)) {
             if (multiplayer.isClient()) {
-                multiplayer.sendBlockBreak(blockX, blockY, blockZ);
+                multiplayer.sendBlockBreak(blockX, blockY, blockZ, inventory.getSelectedItemId(selectedSlot));
             } else if (multiplayer.isHosting()) {
                 multiplayer.broadcastBlockNeighborhood(world, blockX, blockY, blockZ);
             }
             player.handSwingTimer = 0.18;
             byte droppedItem = droppedItemForBrokenBlock(targetBlock);
-            if (droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock)) {
+            if (!multiplayer.isClient() && droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock)) {
                 world.spawnDroppedItem(droppedItem, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
             }
             spendHunger(isCorrectToolForBlock(inventory.getSelectedItemId(selectedSlot), targetBlock) ? 0.025 : 0.045);
@@ -2721,6 +2775,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
         breakingTimer = 0.0;
         breakingDuration = 0.0;
         breakingHit = null;
+        leftMousePressQueued = false;
     }
 
     private RayHit currentBreakingHit() {
@@ -2742,7 +2797,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
         byte targetBlock = hit == null ? GameConfig.AIR : world.getBlock(hit.x, hit.y, hit.z);
         if (world.breakBlock(hit)) {
             if (multiplayer.isClient()) {
-                multiplayer.sendBlockBreak(hit.x, hit.y, hit.z);
+                multiplayer.sendBlockBreak(hit.x, hit.y, hit.z, inventory.getSelectedItemId(selectedSlot));
             } else if (multiplayer.isHosting()) {
                 multiplayer.broadcastBlockNeighborhood(world, hit.x, hit.y, hit.z);
             }
@@ -3057,6 +3112,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
         jumpQueued = false;
         jumpHeld = false;
         leftMouseHeld = false;
+        leftMousePressQueued = false;
     }
 
     private void resetPlayerDamageTimers() {
@@ -3241,7 +3297,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
     }
 
     private boolean shouldRunWorldSimulation() {
-        return worldLoaded && !paused && !mainMenuActive;
+        return worldLoaded && !mainMenuActive && (!paused || multiplayer.isMultiplayerActive());
     }
 
     private void enterDeathScreen() {

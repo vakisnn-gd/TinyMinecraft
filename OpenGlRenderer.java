@@ -730,7 +730,7 @@ final class OpenGlRenderer {
         }
     }
 
-    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, String multiplayerName, String multiplayerHost, String multiplayerPort, String multiplayerStatus, int lanGameMode, boolean lanAllowCheats, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, double partialTicks, ChatSystem chat) {
+    void render(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, RayHit breakingBlock, double breakingProgress, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, String multiplayerName, String multiplayerHost, String multiplayerPort, String multiplayerStatus, int lanGameMode, boolean lanAllowCheats, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, boolean frontThirdPersonView, boolean sprinting, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, double deltaTime, double partialTicks, ChatSystem chat, boolean showPlayerList, List<PlayerListEntry> playerList) {
         if (!resourcesReady || framebufferWidth <= 0 || framebufferHeight <= 0) {
             return;
         }
@@ -779,7 +779,7 @@ final class OpenGlRenderer {
             renderBreakingOverlay(breakingBlock, breakingProgress);
             renderWorldTint(player);
         }
-        renderOverlay(player, inventory, hoveredBlock, paused, inventoryOpen, inventoryScreenMode, chestContainer, furnace, deathScreenActive, deathSelection, mainMenuActive, mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset, activeMenuTextField, renameWorldName, multiplayerName, multiplayerHost, multiplayerPort, multiplayerStatus, lanGameMode, lanAllowCheats, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, showDebugInfo, hideHud, pauseSelection, gameModeSwitcherActive, gameModeSelection, selectedBlock, selectedSlot, creativeTab, creativeScrollOffset, creativeMode, thirdPersonView, renderDistanceChunks, fovDegrees, timeOfDay, mouseX, mouseY, chat);
+        renderOverlay(player, inventory, hoveredBlock, paused, inventoryOpen, inventoryScreenMode, chestContainer, furnace, deathScreenActive, deathSelection, mainMenuActive, mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset, activeMenuTextField, renameWorldName, multiplayerName, multiplayerHost, multiplayerPort, multiplayerStatus, lanGameMode, lanAllowCheats, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, showDebugInfo, hideHud, pauseSelection, gameModeSwitcherActive, gameModeSelection, selectedBlock, selectedSlot, creativeTab, creativeScrollOffset, creativeMode, thirdPersonView, renderDistanceChunks, fovDegrees, timeOfDay, mouseX, mouseY, chat, showPlayerList, playerList);
         logOpenGlError("render");
     }
 
@@ -3187,28 +3187,39 @@ final class OpenGlRenderer {
             glRotated(-Math.toDegrees(remote.yaw) - 90.0, 0.0, 1.0, 0.0);
             drawPlayerModelParts(null, remote.heldItem, walkSwing, 0.0, remote.pitch, !remote.spectatorMode, remote.sneaking);
             glPopMatrix();
+            renderNameTag(remote.name, interpolatedX(remote), interpolatedY(remote) + 2.18, interpolatedZ(remote));
         }
     }
 
     private void renderNameTag(String name, double x, double y, double z) {
         if (name == null || name.trim().isEmpty()) {
             name = "Player";
+        } else {
+            name = name.trim();
         }
+        double dx = x - renderCameraX;
+        double dy = y - renderCameraY;
+        double dz = z - renderCameraZ;
+        double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance > 72.0) {
+            return;
+        }
+
         glPushMatrix();
-        glTranslated(x - renderCameraX, y - renderCameraY, z - renderCameraZ);
+        glTranslated(dx, dy, dz);
         glRotated(-Math.toDegrees(renderCameraYaw) + 90.0, 0.0, 1.0, 0.0);
         glRotated(Math.toDegrees(renderCameraPitch), 1.0, 0.0, 0.0);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(false);
-        double dx = x - renderCameraX;
-        double dy = y - renderCameraY;
-        double dz = z - renderCameraZ;
-        float scale = (float) clamp(0.026 + Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.0008, 0.028, 0.044);
+
+        float scale = (float) clamp(0.032 + distance * 0.0012, 0.034, 0.075);
         glScalef(-scale, -scale, scale);
-        float textScale = 1.0f;
-        float width = measureTextWidth(name, textScale);
-        drawRect(-width * 0.5f - 6.0f, -12.0f, width + 12.0f, 18.0f, 0.0f, 0.0f, 0.0f, 0.70f);
-        drawShadowText(-width * 0.5f, 1.5f, textScale, name, 1.0f, 1.0f, 1.0f);
+        String label = trimTextToWidth(name, 1.0f, 150.0f);
+        float width = measureTextWidth(label, 1.0f);
+        drawRect(-width * 0.5f - 7.0f, -13.0f, width + 14.0f, 20.0f, 0.0f, 0.0f, 0.0f, 0.72f);
+        drawOutline(-width * 0.5f - 7.0f, -13.0f, width + 14.0f, 20.0f, 1.0f, 0.85f, 0.85f, 0.92f, 0.86f);
+        drawShadowText(-width * 0.5f, 2.0f, 1.0f, label, 1.0f, 1.0f, 1.0f);
+
         glDepthMask(true);
         glEnable(GL_DEPTH_TEST);
         glPopMatrix();
@@ -3685,7 +3696,7 @@ final class OpenGlRenderer {
         glEnd();
     }
 
-    private void renderOverlay(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, String multiplayerName, String multiplayerHost, String multiplayerPort, String multiplayerStatus, int lanGameMode, boolean lanAllowCheats, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, ChatSystem chat) {
+    private void renderOverlay(PlayerState player, PlayerInventory inventory, RayHit hoveredBlock, boolean paused, boolean inventoryOpen, int inventoryScreenMode, ContainerInventory chestContainer, FurnaceBlockEntity furnace, boolean deathScreenActive, int deathSelection, boolean mainMenuActive, int mainMenuScreen, int mainMenuSelection, boolean mainMenuWorldActionsEnabled, String createWorldName, String createWorldSeed, int createWorldGameMode, int createWorldDifficulty, int createWorldTerrainPreset, int activeMenuTextField, String renameWorldName, String multiplayerName, String multiplayerHost, String multiplayerPort, String multiplayerStatus, int lanGameMode, boolean lanAllowCheats, List<WorldInfo> worlds, int selectedWorldIndex, int mainMenuScrollOffset, String loadedWorldName, boolean showDebugInfo, boolean hideHud, int pauseSelection, boolean gameModeSwitcherActive, int gameModeSelection, byte selectedBlock, int selectedSlot, int creativeTab, int creativeScrollOffset, boolean creativeMode, boolean thirdPersonView, int renderDistanceChunks, int fovDegrees, double timeOfDay, double mouseX, double mouseY, ChatSystem chat, boolean showPlayerList, List<PlayerListEntry> playerList) {
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -3721,6 +3732,9 @@ final class OpenGlRenderer {
         }
         if (!mainMenuActive && !deathScreenActive) {
             renderChat(chat);
+        }
+        if (showPlayerList && !hideHud && !blockingOverlay) {
+            renderPlayerListOverlay(playerList);
         }
         if (mainMenuActive) {
             renderMainMenu(mainMenuScreen, mainMenuSelection, mainMenuWorldActionsEnabled, createWorldName, createWorldSeed, createWorldGameMode, createWorldDifficulty, createWorldTerrainPreset, activeMenuTextField, renameWorldName, multiplayerName, multiplayerHost, multiplayerPort, multiplayerStatus, lanGameMode, lanAllowCheats, worlds, selectedWorldIndex, mainMenuScrollOffset, loadedWorldName, renderDistanceChunks, fovDegrees);
@@ -3772,6 +3786,52 @@ final class OpenGlRenderer {
             drawRect(10.0f * uiScale, inputY - 18.0f * uiScale, framebufferWidth - 20.0f * uiScale, 26.0f * uiScale, 0.02f, 0.02f, 0.03f, 0.74f);
             drawOutline(10.0f * uiScale, inputY - 18.0f * uiScale, framebufferWidth - 20.0f * uiScale, 26.0f * uiScale, uiScale, 0.50f, 0.64f, 0.82f, 0.88f);
             drawShadowText(18.0f * uiScale, inputY, uiScale * 0.86f, trimTextToWidth(input, uiScale * 0.86f, framebufferWidth - 36.0f * uiScale), 1.0f, 1.0f, 1.0f);
+        }
+    }
+
+    private void renderPlayerListOverlay(List<PlayerListEntry> players) {
+        if (players == null || players.isEmpty()) {
+            return;
+        }
+        float uiScale = getUiScale();
+        int rows = Math.min(players.size(), 16);
+        float width = Math.min(framebufferWidth - 40.0f * uiScale, 430.0f * uiScale);
+        float rowHeight = 22.0f * uiScale;
+        float headerHeight = 30.0f * uiScale;
+        float height = headerHeight + (rows + 1) * rowHeight + 10.0f * uiScale;
+        float x = (framebufferWidth - width) * 0.5f;
+        float y = 26.0f * uiScale;
+        float padding = 12.0f * uiScale;
+        float textScale = uiScale * 0.72f;
+
+        drawRect(x, y, width, height, 0.02f, 0.02f, 0.03f, 0.78f);
+        drawOutline(x, y, width, height, uiScale, 0.50f, 0.64f, 0.82f, 0.80f);
+        drawShadowText(x + padding, y + 20.0f * uiScale, uiScale * 0.86f, "Players", 1.0f, 1.0f, 1.0f);
+
+        float tableY = y + headerHeight;
+        float nameX = x + padding;
+        float pingX = x + width - 166.0f * uiScale;
+        float hpX = x + width - 100.0f * uiScale;
+        float modeX = x + width - 58.0f * uiScale;
+        drawShadowText(nameX, tableY + 14.0f * uiScale, textScale, "Name", 0.70f, 0.76f, 0.86f);
+        drawShadowText(pingX, tableY + 14.0f * uiScale, textScale, "Ping", 0.70f, 0.76f, 0.86f);
+        drawShadowText(hpX, tableY + 14.0f * uiScale, textScale, "HP", 0.70f, 0.76f, 0.86f);
+        drawShadowText(modeX, tableY + 14.0f * uiScale, textScale, "Mode", 0.70f, 0.76f, 0.86f);
+
+        for (int i = 0; i < rows; i++) {
+            PlayerListEntry entry = players.get(i);
+            float rowY = tableY + (i + 1) * rowHeight;
+            if ((i & 1) == 0) {
+                drawRect(x + 5.0f * uiScale, rowY - 12.0f * uiScale, width - 10.0f * uiScale, rowHeight, 0.12f, 0.14f, 0.18f, 0.36f);
+            }
+            String name = entry.name == null || entry.name.trim().isEmpty() ? "Player" : entry.name.trim();
+            String ping = entry.pingMs < 0 ? "? ms" : entry.pingMs + " ms";
+            String hp = Integer.toString((int) Math.round(Math.max(0.0, entry.health)));
+            String mode = entry.gameMode == null || entry.gameMode.trim().isEmpty() ? "-" : entry.gameMode.trim();
+            drawShadowText(nameX, rowY + 4.0f * uiScale, textScale, trimTextToWidth(name, textScale, pingX - nameX - 12.0f * uiScale), 0.94f, 0.96f, 1.0f);
+            drawShadowText(pingX, rowY + 4.0f * uiScale, textScale, ping, 0.88f, 0.90f, 0.94f);
+            drawShadowText(hpX, rowY + 4.0f * uiScale, textScale, hp, 0.95f, 0.72f, 0.72f);
+            drawShadowText(modeX, rowY + 4.0f * uiScale, textScale, mode, 0.82f, 0.88f, 0.98f);
         }
     }
 

@@ -8,7 +8,7 @@ import java.util.UUID;
 
 final class MultiplayerProtocol {
     static final int MAGIC = 0x54434D50; // TCMP
-    static final int VERSION = 1;
+    static final int VERSION = 3;
     static final int DEFAULT_PORT = 25566;
     static final int MAX_PACKET_BYTES = 4 * 1024 * 1024;
 
@@ -28,6 +28,12 @@ final class MultiplayerProtocol {
     static final byte DISCONNECT = 14;
     static final byte PLAYER_ATTACK = 15;
     static final byte PLAYER_HEALTH = 16;
+    static final byte PING = 17;
+    static final byte PONG = 18;
+    static final byte PLAYER_LIST = 19;
+    static final byte COMMAND = 20;
+    static final byte INVENTORY_ADD = 21;
+    static final byte MOB_ATTACK = 22;
 
     static final byte BLOCK_BREAK = 1;
     static final byte BLOCK_PLACE = 2;
