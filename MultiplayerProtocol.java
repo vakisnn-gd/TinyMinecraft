@@ -34,6 +34,7 @@ final class MultiplayerProtocol {
     static final byte COMMAND = 20;
     static final byte INVENTORY_ADD = 21;
     static final byte MOB_ATTACK = 22;
+    static final byte SERVER_PLAYER_STATE = 23;
 
     static final byte BLOCK_BREAK = 1;
     static final byte BLOCK_PLACE = 2;

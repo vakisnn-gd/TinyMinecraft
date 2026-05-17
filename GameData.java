@@ -100,6 +100,9 @@ final class GameConfig {
     static final byte BIRCH_STAIRS = 126;
     static final byte STONE_STAIRS = 127;
     static final byte COBBLESTONE_STAIRS = (byte) 128;
+    static final byte KELP = (byte) 129;
+    static final byte CARROT_CROP = (byte) 130;
+    static final byte POTATO_CROP = (byte) 131;
 
     static final double PLAYER_RADIUS = 0.30;
     static final double PLAYER_HEIGHT = 1.80;
@@ -278,7 +281,7 @@ final class GameConfig {
     }
 
     static boolean isWaterBlock(byte block) {
-        return block == WATER_SOURCE || block == WATER_FLOWING || block == SEAGRASS;
+        return block == WATER_SOURCE || block == WATER_FLOWING || block == SEAGRASS || block == KELP;
     }
 
     static boolean isLavaBlock(byte block) {
@@ -298,6 +301,15 @@ final class GameConfig {
     }
 
     static byte placedBlockForItem(byte itemId) {
+        if (itemId == InventoryItems.WHEAT_SEEDS) {
+            return WHEAT_CROP;
+        }
+        if (itemId == InventoryItems.CARROT) {
+            return CARROT_CROP;
+        }
+        if (itemId == InventoryItems.POTATO) {
+            return POTATO_CROP;
+        }
         if (itemId == InventoryItems.ITEM_WATER_BUCKET) {
             return WATER_SOURCE;
         }
@@ -334,7 +346,7 @@ final class GameConfig {
     }
 
     static byte fluidItemForBlock(byte block) {
-        if (block == SEAGRASS) {
+        if (block == SEAGRASS || block == KELP) {
             return WATER;
         }
         if (isWaterBlock(block)) {
@@ -687,6 +699,7 @@ final class HotbarConfig {
         GameConfig.SNOW_LAYER,
         GameConfig.DEAD_BUSH,
         GameConfig.SEAGRASS,
+        GameConfig.KELP,
         GameConfig.PINE_PLANKS,
         GameConfig.BIRCH_PLANKS,
         GameConfig.OAK_STAIRS,
@@ -1080,7 +1093,9 @@ enum MobKind {
     PIG,
     SHEEP,
     COW,
-    VILLAGER
+    VILLAGER,
+    HERRING,
+    SALMON
 }
 
 final class MobEntity extends Entity {
@@ -1128,6 +1143,9 @@ final class MobEntity extends Entity {
     }
 
     private static int maxHealthFor(MobKind kind) {
+        if (kind == MobKind.HERRING || kind == MobKind.SALMON) {
+            return 4;
+        }
         if (kind == MobKind.COW || kind == MobKind.SHEEP || kind == MobKind.PIG) {
             return 10;
         }
@@ -1136,6 +1154,12 @@ final class MobEntity extends Entity {
 
     @Override
     double radius() {
+        if (kind == MobKind.HERRING) {
+            return 0.18;
+        }
+        if (kind == MobKind.SALMON) {
+            return 0.24;
+        }
         if (isPassiveBaby()) {
             return GameConfig.ZOMBIE_RADIUS * 0.58;
         }
@@ -1144,6 +1168,12 @@ final class MobEntity extends Entity {
 
     @Override
     double height() {
+        if (kind == MobKind.HERRING) {
+            return 0.24;
+        }
+        if (kind == MobKind.SALMON) {
+            return 0.32;
+        }
         if (isPassiveBaby()) {
             return GameConfig.ZOMBIE_HEIGHT * 0.58;
         }

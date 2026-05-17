@@ -3,11 +3,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.UUID;
 
-final class GameServer implements MultiplayerManager.Listener {
+final class GameServer implements MultiplayerManager.Listener, MultiplayerManager.ServerCommandDelegate {
     private static final double AUTOSAVE_SECONDS = 30.0;
 
     private final ServerProperties properties;
+    private final ServerAccessList accessList = new ServerAccessList();
     private final PlayerState simulationPlayer = new PlayerState();
 
     private VoxelWorld world;
@@ -24,6 +26,8 @@ final class GameServer implements MultiplayerManager.Listener {
 
     boolean start() {
         try {
+            accessList.loadOrCreate();
+            Files.createDirectories(RuntimePaths.resolve("backups"));
             ResolvedWorld resolved = resolveWorld();
             world = new VoxelWorld(resolved.seed);
             world.setRenderDistanceChunks(properties.viewDistance);
@@ -35,6 +39,7 @@ final class GameServer implements MultiplayerManager.Listener {
             world.primeStreamingAround(simulationPlayer);
 
             multiplayer = new MultiplayerManager(null, this);
+            multiplayer.setServerCommandDelegate(this);
             if (!multiplayer.startDedicatedHost(world, properties.port, properties.maxPlayers, properties.allowPvp)) {
                 return false;
             }
@@ -93,40 +98,229 @@ final class GameServer implements MultiplayerManager.Listener {
     }
 
     void handleConsoleCommand(String raw) {
-        String line = raw == null ? "" : raw.trim();
-        if (line.isEmpty()) {
-            return;
+        String result = executeServerCommand(null, "Console", raw, true);
+        if (result == null) {
+            System.out.println("Unknown command. Type 'help'.");
+        } else if (!result.trim().isEmpty()) {
+            System.out.println(result);
         }
-        String lower = line.toLowerCase(Locale.ROOT);
-        if ("help".equals(lower)) {
-            System.out.println("Commands: help, status, list, say <message>, kick <player> [reason], save, stop");
-        } else if ("status".equals(lower)) {
-            long uptimeSeconds = Math.max(0L, (System.currentTimeMillis() - startMillis) / 1000L);
-            System.out.println("Status: running, uptime=" + uptimeSeconds + "s, players="
-                + multiplayer.connectedPlayerCount() + "/" + properties.maxPlayers);
-        } else if ("list".equals(lower)) {
-            System.out.println("Players: " + multiplayer.connectedPlayerNames());
-        } else if (lower.startsWith("say ")) {
-            String message = line.substring(4).trim();
-            if (!message.isEmpty()) {
+    }
+
+    @Override
+    public String joinRejectionReason(UUID uuid, String name) {
+        if (accessList.isBanned(uuid, name)) {
+            return "You are banned from this server.";
+        }
+        if (properties.whitelist && !accessList.isWhitelisted(uuid, name) && !accessList.isOperator(uuid, name)) {
+            return "You are not whitelisted on this server.";
+        }
+        return null;
+    }
+
+    @Override
+    public String executeServerCommand(UUID senderUuid, String senderName, String commandLine) {
+        return executeServerCommand(senderUuid, senderName, commandLine, false);
+    }
+
+    private String executeServerCommand(UUID senderUuid, String senderName, String commandLine, boolean console) {
+        String line = commandLine == null ? "" : commandLine.trim();
+        if (line.startsWith("/")) {
+            line = line.substring(1).trim();
+        }
+        if (line.isEmpty()) {
+            return "";
+        }
+        String[] parts = line.split("\\s+", 4);
+        String command = parts[0].toLowerCase(Locale.ROOT);
+        if (!isDedicatedServerCommand(command)) {
+            return null;
+        }
+        if (senderUuid != null && !accessList.isOperator(senderUuid, senderName)) {
+            return "You do not have permission to use /" + command + ".";
+        }
+        try {
+            if ("help".equals(command)) {
+                return "Commands: help, status, list, say <message>, kick <player> [reason], save, save-all, stop, op, deop, whitelist, ban, pardon, tp, gamemode";
+            }
+            if ("status".equals(command)) {
+                long uptimeSeconds = Math.max(0L, (System.currentTimeMillis() - startMillis) / 1000L);
+                return "Status: running, uptime=" + uptimeSeconds + "s, players="
+                    + multiplayer.connectedPlayerCount() + "/" + properties.maxPlayers
+                    + ", whitelist=" + properties.whitelist;
+            }
+            if ("list".equals(command)) {
+                return "Players: " + multiplayer.connectedPlayerNames();
+            }
+            if ("say".equals(command)) {
+                if (parts.length < 2 || line.length() <= 4) {
+                    return "Usage: say <message>";
+                }
+                String message = line.substring(4).trim();
                 multiplayer.broadcastServerMessage(message);
                 System.out.println("[Server] " + message);
+                return console ? "" : "[Server] " + message;
             }
-        } else if (lower.startsWith("kick ")) {
-            String[] parts = line.split("\\s+", 3);
-            if (parts.length >= 2) {
-                String reason = parts.length >= 3 ? parts[2] : "Kicked by server.";
+            if ("kick".equals(command)) {
+                if (parts.length < 2) {
+                    return "Usage: kick <player> [reason]";
+                }
+                String[] kickParts = line.split("\\s+", 3);
+                String reason = kickParts.length >= 3 ? kickParts[2] : "Kicked by server.";
+                multiplayer.kickByName(kickParts[1], reason);
+                return "Kicked " + kickParts[1] + ".";
+            }
+            if ("save".equals(command) || "save-all".equals(command)) {
+                save();
+                return console ? "" : "Saved world.";
+            }
+            if ("stop".equals(command)) {
+                if (!console) {
+                    multiplayer.broadcastServerMessage("Server stop requested by " + safeSenderName(senderName) + ".");
+                }
+                stop();
+                return console ? "" : "Stopping server.";
+            }
+            if ("op".equals(command)) {
+                if (parts.length < 2) {
+                    return "Usage: op <player|uuid>";
+                }
+                ResolvedPlayer target = resolvePlayer(parts[1]);
+                accessList.addOperator(parts[1], target.uuid, target.name);
+                return "Opped " + target.display(parts[1]) + ".";
+            }
+            if ("deop".equals(command)) {
+                if (parts.length < 2) {
+                    return "Usage: deop <player|uuid>";
+                }
+                ResolvedPlayer target = resolvePlayer(parts[1]);
+                accessList.removeOperator(parts[1], target.uuid, target.name);
+                return "Deopped " + target.display(parts[1]) + ".";
+            }
+            if ("ban".equals(command)) {
+                if (parts.length < 2) {
+                    return "Usage: ban <player|uuid> [reason]";
+                }
+                ResolvedPlayer target = resolvePlayer(parts[1]);
+                accessList.addBan(parts[1], target.uuid, target.name);
+                String reason = line.split("\\s+", 3).length >= 3 ? line.split("\\s+", 3)[2] : "Banned by server.";
                 multiplayer.kickByName(parts[1], reason);
-            } else {
-                System.out.println("Usage: kick <player> [reason]");
+                return "Banned " + target.display(parts[1]) + ".";
             }
-        } else if ("save".equals(lower)) {
-            save();
-        } else if ("stop".equals(lower)) {
-            stop();
-        } else {
-            System.out.println("Unknown command. Type 'help'.");
+            if ("pardon".equals(command)) {
+                if (parts.length < 2) {
+                    return "Usage: pardon <player|uuid>";
+                }
+                ResolvedPlayer target = resolvePlayer(parts[1]);
+                accessList.removeBan(parts[1], target.uuid, target.name);
+                return "Pardoned " + target.display(parts[1]) + ".";
+            }
+            if ("whitelist".equals(command)) {
+                return handleWhitelistCommand(parts);
+            }
+            if ("tp".equals(command)) {
+                if (parts.length < 4) {
+                    return "Usage: tp <player> <x> <y> <z>";
+                }
+                double x = Double.parseDouble(parts[2]);
+                String[] tail = parts[3].split("\\s+");
+                if (tail.length < 2) {
+                    return "Usage: tp <player> <x> <y> <z>";
+                }
+                double y = Double.parseDouble(tail[0]);
+                double z = Double.parseDouble(tail[1]);
+                return multiplayer.teleportPlayerByName(parts[1], x, y, z)
+                    ? "Teleported " + parts[1] + "."
+                    : "Player not found: " + parts[1];
+            }
+            if ("gamemode".equals(command)) {
+                if (parts.length < 3) {
+                    return "Usage: gamemode <survival|creative|spectator> <player>";
+                }
+                String mode = parts[1].toLowerCase(Locale.ROOT);
+                if (!"survival".equals(mode) && !"creative".equals(mode) && !"spectator".equals(mode)
+                    && !"0".equals(mode) && !"1".equals(mode) && !"3".equals(mode)) {
+                    return "Unknown gamemode: " + parts[1];
+                }
+                return multiplayer.setPlayerGameModeByName(parts[2], mode)
+                    ? "Set " + parts[2] + " to " + mode + "."
+                    : "Player not found: " + parts[2];
+            }
+            return null;
+        } catch (IOException exception) {
+            return "Command failed: " + exception.getMessage();
+        } catch (NumberFormatException exception) {
+            return "Command failed: expected a number.";
         }
+    }
+
+    private String handleWhitelistCommand(String[] parts) throws IOException {
+        if (parts.length < 2) {
+            return "Whitelist is " + (properties.whitelist ? "on" : "off") + ". Entries: " + accessList.describeWhitelist();
+        }
+        String action = parts[1].toLowerCase(Locale.ROOT);
+        if ("on".equals(action)) {
+            properties.whitelist = true;
+            properties.save();
+            return "Whitelist enabled.";
+        }
+        if ("off".equals(action)) {
+            properties.whitelist = false;
+            properties.save();
+            return "Whitelist disabled.";
+        }
+        if ("list".equals(action)) {
+            return "Whitelist: " + accessList.describeWhitelist();
+        }
+        if (parts.length < 3) {
+            return "Usage: whitelist <on|off|list|add|remove> [player|uuid]";
+        }
+        ResolvedPlayer target = resolvePlayer(parts[2]);
+        if ("add".equals(action)) {
+            accessList.addWhitelist(parts[2], target.uuid, target.name);
+            return "Whitelisted " + target.display(parts[2]) + ".";
+        }
+        if ("remove".equals(action)) {
+            accessList.removeWhitelist(parts[2], target.uuid, target.name);
+            return "Removed " + target.display(parts[2]) + " from whitelist.";
+        }
+        return "Usage: whitelist <on|off|list|add|remove> [player|uuid]";
+    }
+
+    private boolean isDedicatedServerCommand(String command) {
+        return "help".equals(command)
+            || "status".equals(command)
+            || "list".equals(command)
+            || "say".equals(command)
+            || "kick".equals(command)
+            || "save".equals(command)
+            || "save-all".equals(command)
+            || "stop".equals(command)
+            || "op".equals(command)
+            || "deop".equals(command)
+            || "whitelist".equals(command)
+            || "ban".equals(command)
+            || "pardon".equals(command)
+            || "tp".equals(command)
+            || "gamemode".equals(command);
+    }
+
+    private ResolvedPlayer resolvePlayer(String token) {
+        UUID uuid = multiplayer == null ? null : multiplayer.connectedPlayerUuid(token);
+        String name = multiplayer == null ? null : multiplayer.connectedPlayerDisplayName(token);
+        if (uuid == null) {
+            try {
+                uuid = UUID.fromString(token);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        if (name == null && uuid == null) {
+            name = token;
+        }
+        return new ResolvedPlayer(uuid, name);
+    }
+
+    private String safeSenderName(String senderName) {
+        return senderName == null || senderName.trim().isEmpty() ? "Console" : senderName.trim();
     }
 
     @Override
@@ -161,6 +355,10 @@ final class GameServer implements MultiplayerManager.Listener {
 
     @Override
     public void onClientInventoryAdd(byte itemId, int count, int durabilityDamage) {
+    }
+
+    @Override
+    public void onClientServerPlayerState(double x, double y, double z, double yaw, double pitch, boolean creativeMode, boolean spectatorMode, double health) {
     }
 
     private void runTickLoop() {
@@ -344,6 +542,26 @@ final class GameServer implements MultiplayerManager.Listener {
 
     private String jsonEscape(String value) {
         return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static final class ResolvedPlayer {
+        final UUID uuid;
+        final String name;
+
+        ResolvedPlayer(UUID uuid, String name) {
+            this.uuid = uuid;
+            this.name = name;
+        }
+
+        String display(String fallback) {
+            if (name != null && !name.trim().isEmpty()) {
+                return name;
+            }
+            if (uuid != null) {
+                return uuid.toString();
+            }
+            return fallback;
+        }
     }
 
     private static final class WorldMetadata {

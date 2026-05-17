@@ -29,6 +29,12 @@ final class MultiplayerManager {
         void onClientDisconnected(String reason);
         void onClientHealth(double health);
         void onClientInventoryAdd(byte itemId, int count, int durabilityDamage);
+        void onClientServerPlayerState(double x, double y, double z, double yaw, double pitch, boolean creativeMode, boolean spectatorMode, double health);
+    }
+
+    interface ServerCommandDelegate {
+        String joinRejectionReason(UUID uuid, String name);
+        String executeServerCommand(UUID senderUuid, String senderName, String commandLine);
     }
 
     private static final int CONNECT_TIMEOUT_MS = 6000;
@@ -61,6 +67,7 @@ final class MultiplayerManager {
     private Thread acceptThread;
     private Connection clientConnection;
     private PlayerState activeHostPlayer;
+    private ServerCommandDelegate serverCommandDelegate;
     private int maxPlayers = 8;
     private boolean allowPvp = true;
     private int dedicatedChunkLogBudget = 64;
@@ -78,6 +85,10 @@ final class MultiplayerManager {
     MultiplayerManager(LocalProfile profile, Listener listener) {
         this.profile = profile;
         this.listener = listener;
+    }
+
+    void setServerCommandDelegate(ServerCommandDelegate serverCommandDelegate) {
+        this.serverCommandDelegate = serverCommandDelegate;
     }
 
     boolean isHosting() {
@@ -400,6 +411,9 @@ final class MultiplayerManager {
                 sendPrivateMessage(senderUuid, senderName, parts[1], parts[2]);
             }
         } else if ("kick".equals(command)) {
+            if (runDelegatedServerCommand(senderUuid, senderName, raw)) {
+                return;
+            }
             if (profile != null && (senderUuid == null || !profile.uuid.equals(senderUuid))) {
                 sendCommandFeedback(senderUuid, "Only the host can use /kick.");
                 return;
@@ -411,8 +425,26 @@ final class MultiplayerManager {
                 kickPlayer(kickParts[1], kickParts.length >= 3 ? kickParts[2] : "Kicked by host.");
             }
         } else {
-            sendCommandFeedback(senderUuid, "Unknown multiplayer command: /" + parts[0]);
+            if (!runDelegatedServerCommand(senderUuid, senderName, raw)) {
+                sendCommandFeedback(senderUuid, "Unknown multiplayer command: /" + parts[0]);
+            }
         }
+    }
+
+    private boolean runDelegatedServerCommand(UUID senderUuid, String senderName, String raw) {
+        if (serverCommandDelegate == null) {
+            return false;
+        }
+        String result = serverCommandDelegate.executeServerCommand(senderUuid, senderName, raw);
+        if (result == null) {
+            return false;
+        }
+        if (!result.trim().isEmpty()) {
+            for (String line : result.split("\\R")) {
+                sendCommandFeedback(senderUuid, line);
+            }
+        }
+        return true;
     }
 
     private String pingFor(UUID uuid) {
@@ -554,6 +586,57 @@ final class MultiplayerManager {
         return builder.length() == 0 ? "(none)" : builder.toString();
     }
 
+    UUID connectedPlayerUuid(String targetName) {
+        ServerClient client = findClientByName(targetName);
+        return client == null ? null : client.uuid;
+    }
+
+    String connectedPlayerDisplayName(String targetName) {
+        ServerClient client = findClientByName(targetName);
+        return client == null ? null : client.name;
+    }
+
+    boolean teleportPlayerByName(String targetName, double x, double y, double z) {
+        ServerClient client = findClientByName(targetName);
+        if (client == null || !client.connection.open) {
+            return false;
+        }
+        client.player.setPosition(x, y, z);
+        client.player.capturePreviousPosition();
+        sendServerPlayerState(client);
+        broadcastPlayerState(client.uuid, client.name, client.player, client.heldItem);
+        return true;
+    }
+
+    boolean setPlayerGameModeByName(String targetName, String mode) {
+        ServerClient client = findClientByName(targetName);
+        if (client == null || !client.connection.open) {
+            return false;
+        }
+        String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
+        client.player.creativeMode = "creative".equals(normalized) || "1".equals(normalized);
+        client.player.spectatorMode = "spectator".equals(normalized) || "3".equals(normalized);
+        sendServerPlayerState(client);
+        broadcastPlayerState(client.uuid, client.name, client.player, client.heldItem);
+        return true;
+    }
+
+    private void sendServerPlayerState(ServerClient client) {
+        if (client == null || !client.connection.open) {
+            return;
+        }
+        send(client.connection, MultiplayerProtocol.SERVER_PLAYER_STATE, output -> {
+            output.writeDouble(client.player.x);
+            output.writeDouble(client.player.y);
+            output.writeDouble(client.player.z);
+            output.writeDouble(client.player.yaw);
+            output.writeDouble(client.player.pitch);
+            output.writeBoolean(client.player.creativeMode);
+            output.writeBoolean(client.player.spectatorMode);
+            output.writeDouble(client.player.health);
+        });
+    }
+
     void saveConnectedPlayers(VoxelWorld world) {
         if (world == null) {
             return;
@@ -627,6 +710,13 @@ final class MultiplayerManager {
             if (magic != MultiplayerProtocol.MAGIC || version != MultiplayerProtocol.VERSION) {
                 sendDisconnect(connection, "Incompatible multiplayer protocol.");
                 return;
+            }
+            if (serverCommandDelegate != null) {
+                String rejection = serverCommandDelegate.joinRejectionReason(uuid, name);
+                if (rejection != null && !rejection.trim().isEmpty()) {
+                    sendDisconnect(connection, rejection);
+                    return;
+                }
             }
             if ((profile != null && profile.uuid.equals(uuid)) || serverClients.containsKey(uuid)) {
                 sendDisconnect(connection, "Duplicate player uuid.");
@@ -959,6 +1049,16 @@ final class MultiplayerManager {
             int count = input.readInt();
             int durabilityDamage = input.readInt();
             mainThreadEvents.add(() -> listener.onClientInventoryAdd(itemId, count, durabilityDamage));
+        } else if (packet.type == MultiplayerProtocol.SERVER_PLAYER_STATE) {
+            double x = input.readDouble();
+            double y = input.readDouble();
+            double z = input.readDouble();
+            double yaw = input.readDouble();
+            double pitch = input.readDouble();
+            boolean creativeMode = input.readBoolean();
+            boolean spectatorMode = input.readBoolean();
+            double health = input.readDouble();
+            mainThreadEvents.add(() -> listener.onClientServerPlayerState(x, y, z, yaw, pitch, creativeMode, spectatorMode, health));
         } else if (packet.type == MultiplayerProtocol.PING) {
             long timestamp = input.readLong();
             send(clientConnection, MultiplayerProtocol.PONG, output -> output.writeLong(timestamp));

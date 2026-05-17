@@ -198,6 +198,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
     private int windowedHeight = GameConfig.WINDOW_HEIGHT;
     private double lastCreativeJumpTapTime = -1.0;
     private double waterAmbientCooldown;
+    private double cactusDamageTimer;
     private double lastWorldSlotClickTime = -1.0;
     private double simulationAccumulator;
     private double previousPlayerX;
@@ -1521,12 +1522,14 @@ public class TinyCraft implements MultiplayerManager.Listener {
         moveVertical(player.verticalVelocity * deltaTime);
         player.isGrounded = isStandingOnGround();
         updatePlayerFallDamage(wasGrounded, inWater, verticalVelocityBeforeMove, deltaTime);
+        updateVoidDamage(deltaTime);
         player.headInWater = isPlayerHeadInWater();
         updateViewBobbing(horizontalSpeed, deltaTime);
         updateMovementAudio(movingHorizontally, deltaTime);
         updatePlayerAirSupply(deltaTime);
         updateSuffocationDamage(deltaTime);
         updateLavaAndFireDamage(deltaTime);
+        updateCactusDamage(deltaTime);
         updatePlayerHunger(deltaTime, movingHorizontally && canSprint && player.isGrounded);
     }
 
@@ -1546,6 +1549,23 @@ public class TinyCraft implements MultiplayerManager.Listener {
             player.fallDistance = 0.0;
         } else if (player.isGrounded) {
             player.fallDistance = 0.0;
+        }
+    }
+
+    private void updateVoidDamage(double deltaTime) {
+        if (spectatorMode || deathScreenActive || player.health <= 0.0) {
+            return;
+        }
+        if (player.y < GameConfig.WORLD_MIN_Y - 24.0) {
+            player.health = 0.0;
+            enterDeathScreen();
+            return;
+        }
+        if (player.y < GameConfig.WORLD_MIN_Y - 8.0) {
+            player.health = Math.max(0.0, player.health - 12.0 * deltaTime);
+            if (player.health <= 0.0) {
+                enterDeathScreen();
+            }
         }
     }
 
@@ -2080,6 +2100,22 @@ public class TinyCraft implements MultiplayerManager.Listener {
         }
     }
 
+    private void updateCactusDamage(double deltaTime) {
+        if (creativeMode || spectatorMode || player.health <= 0) {
+            cactusDamageTimer = 0.0;
+            return;
+        }
+        if (!world.touchesBlock(player.x, player.y, player.z, player.radius() + 0.09, player.height(), GameConfig.CACTUS)) {
+            cactusDamageTimer = 0.0;
+            return;
+        }
+        cactusDamageTimer += deltaTime;
+        while (cactusDamageTimer >= 0.65 && player.health > 0) {
+            cactusDamageTimer -= 0.65;
+            applyPlayerDamage(1.0);
+        }
+    }
+
     private void applyPlayerDamage(double amount) {
         if (deathScreenActive || creativeMode || spectatorMode || player.health <= 0.0) {
             if (player.health <= 0.0) {
@@ -2217,6 +2253,21 @@ public class TinyCraft implements MultiplayerManager.Listener {
         }
     }
 
+    @Override
+    public void onClientServerPlayerState(double x, double y, double z, double yaw, double pitch, boolean creativeMode, boolean spectatorMode, double health) {
+        player.capturePreviousPosition();
+        player.setPosition(x, y, z);
+        player.yaw = yaw;
+        player.pitch = pitch;
+        player.creativeMode = creativeMode;
+        player.spectatorMode = spectatorMode;
+        player.flightEnabled = creativeMode || spectatorMode;
+        player.health = clamp(health, 0.0, GameConfig.MAX_HEALTH);
+        multiplayer.requestInitialClientChunks(x, z);
+        resetRenderInterpolation();
+        updateCursorMode();
+    }
+
     private boolean useHeldFood(byte heldItem) {
         int foodValue = InventoryItems.foodValue(heldItem);
         if (foodValue <= 0 || creativeMode || spectatorMode || player.hunger >= GameConfig.MAX_HUNGER) {
@@ -2319,6 +2370,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
         int blockX = hoveredBlock.x;
         int blockY = hoveredBlock.y;
         int blockZ = hoveredBlock.z;
+        BlockState targetState = world.getBlockState(blockX, blockY, blockZ);
         if (world.breakBlock(hoveredBlock)) {
             if (multiplayer.isClient()) {
                 multiplayer.sendBlockBreak(blockX, blockY, blockZ, inventory.getSelectedItemId(selectedSlot));
@@ -2326,9 +2378,8 @@ public class TinyCraft implements MultiplayerManager.Listener {
                 multiplayer.broadcastBlockNeighborhood(world, blockX, blockY, blockZ);
             }
             player.handSwingTimer = 0.18;
-            byte droppedItem = droppedItemForBrokenBlock(targetBlock);
-            if (!multiplayer.isClient() && droppedItem != GameConfig.AIR && canHarvestBlock(targetBlock)) {
-                world.spawnDroppedItem(droppedItem, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+            if (!multiplayer.isClient() && canHarvestBlock(targetBlock)) {
+                spawnDropsForBrokenBlock(targetBlock, targetState, blockX, blockY, blockZ);
             }
             spendHunger(isCorrectToolForBlock(inventory.getSelectedItemId(selectedSlot), targetBlock) ? 0.025 : 0.045);
             damageSelectedToolForBlock(targetBlock);
@@ -2429,7 +2480,12 @@ public class TinyCraft implements MultiplayerManager.Listener {
             || block == GameConfig.OAK_FENCE
             || block == GameConfig.OAK_FENCE_GATE
             || block == GameConfig.OAK_DOOR;
-        boolean hoeLike = block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES;
+        boolean hoeLike = block == GameConfig.WHEAT_CROP
+            || block == GameConfig.CARROT_CROP
+            || block == GameConfig.POTATO_CROP
+            || block == GameConfig.OAK_LEAVES
+            || block == GameConfig.PINE_LEAVES
+            || block == GameConfig.BIRCH_LEAVES;
         return (stoneLike && isPickaxe(heldItem))
             || (dirtLike && isShovel(heldItem))
             || (woodLike && isAxe(heldItem))
@@ -2591,7 +2647,7 @@ public class TinyCraft implements MultiplayerManager.Listener {
             || block == GameConfig.OAK_LEAVES
             || block == GameConfig.PINE_LEAVES
             || block == GameConfig.BIRCH_LEAVES
-            || GameConfig.isLiquidBlock(block)) {
+            || (GameConfig.isLiquidBlock(block) && block != GameConfig.SEAGRASS && block != GameConfig.KELP)) {
             return GameConfig.AIR;
         }
         if (block == GameConfig.COAL_ORE || block == GameConfig.DEEPSLATE_COAL_ORE) {
@@ -2604,6 +2660,30 @@ public class TinyCraft implements MultiplayerManager.Listener {
             return GameConfig.COBBLESTONE;
         }
         return block;
+    }
+
+    private void spawnDropsForBrokenBlock(byte block, BlockState state, int blockX, int blockY, int blockZ) {
+        if (block == GameConfig.WHEAT_CROP) {
+            int stage = state == null ? 0 : state.data;
+            if (stage >= 7) {
+                world.spawnDroppedItem(GameConfig.WHEAT_CROP, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+                world.spawnDroppedItem(InventoryItems.WHEAT_SEEDS, 1 + ambientRandom.nextInt(3), blockX + 0.5, blockY + 0.3, blockZ + 0.5);
+            } else {
+                world.spawnDroppedItem(InventoryItems.WHEAT_SEEDS, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+            }
+            return;
+        }
+        if (block == GameConfig.CARROT_CROP || block == GameConfig.POTATO_CROP) {
+            int stage = state == null ? 0 : state.data;
+            byte cropItem = block == GameConfig.CARROT_CROP ? InventoryItems.CARROT : InventoryItems.POTATO;
+            int count = stage >= 7 ? 2 + ambientRandom.nextInt(3) : 1;
+            world.spawnDroppedItem(cropItem, count, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+            return;
+        }
+        byte droppedItem = droppedItemForBrokenBlock(block);
+        if (droppedItem != GameConfig.AIR) {
+            world.spawnDroppedItem(droppedItem, 1, blockX + 0.5, blockY + 0.2, blockZ + 0.5);
+        }
     }
 
     private boolean canHarvestBlock(byte block) {
@@ -2695,8 +2775,11 @@ public class TinyCraft implements MultiplayerManager.Listener {
     private boolean isInstantBreakBlock(byte block) {
         return block == GameConfig.TORCH
             || block == GameConfig.WHEAT_CROP
+            || block == GameConfig.CARROT_CROP
+            || block == GameConfig.POTATO_CROP
             || block == GameConfig.TALL_GRASS
             || block == GameConfig.SEAGRASS
+            || block == GameConfig.KELP
             || block == GameConfig.RED_FLOWER
             || block == GameConfig.YELLOW_FLOWER
             || block == GameConfig.RAIL;
@@ -2756,10 +2839,10 @@ public class TinyCraft implements MultiplayerManager.Listener {
         if ((heldItem == InventoryItems.IRON_AXE || heldItem == InventoryItems.STONE_AXE || heldItem == InventoryItems.WOODEN_AXE) && woodLike) {
             return heldItem == InventoryItems.IRON_AXE ? 4.2 : (heldItem == InventoryItems.STONE_AXE ? 3.0 : 1.8);
         }
-        if ((heldItem == InventoryItems.DIAMOND_HOE || heldItem == InventoryItems.NETHERITE_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES)) {
+        if ((heldItem == InventoryItems.DIAMOND_HOE || heldItem == InventoryItems.NETHERITE_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.CARROT_CROP || block == GameConfig.POTATO_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES)) {
             return heldItem == InventoryItems.NETHERITE_HOE ? 5.0 : 4.0;
         }
-        if ((heldItem == InventoryItems.IRON_HOE || heldItem == InventoryItems.STONE_HOE || heldItem == InventoryItems.WOODEN_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES)) {
+        if ((heldItem == InventoryItems.IRON_HOE || heldItem == InventoryItems.STONE_HOE || heldItem == InventoryItems.WOODEN_HOE) && (block == GameConfig.WHEAT_CROP || block == GameConfig.CARROT_CROP || block == GameConfig.POTATO_CROP || block == GameConfig.OAK_LEAVES || block == GameConfig.PINE_LEAVES || block == GameConfig.BIRCH_LEAVES)) {
             return heldItem == InventoryItems.IRON_HOE ? 3.4 : (heldItem == InventoryItems.STONE_HOE ? 2.6 : 1.6);
         }
         if (stoneLike) {

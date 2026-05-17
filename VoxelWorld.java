@@ -38,6 +38,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private static final double ZOMBIE_GROWL_DISTANCE_SQUARED = 11.0 * 11.0;
     private static final double COLLISION_EPSILON = 1.0e-7;
     private static final int HOSTILE_MOB_TARGET_COUNT = 18;
+    private static final int FISH_MOB_TARGET_COUNT = 64;
     private static final int MAX_ASYNC_COLUMN_SUBMISSIONS_PER_TICK = Math.max(192, GameConfig.CHUNK_GENERATION_THREADS * 48);
     private static final int MAX_INITIAL_COLUMN_SUBMISSIONS = Math.max(768, GameConfig.CHUNK_GENERATION_THREADS * 192);
     private static final int MAX_PENDING_COLUMN_TASKS = Math.max(8192, GameConfig.CHUNK_GENERATION_THREADS * 1024);
@@ -165,6 +166,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     private boolean networkMirrorMode;
     private double simulationAccumulator;
     private double hostileMobSpawnCooldown;
+    private double fishSpawnCooldown;
     private double worldTime = 0.30;
     private long worldTickCounter;
     private int renderDistanceChunks = GameConfig.CHUNK_RENDER_DISTANCE;
@@ -1226,6 +1228,9 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private double maxMobHealth(MobKind kind) {
+        if (kind == MobKind.HERRING || kind == MobKind.SALMON) {
+            return 4.0;
+        }
         return kind == MobKind.COW || kind == MobKind.SHEEP || kind == MobKind.PIG ? 10.0 : 20.0;
     }
 
@@ -1236,13 +1241,15 @@ final class VoxelWorld implements StructureTemplates.Target {
 
         mobUpdateCounter++;
         hostileMobSpawnCooldown -= deltaTime;
+        fishSpawnCooldown -= deltaTime;
         populateVillageResidentsNear(player);
         maybeSpawnZombieNearPlayer(player);
+        maybeSpawnFishNearPlayer(player);
 
         int aiUpdates = 0;
         for (int i = mobs.size() - 1; i >= 0; i--) {
             MobEntity mob = mobs.get(i);
-            double despawnDistance = mob.kind == MobKind.VILLAGER ? 220.0 : 96.0;
+            double despawnDistance = mob.kind == MobKind.VILLAGER ? 220.0 : (isFishMob(mob) ? 80.0 : 96.0);
             double playerDistanceSquared = distanceSquared(mob.x, mob.z, player.x, player.z);
             if (mob.health <= 0) {
                 dropMobLoot(mob);
@@ -1256,11 +1263,11 @@ final class VoxelWorld implements StructureTemplates.Target {
 
             boolean inWater = intersectsFluid(
                 mob.x, mob.y, mob.z,
-                GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.WATER
+                mob.radius(), mob.height(), GameConfig.WATER
             );
             boolean inLava = intersectsFluid(
                 mob.x, mob.y, mob.z,
-                GameConfig.ZOMBIE_RADIUS, GameConfig.ZOMBIE_HEIGHT, GameConfig.LAVA
+                mob.radius(), mob.height(), GameConfig.LAVA
             );
             if (inWater != mob.wasInWater) {
                 mob.splashQueued = true;
@@ -1274,6 +1281,12 @@ final class VoxelWorld implements StructureTemplates.Target {
                     mob.health -= GameConfig.LAVA_DAMAGE;
                     mob.fireDamageTimer = GameConfig.LAVA_DAMAGE_INTERVAL;
                 }
+            } else if (isFishMob(mob) && !inWater) {
+                mob.fireDamageTimer -= deltaTime;
+                if (mob.fireDamageTimer <= 0.0) {
+                    mob.health -= 1.0;
+                    mob.fireDamageTimer = 0.75;
+                }
             } else if (isSunBurningMob(mob, inWater)) {
                 mob.fireTimer = Math.max(mob.fireTimer, 1.2);
                 mob.fireDamageTimer -= deltaTime;
@@ -1285,6 +1298,10 @@ final class VoxelWorld implements StructureTemplates.Target {
                 mob.fireTimer = Math.max(0.0, mob.fireTimer - deltaTime);
             }
             mob.hurtCooldown = Math.max(0.0, mob.hurtCooldown - deltaTime);
+            if (touchesBlock(mob.x, mob.y, mob.z, mob.radius() + 0.06, mob.height(), GameConfig.CACTUS) && mob.hurtCooldown <= 0.0) {
+                mob.health -= 1.0;
+                mob.hurtCooldown = 0.65;
+            }
             mob.fleeTimer = Math.max(0.0, mob.fleeTimer - deltaTime);
             mob.loveTimer = Math.max(0.0, mob.loveTimer - deltaTime);
             mob.breedCooldown = Math.max(0.0, mob.breedCooldown - deltaTime);
@@ -1313,6 +1330,10 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     private boolean isPassiveMob(MobEntity mob) {
         return mob != null && (mob.kind == MobKind.PIG || mob.kind == MobKind.SHEEP || mob.kind == MobKind.COW);
+    }
+
+    private boolean isFishMob(MobEntity mob) {
+        return mob != null && (mob.kind == MobKind.HERRING || mob.kind == MobKind.SALMON);
     }
 
     private int zombieAiInterval(double playerDistanceSquared) {
@@ -1344,6 +1365,12 @@ final class VoxelWorld implements StructureTemplates.Target {
                 if (worldRandom.nextDouble() < 0.65) {
                     spawnDroppedItem(InventoryItems.RAW_MUTTON, 1, mob.x, mob.y + 0.45, mob.z);
                 }
+                break;
+            case HERRING:
+                spawnDroppedItem(InventoryItems.RAW_HERRING, 1, mob.x, mob.y + 0.18, mob.z);
+                break;
+            case SALMON:
+                spawnDroppedItem(InventoryItems.RAW_SALMON, 1, mob.x, mob.y + 0.18, mob.z);
                 break;
             case SKELETON:
                 spawnDroppedItem(InventoryItems.BONE, 1 + worldRandom.nextInt(2), mob.x, mob.y + 0.45, mob.z);
@@ -1448,7 +1475,9 @@ final class VoxelWorld implements StructureTemplates.Target {
             return false;
         }
         byte targetBlock = getBlock(hit.x, hit.y, hit.z);
-        if (GameConfig.isLiquidBlock(targetBlock) || targetBlock == GameConfig.BEDROCK || targetBlock == GameConfig.AIR) {
+        if ((GameConfig.isLiquidBlock(targetBlock) && !isAquaticPlantBlock(targetBlock))
+            || targetBlock == GameConfig.BEDROCK
+            || targetBlock == GameConfig.AIR) {
             return false;
         }
 
@@ -1846,6 +1875,12 @@ final class VoxelWorld implements StructureTemplates.Target {
             return false;
         }
 
+        if (isCropBlock(placedBlock)) {
+            return placeCrop(placeX, placeY, placeZ, placedBlock);
+        }
+        if (isAquaticPlantBlock(placedBlock)) {
+            return placeAquaticPlant(placeX, placeY, placeZ, placedBlock);
+        }
         if (placedBlock == GameConfig.OAK_DOOR) {
             return placeDoor(placeX, placeY, placeZ, player);
         }
@@ -1867,7 +1902,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         boolean solidPlacement = isSolidBlock(placedBlock);
-        if (solidPlacement && blockIntersectsPlayerHitbox(placeX, placeY, placeZ, placedBlock, player)) {
+        if (solidPlacement && blockIntersectsEntityHitboxes(placeX, placeY, placeZ, placedBlock, player)) {
             return false;
         }
 
@@ -1886,6 +1921,51 @@ final class VoxelWorld implements StructureTemplates.Target {
         refreshDynamicCellsAround(placeX, placeY, placeZ);
         markDirtyBlock(placeX, placeY, placeZ);
         refreshSurfaceHeight(placeX, placeZ);
+        return true;
+    }
+
+    private boolean placeCrop(int x, int y, int z, byte cropBlock) {
+        if (!isInside(x, y, z) || y <= GameConfig.WORLD_MIN_Y || getBlock(x, y - 1, z) != GameConfig.FARMLAND) {
+            return false;
+        }
+        if (!isReplaceableForPlacement(getBlock(x, y, z))) {
+            return false;
+        }
+        setBlockState(x, y, z, Blocks.withData(cropBlock, 0));
+        updatePlantSupportAt(x, y + 1, z);
+        refreshDynamicCellsAround(x, y, z);
+        markDirtyBlock(x, y, z);
+        refreshSurfaceHeight(x, z);
+        return true;
+    }
+
+    private boolean placeAquaticPlant(int x, int y, int z, byte plantBlock) {
+        if (!isInside(x, y, z) || y <= GameConfig.WORLD_MIN_Y || y + 1 > GameConfig.WORLD_MAX_Y) {
+            return false;
+        }
+        byte current = getBlock(x, y, z);
+        byte support = getBlock(x, y - 1, z);
+        if (!GameConfig.isWaterBlock(current) || !GameConfig.isWaterBlock(getBlock(x, y + 1, z))) {
+            return false;
+        }
+        if (support != GameConfig.SAND
+            && support != GameConfig.GRAVEL
+            && support != GameConfig.CLAY
+            && support != GameConfig.DIRT
+            && support != GameConfig.KELP) {
+            return false;
+        }
+        if (plantBlock == GameConfig.KELP) {
+            int segment = support == GameConfig.KELP ? 2 : 0;
+            setBlockState(x, y, z, Blocks.withData(plantBlock, segment));
+            if (support == GameConfig.KELP) {
+                setBlockState(x, y - 1, z, Blocks.withData(GameConfig.KELP, 1));
+            }
+        } else {
+            setBlockState(x, y, z, plantBlock, 0);
+        }
+        refreshDynamicCellsAround(x, y, z);
+        markDirtyBlock(x, y, z);
         return true;
     }
 
@@ -1923,7 +2003,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (!isSolidBlock(getBlock(x, y - 1, z))) {
             return false;
         }
-        if (blockIntersectsPlayerHitbox(x, y, z, player) || blockIntersectsPlayerHitbox(x, y + 1, z, player)) {
+        if (blockIntersectsEntityHitboxes(x, y, z, GameConfig.OAK_DOOR, player)
+            || blockIntersectsEntityHitboxes(x, y + 1, z, GameConfig.OAK_DOOR, player)) {
             return false;
         }
         int facing = player == null ? 2 : facingFromYaw(player.yaw);
@@ -1942,7 +2023,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (!Blocks.isReplaceable(targetBlock) && !GameConfig.isLiquidBlock(targetBlock)) {
             return false;
         }
-        if (blockIntersectsPlayerHitbox(x, y, z, block, player)) {
+        if (blockIntersectsEntityHitboxes(x, y, z, block, player)) {
             return false;
         }
         int facing = player == null ? 0 : facingFromYaw(player.yaw);
@@ -1959,7 +2040,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (!isInside(x, y, z) || y <= GameConfig.WORLD_MIN_Y || !isReplaceableForPlacement(getBlock(x, y, z))) {
             return false;
         }
-        if (!isSolidBlock(getBlock(x, y - 1, z)) || blockIntersectsPlayerHitbox(x, y, z, player)) {
+        if (!isSolidBlock(getBlock(x, y - 1, z)) || blockIntersectsEntityHitboxes(x, y, z, GameConfig.OAK_FENCE_GATE, player)) {
             return false;
         }
         int facing = player == null ? 2 : facingFromYaw(player.yaw);
@@ -1986,7 +2067,8 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (!isSolidBlock(getBlock(x, y - 1, z)) || !isSolidBlock(getBlock(headX, y - 1, headZ))) {
             return false;
         }
-        if (blockIntersectsPlayerHitbox(x, y, z, player) || blockIntersectsPlayerHitbox(headX, y, headZ, player)) {
+        if (blockIntersectsEntityHitboxes(x, y, z, GameConfig.RED_BED, player)
+            || blockIntersectsEntityHitboxes(headX, y, headZ, GameConfig.RED_BED, player)) {
             return false;
         }
         setBlockState(x, y, z, Blocks.bedState(false, facing));
@@ -2034,6 +2116,16 @@ final class VoxelWorld implements StructureTemplates.Target {
 
     private boolean isReplaceableForPlacement(byte block) {
         return Blocks.isReplaceable(block) || GameConfig.isLiquidBlock(block);
+    }
+
+    private boolean isCropBlock(byte block) {
+        return block == GameConfig.WHEAT_CROP
+            || block == GameConfig.CARROT_CROP
+            || block == GameConfig.POTATO_CROP;
+    }
+
+    private boolean isAquaticPlantBlock(byte block) {
+        return block == GameConfig.SEAGRASS || block == GameConfig.KELP;
     }
 
     private int facingFromYaw(double yaw) {
@@ -2161,7 +2253,7 @@ final class VoxelWorld implements StructureTemplates.Target {
         while (traveled <= maxDistance) {
             if (isInside(blockX, blockY, blockZ)) {
                 byte block = getBlock(blockX, blockY, blockZ);
-                if (block != GameConfig.AIR && !GameConfig.isLiquidBlock(block)) {
+                if (block != GameConfig.AIR && (!GameConfig.isLiquidBlock(block) || isAquaticPlantBlock(block))) {
                     double[] bounds = selectionBounds(block, getBlockState(blockX, blockY, blockZ));
                     if (rayIntersectsAabb(originX, originY, originZ, dirX, dirY, dirZ,
                         blockX + bounds[0], blockY + bounds[1], blockZ + bounds[2],
@@ -2201,10 +2293,13 @@ final class VoxelWorld implements StructureTemplates.Target {
             case GameConfig.FARMLAND:
                 return new double[]{0.0, 0.0, 0.0, 1.0, 0.9375, 1.0};
             case GameConfig.WHEAT_CROP:
+            case GameConfig.CARROT_CROP:
+            case GameConfig.POTATO_CROP:
             case GameConfig.TALL_GRASS:
             case GameConfig.RED_FLOWER:
             case GameConfig.YELLOW_FLOWER:
             case GameConfig.SEAGRASS:
+            case GameConfig.KELP:
             case GameConfig.DEAD_BUSH:
                 return new double[]{0.18, 0.0, 0.18, 0.82, 0.86, 0.82};
             case GameConfig.RAIL:
@@ -3013,9 +3108,12 @@ final class VoxelWorld implements StructureTemplates.Target {
     boolean isCrossPlant(byte block) {
         return block == GameConfig.TALL_GRASS
             || block == GameConfig.SEAGRASS
+            || block == GameConfig.KELP
             || block == GameConfig.RED_FLOWER
             || block == GameConfig.YELLOW_FLOWER
             || block == GameConfig.WHEAT_CROP
+            || block == GameConfig.CARROT_CROP
+            || block == GameConfig.POTATO_CROP
             || block == GameConfig.DEAD_BUSH
             || block == GameConfig.TORCH;
     }
@@ -3063,6 +3161,39 @@ final class VoxelWorld implements StructureTemplates.Target {
         tickSand(playerChunkX, playerChunkZ);
         if ((worldTickCounter & 31L) == 0L) {
             tickGrassSpread(playerChunkX, playerChunkZ);
+        }
+        if ((worldTickCounter & 15L) == 0L) {
+            tickCropGrowth(playerChunkX, playerChunkZ);
+        }
+    }
+
+    private void tickCropGrowth(int playerChunkX, int playerChunkZ) {
+        for (int attempt = 0; attempt < 48; attempt++) {
+            int chunkX = playerChunkX + worldRandom.nextInt(7) - 3;
+            int chunkZ = playerChunkZ + worldRandom.nextInt(7) - 3;
+            ChunkColumn column = loadedColumns.get(columnKey(chunkX, chunkZ));
+            if (column == null) {
+                continue;
+            }
+            int x = chunkX * GameConfig.CHUNK_SIZE + worldRandom.nextInt(GameConfig.CHUNK_SIZE);
+            int z = chunkZ * GameConfig.CHUNK_SIZE + worldRandom.nextInt(GameConfig.CHUNK_SIZE);
+            int surfaceY = column.getSurfaceHeightLocal(localBlockCoordinate(x), localBlockCoordinate(z));
+            int minY = Math.max(GameConfig.WORLD_MIN_Y + 1, surfaceY - 2);
+            int maxY = Math.min(GameConfig.WORLD_MAX_Y, surfaceY + 2);
+            for (int y = minY; y <= maxY; y++) {
+                byte block = getBlock(x, y, z);
+                if (!isCropBlock(block) || !canPlantStay(x, y, z)) {
+                    continue;
+                }
+                BlockState state = getBlockState(x, y, z);
+                int stage = state == null ? 0 : state.data;
+                if (stage >= 7 || worldRandom.nextDouble() > 0.34) {
+                    continue;
+                }
+                setBlockState(x, y, z, Blocks.withData(block, stage + 1));
+                markDirtyBlock(x, y, z);
+                break;
+            }
         }
     }
 
@@ -3623,6 +3754,10 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private void updateMobAi(MobEntity mob, PlayerState player, double deltaTime) {
+        if (isFishMob(mob)) {
+            updateFishAi(mob, deltaTime);
+            return;
+        }
         if (mob.kind == MobKind.VILLAGER) {
             updateVillagerAi(mob, deltaTime);
             return;
@@ -3694,6 +3829,27 @@ final class VoxelWorld implements StructureTemplates.Target {
         double blend = Math.min(1.0, deltaTime * 8.0);
         mob.velocityX += (targetVelocityX - mob.velocityX) * blend;
         mob.velocityZ += (targetVelocityZ - mob.velocityZ) * blend;
+    }
+
+    private void updateFishAi(MobEntity fish, double deltaTime) {
+        fish.wanderTime -= deltaTime;
+        if (fish.wanderTime <= 0.0) {
+            chooseMobDirection(fish, false);
+            fish.wanderTime = 0.9 + fish.random.nextDouble() * 1.6;
+            fish.wanderDirection = fish.random.nextDouble() - 0.5;
+        }
+        double speed = fish.kind == MobKind.SALMON ? 1.25 : 1.05;
+        double targetVelocityX = directionMoveX(fish.directionIndex) * speed;
+        double targetVelocityZ = directionMoveZ(fish.directionIndex) * speed;
+        fish.targetBodyYaw = angleForDirectionIndex(fish.directionIndex);
+        if (!GameConfig.isWaterBlock(getBlock((int) Math.floor(fish.x), (int) Math.floor(fish.y), (int) Math.floor(fish.z)))) {
+            fish.wanderDirection = -0.8;
+        }
+        double targetVelocityY = clamp(fish.wanderDirection * 0.85, -0.85, 0.85);
+        double blend = Math.min(1.0, deltaTime * 5.0);
+        fish.velocityX += (targetVelocityX - fish.velocityX) * blend;
+        fish.velocityZ += (targetVelocityZ - fish.velocityZ) * blend;
+        fish.verticalVelocity += (targetVelocityY - fish.verticalVelocity) * blend;
     }
 
     private void updateVillagerAi(MobEntity villager, double deltaTime) {
@@ -4088,7 +4244,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private void maybeSpawnZombieNearPlayer(PlayerState player) {
-        if (player == null || player.creativeMode || player.spectatorMode || mobs.size() >= HOSTILE_MOB_TARGET_COUNT || hostileMobSpawnCooldown > 0.0) {
+        if (player == null || player.spectatorMode || mobs.size() >= HOSTILE_MOB_TARGET_COUNT || hostileMobSpawnCooldown > 0.0) {
             return;
         }
 
@@ -4124,6 +4280,10 @@ final class VoxelWorld implements StructureTemplates.Target {
                 continue;
             }
             MobKind kind = chooseSpawnMobKind(day, blockX, surfaceY, blockZ);
+            if ((kind == MobKind.PIG || kind == MobKind.SHEEP || kind == MobKind.COW)
+                && !isValidPassiveSpawnSurface(blockX, surfaceY, blockZ)) {
+                continue;
+            }
             double mobX = blockX + 0.5;
             double mobY = surfaceY + 1.01;
             double mobZ = blockZ + 0.5;
@@ -4133,6 +4293,57 @@ final class VoxelWorld implements StructureTemplates.Target {
         }
 
         hostileMobSpawnCooldown = 0.8;
+    }
+
+    private void maybeSpawnFishNearPlayer(PlayerState player) {
+        if (player == null || player.spectatorMode || fishSpawnCooldown > 0.0 || countFishMobs() >= FISH_MOB_TARGET_COUNT) {
+            return;
+        }
+        for (int attempt = 0; attempt < 16; attempt++) {
+            int offsetX = worldRandom.nextInt(56) - 28;
+            int offsetZ = worldRandom.nextInt(56) - 28;
+            if (Math.abs(offsetX) < 10 && Math.abs(offsetZ) < 10) {
+                continue;
+            }
+            int blockX = (int) Math.floor(player.x) + offsetX;
+            int blockZ = (int) Math.floor(player.z) + offsetZ;
+            int chunkX = worldToChunk(blockX);
+            int chunkZ = worldToChunk(blockZ);
+            if (!isChunkLoaded(chunkX, chunkZ)) {
+                continue;
+            }
+            int surfaceY = getSurfaceHeight(blockX, blockZ);
+            if (surfaceY >= GameConfig.SEA_LEVEL - 2 || surfaceY <= GameConfig.WORLD_MIN_Y) {
+                continue;
+            }
+            int spawnY = clamp(surfaceY + 2 + worldRandom.nextInt(Math.max(1, GameConfig.SEA_LEVEL - surfaceY - 2)), surfaceY + 1, GameConfig.SEA_LEVEL - 1);
+            if (!GameConfig.isWaterBlock(getBlock(blockX, spawnY, blockZ)) || !GameConfig.isWaterBlock(getBlock(blockX, spawnY + 1, blockZ))) {
+                continue;
+            }
+            MobKind kind = worldRandom.nextDouble() < 0.72 ? MobKind.HERRING : MobKind.SALMON;
+            int group = kind == MobKind.HERRING ? 3 + worldRandom.nextInt(4) : 1 + worldRandom.nextInt(3);
+            for (int i = 0; i < group && countFishMobs() < FISH_MOB_TARGET_COUNT; i++) {
+                double mobX = blockX + 0.25 + worldRandom.nextDouble() * 0.5 + (worldRandom.nextDouble() - 0.5) * 2.2;
+                double mobY = spawnY + (worldRandom.nextDouble() - 0.5) * 1.2;
+                double mobZ = blockZ + 0.25 + worldRandom.nextDouble() * 0.5 + (worldRandom.nextDouble() - 0.5) * 2.2;
+                if (GameConfig.isWaterBlock(getBlock((int) Math.floor(mobX), (int) Math.floor(mobY), (int) Math.floor(mobZ)))) {
+                    mobs.add(new MobEntity(kind, mobX, mobY, mobZ, mobX, mobZ, worldRandom));
+                }
+            }
+            fishSpawnCooldown = 1.4 + worldRandom.nextDouble() * 1.8;
+            return;
+        }
+        fishSpawnCooldown = 0.8;
+    }
+
+    private int countFishMobs() {
+        int count = 0;
+        for (MobEntity mob : mobs) {
+            if (isFishMob(mob)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private MobKind chooseSpawnMobKind(boolean day, int blockX, int surfaceY, int blockZ) {
@@ -4149,33 +4360,74 @@ final class VoxelWorld implements StructureTemplates.Target {
         return MobKind.COW;
     }
 
-    private boolean blockIntersectsPlayerHitbox(int blockX, int blockY, int blockZ, PlayerState player) {
-        return blockIntersectsPlayerHitbox(blockX, blockY, blockZ, getBlock(blockX, blockY, blockZ), player);
+    private boolean isValidPassiveSpawnSurface(int blockX, int surfaceY, int blockZ) {
+        byte surface = getBlock(blockX, surfaceY, blockZ);
+        if (surface != GameConfig.GRASS && surface != GameConfig.SAND) {
+            return false;
+        }
+        byte support = getBlock(blockX, surfaceY - 1, blockZ);
+        return Blocks.isSolid(support)
+            && getBlock(blockX, surfaceY + 1, blockZ) == GameConfig.AIR
+            && getBlock(blockX, surfaceY + 2, blockZ) == GameConfig.AIR;
     }
 
     private boolean blockIntersectsPlayerHitbox(int blockX, int blockY, int blockZ, byte block, PlayerState player) {
         if (player == null || player.spectatorMode) {
             return false;
         }
+        double[] bounds = blockBounds(blockX, blockY, blockZ, block);
+        return intersectsEntityBox(
+            bounds,
+            player.x - GameConfig.PLAYER_RADIUS,
+            player.y,
+            player.z - GameConfig.PLAYER_RADIUS,
+            player.x + GameConfig.PLAYER_RADIUS,
+            player.y + player.height(),
+            player.z + GameConfig.PLAYER_RADIUS
+        );
+    }
+
+    private boolean blockIntersectsEntityHitboxes(int blockX, int blockY, int blockZ, byte block, PlayerState player) {
+        if (blockIntersectsPlayerHitbox(blockX, blockY, blockZ, block, player)) {
+            return true;
+        }
+        double[] bounds = blockBounds(blockX, blockY, blockZ, block);
+        for (MobEntity mob : mobs) {
+            double radius = mob.radius();
+            if (intersectsEntityBox(
+                bounds,
+                mob.x - radius,
+                mob.y,
+                mob.z - radius,
+                mob.x + radius,
+                mob.y + mob.height(),
+                mob.z + radius
+            )) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private double[] blockBounds(int blockX, int blockY, int blockZ, byte block) {
         BlockState state = new BlockState(Blocks.typeFromLegacyId(block));
         double[] bounds = selectionBounds(block, state);
-        double blockMinX = blockX + bounds[0];
-        double blockMaxX = blockX + bounds[3];
-        double blockMinY = blockY + bounds[1];
-        double blockMaxY = blockY + bounds[4];
-        double blockMinZ = blockZ + bounds[2];
-        double blockMaxZ = blockZ + bounds[5];
+        return new double[]{
+            blockX + bounds[0],
+            blockY + bounds[1],
+            blockZ + bounds[2],
+            blockX + bounds[3],
+            blockY + bounds[4],
+            blockZ + bounds[5]
+        };
+    }
 
-        double playerMinX = player.x - GameConfig.PLAYER_RADIUS;
-        double playerMaxX = player.x + GameConfig.PLAYER_RADIUS;
-        double playerMinY = player.y;
-        double playerMaxY = player.y + player.height();
-        double playerMinZ = player.z - GameConfig.PLAYER_RADIUS;
-        double playerMaxZ = player.z + GameConfig.PLAYER_RADIUS;
-
-        return playerMaxX > blockMinX && playerMinX < blockMaxX
-            && playerMaxY > blockMinY && playerMinY < blockMaxY
-            && playerMaxZ > blockMinZ && playerMinZ < blockMaxZ;
+    private boolean intersectsEntityBox(double[] bounds,
+                                        double minX, double minY, double minZ,
+                                        double maxX, double maxY, double maxZ) {
+        return maxX > bounds[0] && minX < bounds[3]
+            && maxY > bounds[1] && minY < bounds[4]
+            && maxZ > bounds[2] && minZ < bounds[5];
     }
 
     private int ensureColumnsAround(int centerChunkX, int centerChunkZ, int chunkRadius, boolean synchronousOnly) {
@@ -4946,6 +5198,19 @@ final class VoxelWorld implements StructureTemplates.Target {
         if (!isInside(x, y, z) || y <= GameConfig.WORLD_MIN_Y) {
             return false;
         }
+        byte plant = getBlock(x, y, z);
+        if (isCropBlock(plant)) {
+            return getBlock(x, y - 1, z) == GameConfig.FARMLAND;
+        }
+        if (plant == GameConfig.SEAGRASS || plant == GameConfig.KELP) {
+            byte support = getBlock(x, y - 1, z);
+            return GameConfig.isWaterBlock(getBlock(x, y + 1, z))
+                && (support == GameConfig.SAND
+                    || support == GameConfig.GRAVEL
+                    || support == GameConfig.CLAY
+                    || support == GameConfig.DIRT
+                    || support == GameConfig.KELP);
+        }
         byte supportBlock = getBlock(x, y - 1, z);
         return Blocks.isSolid(supportBlock)
             && (supportBlock == GameConfig.GRASS
@@ -4986,7 +5251,7 @@ final class VoxelWorld implements StructureTemplates.Target {
     }
 
     private boolean isReplaceableForFluid(byte block) {
-        return Blocks.isReplaceable(block);
+        return Blocks.isReplaceable(block) || block == GameConfig.CACTUS;
     }
 
     private boolean isReplaceableForFallingBlock(byte block) {
